@@ -1932,6 +1932,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     let full = base([at.x + pad + MEMO.W + gap, at.y + pad], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#fffafafa', lines: [{ k: 'h3', t: `전문 · ${tl.length}구간` }, ...tl], fold: true, z })
     full = { ...full, rect: [0, 0, MEMO.W, memoHeight(full)] }
     const H = Math.max(sum.rect[3], full.rect[3]) + 2 * pad, W = 2 * MEMO.W + gap + 2 * pad
+    // 놓은 자리가 다른 물건과 겹치면 가장 가까운 빈자리로(2026-10-26 시연 캡처: 출처 카드 위에 겹쳐 놓였음) — 요약·전문도 같이 옮김
+    const to = nearSpot({ x: at.x + W / 2, y: at.y + H / 2 }, hitPool().map(it => sceneBox(it, textBox)), W, H, { pad: 24, step: 48 })
+    if (to.x !== at.x || to.y !== at.y) { const dx = to.x - at.x, dy = to.y - at.y; for (const it of [sum, full]) it.pos = [it.pos[0] + dx, it.pos[1] + dy]; at = to }
     const fr = base([at.x, at.y], { type: 'frame', rect: [0, 0, W, H], name: `회의 ${when} · ${res.title || ''}`.trim(), no: nextFrameNo(m.items), z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })
     commit([...m.items, fr, sum, full], [sum._id], '회의록')
     setStatus(`회의록 — ${res.title || '회의'} · ${Math.round(res.duration || 0)}초 녹음${res.credits != null ? ` · ${res.credits}크레딧` : ''}. 전문은 「… 줄 더」를 누르면 펼쳐져요`)

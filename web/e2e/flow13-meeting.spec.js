@@ -1,7 +1,7 @@
 // 흐름 13 — 회의록(§8 항목61 ③-3): 녹음 끌어 놓기 → 「만드는 중」 점선 틀 → 프레임 + 요약 메모(할 일 체크) + 접힌 전문 메모 → 「… 줄 더」 = 펼침.
 // 그 밖 파일을 떨어뜨려도 칠판을 안 떠남. KAIROS는 가짜(/api/meeting) — 서버 계산은 tests/test_part56, 진짜 받아쓰기는 손 확인.
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, liveDoc, toPage } from './helpers.js'
+import { boardName, openBoard, setCam, liveDoc, toPage, pickShape, dragScene } from './helpers.js'
 
 const TURNS = Array.from({ length: 12 }, (_, i) => ({ speaker: `화자 ${(i % 2) + 1}`, start_ms: i * 15000, text: `${i + 1}번째 발언 — 송신기 교체 이야기` }))
 const RESULT = { title: '송신기 교체 회의', summary: '2번 송신기 출력 저하로 교체를 논의했어요.', decisions: ['2번 송신기 교체'], todos: [{ who: '김 차장', what: '견적 받기', due: '금요일' }],
@@ -49,4 +49,16 @@ test('녹음 끌어 놓기 → 만드는 중 → 프레임 + 요약 + 접힌 전
   const f2 = (await liveDoc(page)).items.find(it => it.uid === full.uid)
   expect(f2.fold).toBe(false); expect(f2.rect[3]).toBeGreaterThan(h0 * 1.5)  // 펼침
   await expect(page.locator('[data-memo-more=close]')).toHaveCount(1)          // 「▴ 접기」
+})
+
+test('녹음을 다른 물건 위에 놓으면 회의록은 가까운 빈자리로(겹치지 않음, 2026-10-26 시연 캡처)', async ({ page }) => {
+  await page.route('**/api/meeting/**', async r => r.request().method() === 'POST' ? r.fulfill({ json: { job: 'abcdef123456' } }) : r.fulfill({ json: { status: 'done', msg: '끝', result: RESULT } }))
+  await openBoard(page, boardName('meetgap')); await setCam(page)
+  await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 300, y: 200 }); await page.keyboard.press('Escape')
+  await dropFile(page, '회의.m4a', 'audio/mp4', 50, 50)
+  await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'frame').length, { timeout: 10_000 }).toBe(1)
+  const d = await liveDoc(page), fr = d.items.find(it => it.type === 'frame'), rc = d.items.find(it => it.type === 'rect')
+  const ov = !(fr.pos[0] >= rc.pos[0] + rc.rect[2] || fr.pos[0] + fr.rect[2] <= rc.pos[0] || fr.pos[1] >= rc.pos[1] + rc.rect[3] || fr.pos[1] + fr.rect[3] <= rc.pos[1])
+  expect(ov).toBe(false)
+  for (const m of d.items.filter(it => it.type === 'memo')) { expect(m.pos[0]).toBeGreaterThanOrEqual(fr.pos[0]); expect(m.pos[1]).toBeGreaterThanOrEqual(fr.pos[1]) }   // 요약·전문도 같이 옮겨 프레임 안
 })
