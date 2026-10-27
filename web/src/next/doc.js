@@ -87,6 +87,7 @@ export const api = {
   setInvite: async (on, renew = false) => { const r = await post(`/api/invite/${B}`, { on, renew }); return r.ok ? (await r.json()).token : null },
   join: async token => { try { return (await post('/api/join', { board: B, token })).ok } catch { return false } },
   boards: async () => { try { const r = await fetch('/api/boards', { cache: 'no-store' }); return r.ok ? (await r.json()).boards || [] : [] } catch { return [] } },   // 칠판 목록(최근 고친 것부터) — 비밀번호 없는 서버는 빈 목록(전체 목록 = 남의 비밀 주소)
+  boardByCode: async code => { try { const r = await fetch(`/api/boards?code=${encodeURIComponent(code)}`, { cache: 'no-store' }); return r.ok ? (await r.json()).boards || [] : [] } catch { return [] } },   // 칠판 코드 → 그 코드로 끝나는 칠판(「칠판 코드로 열기」, 최근 고친 것부터)
   boardInfo: async names => { if (!names.length) return []; try { const r = await fetch(`/api/boards?names=${names.map(encodeURIComponent).join(',')}`, { cache: 'no-store' }); return r.ok ? (await r.json()).boards || [] : [] } catch { return [] } },   // 아는 이름만 — 「내 칠판」의 개수·고친 때(없는 칠판 = 아직 저장 안 한 새 칠판은 빠짐)
   pub: async (token, rev = -1, wait = 0) => { const r = await fetch(`/api/pub/${token}?rev=${rev}${wait ? `&wait=${wait}` : ''}`, { cache: 'no-store' }); if (r.status === 204) return { same: true }; if (!r.ok) return { gone: true }; const d = parseDoc(await r.text()); return { doc: d } },
 }

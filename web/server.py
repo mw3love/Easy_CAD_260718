@@ -753,6 +753,10 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/boards":   # 칠판 목록(데스크톱 「웹 칠판 열기」, §8 항목61 ④-2) — 최근에 고친 것부터
             # 비밀번호 없는 서버 = 칠판 주소가 곧 열쇠(2026-10-27 사용자) → 전체 목록은 숨기고, 아는 이름(`?names=`)만 알려 줌(웹 「내 칠판」·데스크톱 올리기 전 확인)
             want = [n for n in (q.get("names") or [""])[0].split(",") if n] if "names" in q else None
+            code = (q.get("code") or [""])[0].lower()   # 칠판 코드로 열기(2026-10-28 — QR 밑 코드) — 코드 = 열쇠라 그 코드로 끝나는 칠판만 알려 줌(제목이 붙은 이름 「송신소점검-k7p2qx9m」도)
+            if re.fullmatch(r"[abcdefghjkmnpqrstuvwxyz23456789]{8}", code):
+                files = os.listdir(self.data_dir) if os.path.isdir(self.data_dir) else []
+                want = [fn[:-5] for fn in files if fn.endswith(".ecad") and (fn[:-5] == code or fn[:-5].endswith("-" + code))]
             if want is None and not self._locked():
                 return self._json(200, {"boards": [], "hidden": True})
             out = []

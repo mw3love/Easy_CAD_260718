@@ -13,8 +13,9 @@ import { Palette, useLibrary } from './palette.jsx'
 import { useMySymbols, mergeLib } from './mysym.js'
 import { Layers, layersOf, layerIdOf } from './layers.jsx'
 import { Frames } from './frames.jsx'
-import { boardLabel, forgetBoard, isMyBoard, myBoards, newBoardName, rememberBoard } from './myboards.js'
+import { boardFromText, boardLabel, forgetBoard, isMyBoard, myBoards, newBoardName, rememberBoard } from './myboards.js'
 import { FloatMenu } from './ctxmenu.jsx'
+import { QrBig } from './qr.jsx'
 import { Minimap } from './minimap.jsx'
 import { ChatPanel, CHAT_W, chatClamp, Spinner } from './chat.jsx'
 import { HelpCard } from './help.jsx'
@@ -148,6 +149,7 @@ const BoardName = ({ name, bold }) => { const { title, code } = boardLabel(name)
   return <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: bold ? 700 : 500 }}>{title}{code && <span style={{ marginLeft: 4, fontWeight: 400, fontSize: 10.5, color: C.muted }}>·{code}</span>}</span> }
 function BoardForm({ onClose, docked, open, children }) {   // docked = 왼쪽 판 「칠판」 칸(2026-10-23 — 위 막대 팝업에서 옮김), open = 비밀번호 없는 서버, children = 아래 파일 단추들
   const [list, setList] = useState(null), [mine, setMine] = useState(null), [name, setName] = useState(''), [all, setAll] = useState(false), [making, setMaking] = useState(false), [why, setWhy] = useState(''), [menu, setMenu] = useState(null)
+  const [codeOn, setCodeOn] = useState(false), [codeText, setCodeText] = useState(''), [codeWhy, setCodeWhy] = useState('')   // 칠판 코드로 열기(2026-10-28 — QR 밑 코드·받은 주소)
   const loadMine = () => { const my = myBoards(); api.boardInfo(my.map(b => b.name)).then(info => { const at = new Map(info.map(b => [b.name, b]))
     setMine(my.filter(b => at.has(b.name) || b.name === DOC_NAME).map(b => at.get(b.name) || { name: b.name, items: 0, mtime: 0, fresh: true })) }) }   // 서버에 없는 이름 = 저장 안 한 새 칠판(지금 것만 보임)
   useEffect(() => { loadMine(); if (!open) api.boards().then(setList); else setList([]) }, [open])   // eslint-disable-line react-hooks/exhaustive-deps
@@ -157,6 +159,12 @@ function BoardForm({ onClose, docked, open, children }) {   // docked = 왼쪽 �
     if (!clean) return
     if (!taken && (await api.session(clean)).board_ok === false) { setWhy('다른 팀이 쓰는 이름이에요 — 다른 이름으로 지어 주세요'); return }   // 팀 서버(§8 항목67) — 목록엔 우리 팀 것만 보여서 겹침을 모름
     goTo(clean) }
+  const openCode = async () => { const r = boardFromText(codeText); setCodeWhy('')
+    if (r.view) { location.href = `${location.pathname}?view=${r.view}`; return }
+    if (r.board) { goTo(r.board); return }
+    if (!r.code) return
+    const hit = await api.boardByCode(r.code); if (hit.length) { goTo(hit[0].name); return }
+    setCodeWhy('그 코드의 칠판이 없어요 — 글자를 다시 확인해 주세요') }
   const myNames = new Set((mine || []).map(b => b.name))
   const others = (list || []).filter(b => !myNames.has(b.name)), shown = others.filter(b => all || !TEST_BOARD.test(b.name)), hidden = others.length - shown.length
   const row = b => <button key={b.name} data-testid="board-row" onClick={() => (b.name === DOC_NAME ? onClose() : goTo(b.name))} onContextMenu={e => { e.preventDefault(); setMenu({ name: b.name, mine: myNames.has(b.name), x: e.clientX, y: e.clientY }) }}
@@ -182,6 +190,15 @@ function BoardForm({ onClose, docked, open, children }) {   // docked = 왼쪽 �
     <div data-testid="my-boards" style={{ display: 'flex', flexDirection: 'column', maxHeight: 300, overflowY: 'auto', margin: '-4px -4px 0' }}>
       {mine === null ? <span style={{ color: C.muted, padding: 4 }}>불러오는 중…</span> : mine.map(row)}
     </div>
+    {!codeOn ? <button data-testid="board-code-open" onClick={() => setCodeOn(true)} title="받은 칠판 코드(QR 밑 8자)나 칠판 주소를 넣어 그 칠판으로"
+      style={{ all: 'unset', cursor: 'pointer', alignSelf: 'flex-start', color: C.muted, fontSize: 11.5, textDecoration: 'underline', textUnderlineOffset: 2 }}>칠판 코드로 열기</button>
+    : <div style={{ display: 'flex', gap: 6 }}>
+      <input data-testid="board-code" autoFocus value={codeText} onChange={e => { setCodeText(e.target.value); setCodeWhy('') }} placeholder="칠판 코드 8자 또는 주소"
+        onKeyDown={e => { if (e.key === 'Enter') openCode(); if (e.key === 'Escape') { e.stopPropagation(); setCodeOn(false); setCodeText(''); setCodeWhy('') } }}
+        style={{ flex: 1, minWidth: 0, height: 26, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: 'inherit' }} />
+      <button disabled={!codeText.trim()} onClick={openCode} style={{ all: 'unset', cursor: codeText.trim() ? 'pointer' : 'default', opacity: codeText.trim() ? 1 : 0.5, padding: '4px 10px', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>열기</button>
+    </div>}
+    {codeWhy && <span data-testid="board-code-why" style={{ fontSize: 11, color: '#d44c47' }}>{codeWhy}</span>}
     {!open && (list === null || others.length > 0) && <>
       <span style={{ color: C.muted }}>이 서버의 칠판</span>
       <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 300, overflowY: 'auto', margin: '-4px -4px 0' }}>
@@ -302,7 +319,7 @@ function LoginForm({ onDone, nameOnly = false }) {   // nameOnly = 편집 초대
 // 「공유」 — 노션처럼 두 탭(2026-10-19 사용자): 공유 = 편집 초대 링크(비밀번호 없이 이름만 적고 편집) + 지금 접속한 사람, 게시 = 로그인 없이 보기·발표만
 function ShareForm({ onClose, people = [] }) {   // people = [{ id, name, me }] — 사람(창)마다 하나, 이름이 같아도 따로
   const [tab, setTab] = useState('share')
-  const [tok, setTok] = useState(undefined), [inv, setInv] = useState(undefined), [msg, setMsg] = useState('')
+  const [tok, setTok] = useState(undefined), [inv, setInv] = useState(undefined), [msg, setMsg] = useState(''), [qr, setQr] = useState(null)   // qr = 크게 띄운 링크 { link, view }
   useEffect(() => { api.getPublish().then(setTok); api.getInvite().then(r => setInv(r || { token: null, password: true })) }, [])
   const viewLink = tok ? `${location.origin}/?view=${tok}` : ''
   const board = `${location.origin}/?board=${encodeURIComponent(DOC_NAME)}`, editLink = inv?.token ? `${board}&join=${inv.token}` : ''
@@ -311,6 +328,7 @@ function ShareForm({ onClose, people = [] }) {   // people = [{ id, name, me }] 
   const copy = l => navigator.clipboard?.writeText(l).then(() => setMsg('링크를 복사했어요'), () => setMsg('복사가 막혔어요 — 칸을 눌러 직접 복사'))
   const b = (bg, fg = '#fff') => ({ all: 'unset', cursor: 'pointer', padding: '5px 10px', borderRadius: 6, background: bg, color: fg, fontWeight: 600, fontSize: 12 })
   const linkBox = l => <input readOnly value={l} onFocus={e => e.target.select()} style={{ height: 26, border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px', font: 'inherit' }} />
+  const qrBtn = (link, view = false) => <button data-testid="qr-btn" style={b('transparent', C.ink)} title="큰 화면에 QR — 휴대폰 카메라로 비추면 바로 들어와요" onClick={() => setQr({ link, view })}>QR 크게</button>
   const tabBtn = (k, t) => <button key={k} data-testid={'share-tab-' + k} onClick={() => { setTab(k); setMsg('') }} style={{ all: 'unset', cursor: 'pointer', padding: '4px 2px', borderBottom: `2px solid ${tab === k ? C.ink : 'transparent'}`, fontWeight: tab === k ? 700 : 400, color: tab === k ? C.ink : C.muted }}>{t}</button>
   return <div onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }} style={{ position: 'absolute', top: 48, right: 0, zIndex: 20, width: 340, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, boxShadow: '0 4px 14px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif", color: C.ink }}>
     <div style={{ display: 'flex', gap: 14, borderBottom: `1px solid ${C.line}`, fontSize: 13 }}>{tabBtn('share', '공유')}{tabBtn('publish', '게시')}</div>
@@ -318,10 +336,10 @@ function ShareForm({ onClose, people = [] }) {   // people = [{ id, name, me }] 
       <div style={{ color: C.muted }}>같이 고칠 사람에게 보내는 링크예요. 들어오면 이름만 적고 바로 편집해요.</div>
       {inv === undefined ? <span style={{ color: C.muted }}>확인 중…</span> : !inv.password ? <>
         <div data-testid="share-open">이 주소가 곧 열쇠예요 — 받은 사람은 처음 한 번 이름만 적고 바로 같이 고쳐요. 주소를 모르는 사람은 이 칠판을 찾을 수 없어요.</div>{linkBox(board)}
-        <div><button style={b('#da7756')} onClick={() => copy(board)}>주소 복사</button></div></>
+        <div style={{ display: 'flex', gap: 6 }}><button style={b('#da7756')} onClick={() => copy(board)}>주소 복사</button>{qrBtn(board)}</div></>
       : inv.token ? <>{linkBox(editLink)}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <button style={b('#da7756')} onClick={() => copy(editLink)}>링크 복사</button>
+          <button style={b('#da7756')} onClick={() => copy(editLink)}>링크 복사</button>{qrBtn(editLink)}
           <button style={b('transparent', C.ink)} onClick={() => setInvT(true, true)}>새 링크로 바꾸기</button>
           <button style={b('transparent', '#d44c47')} onClick={() => setInvT(false)}>초대 끄기</button></div>
         <div style={{ fontSize: 11, color: C.muted }}>링크가 퍼지면 누구나 고칠 수 있어요 — 일이 끝나면 끄거나 새 링크로</div></>
@@ -334,12 +352,13 @@ function ShareForm({ onClose, people = [] }) {   // people = [{ id, name, me }] 
       <div style={{ color: C.muted }}>로그인 없이 열려요. 고치기·대화는 안 되고, 여기서 고친 건 바로 보여요(큰 TV 발표용).</div>
       {tok === undefined ? <span style={{ color: C.muted }}>확인 중…</span> : tok ? <>{linkBox(viewLink)}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <button style={b('#da7756')} onClick={() => copy(viewLink)}>링크 복사</button>
+          <button style={b('#da7756')} onClick={() => copy(viewLink)}>링크 복사</button>{qrBtn(viewLink, true)}
           <button style={b('transparent', C.ink)} onClick={() => window.open(viewLink, '_blank', 'noopener')}>열어 보기</button>
           <button style={b('transparent', C.ink)} onClick={() => setPub(true, true)}>새 링크로 바꾸기</button>
           <button style={b('transparent', '#d44c47')} onClick={() => setPub(false)}>게시 끄기</button></div></> : <div><button style={b('#da7756')} onClick={() => setPub(true)}>게시하기</button></div>}
     </>}
     {msg && <div style={{ color: '#da7756' }}>{msg}</div>}
+    {qr && <QrBig pop="share" link={qr.link} view={qr.view} code={qr.view ? '' : boardLabel(DOC_NAME).code} title={boardLabel(DOC_NAME).title} onClose={() => setQr(null)} />}
   </div>
 }
 
@@ -490,7 +509,7 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
     if (!anyPop) return
     const close = (keep = '') => { if (keep !== 'export') setExportOpen(false); if (keep !== 'table') setTableOpen(false); if (keep !== 'web') setWebOpen(false); if (keep !== 'share') setShareOpen(false) }
     const down = e => close(e.target.closest?.('[data-pop]')?.dataset.pop || '')   // 그 팝업(버튼 포함) 안이면 그것만 남김 — 다른 팝업 버튼 = 앞 것 닫고 새로 열기
-    const key = e => { if (e.key === 'Escape') { e.stopImmediatePropagation(); close() } }   // 칠판의 Esc(고른 것 풀기)보다 먼저 — 팝업만 닫음
+    const key = e => { if (e.key === 'Escape' && !document.querySelector('[data-qr-big]')) { e.stopImmediatePropagation(); close() } }   // 칠판의 Esc(고른 것 풀기)보다 먼저 — 팝업만 닫음. 큰 QR이 떠 있으면 Esc는 QR만(qr.jsx)
     window.addEventListener('pointerdown', down, true); window.addEventListener('keydown', key, true)
     return () => { window.removeEventListener('pointerdown', down, true); window.removeEventListener('keydown', key, true) }
   }, [anyPop])

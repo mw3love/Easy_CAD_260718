@@ -5,6 +5,9 @@ import { useEffect, useRef, useState } from 'react'
 import { Item, setInkDark } from './render.jsx'
 import { APP_FONT, METRICS, PT, TEXT_MARGIN } from './geom.js'
 import { pauseYoutubeOutside, playYoutube, toggleYoutube } from './webcard.js'
+import { QrBig } from './qr.jsx'
+import { DOC_NAME, api } from './doc.js'
+import { boardLabel } from './myboards.js'
 
 const THEMES = {
   light: { '--mb-ink': '#27272a', '--mb-muted': '#71717a', '--mb-board': '#ffffff', '--mb-line': '#e4e4e7', '--mb-card': '#ffffff' },
@@ -64,6 +67,9 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   const iRef = useRef(i); iRef.current = i
   const go = d => { const k = iRef.current; if (k + d >= n) { flash('마지막 장이에요 — 끝내려면 Esc'); return } if (k + d < 0) { flash('첫 장이에요'); return } setI(k + d) }   // 마지막 장에서 멈춤(2026-10-18 사용자: 휠로 넘기다 꺼지지 않게)
   const toolRef = useRef(tool); toolRef.current = tool
+  // Q = 이 칠판 QR을 TV에 크게(2026-10-28 대회 시연 — 객석이 휴대폰으로 바로 들어옴). 게시했으면 보기 링크(고치기 없음), 아니면 칠판 주소(같이 고침)
+  const [qr, setQr] = useState(null), qrRef = useRef(null); qrRef.current = qr
+  const showQr = () => api.getPublish().then(tok => setQr(tok ? { link: `${location.origin}/?view=${tok}`, view: true } : { link: `${location.origin}/?board=${encodeURIComponent(DOC_NAME)}`, view: false }))
   // 레이저 포인터(2026-10-18 사용자) — ` · L로 켜고 끔(휠 클릭은 편집 화면처럼 화면 이동)
   const [mpos, setMpos] = useState(null), mouse = useRef({ x: -99, y: -99 })
   const [laserOn, setLaserOn] = useState(false)   // 레이저 = 도구와 따로 켜는 커서 — 켠 채로 펜·네모 등도 씀(2026-10-18 사용자)
@@ -85,6 +91,8 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     const onKey = e => {
       if (e.target?.tagName === 'INPUT') return
       const k = e.key, code = /^Numpad\d$/.test(e.code) ? 'Digit' + e.code.slice(6) : e.code; e.stopPropagation()   // 오른쪽 숫자 키(넘패드)도 숫자로(2026-10-18 사용자)
+      if (qrRef.current) { if (k === 'Escape' || code === 'KeyQ') { e.preventDefault(); setQr(null) } return }   // QR이 떠 있으면 Esc·Q = QR만 닫기(발표는 그대로)
+      if (code === 'KeyQ' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); showQr(); return }
       if (code === 'Tab') { e.preventDefault(); setList(l => (l ? null : { typed: '', pick: iRef.current })); return }   // 장 목록 열기/닫기(고른 칸 = 지금 장)
       if (listRef.current) { e.preventDefault()   // 목록 안: 번호 + Enter = 그 장, Esc = 닫기(숫자 키가 판서 도구로 가지 않음)
         const cols = Math.max(1, Math.floor((window.innerWidth * 0.86 + 14) / 214)), mv = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -cols, ArrowDown: cols }[k]   // 방향키 = 고른 칸 옮기기(2026-10-18 사용자)
@@ -261,6 +269,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     {zoom && !zoom.card && <button data-testid="zoom-reset" title="원래 배율로 (Ctrl+0)" onPointerDown={e => e.stopPropagation()} onClick={() => setZoom(null)}
       style={{ all: 'unset', cursor: 'pointer', position: 'absolute', right: 16, top: 16, padding: '6px 12px', borderRadius: 16, background: 'rgba(24,24,27,.86)', color: '#fff', font: "600 12px 'Pretendard', sans-serif", boxShadow: '0 2px 10px rgba(0,0,0,.4)' }}>
       {Math.round(zoom.s * 100)}% · 원래대로</button>}
+    {qr && <QrBig link={qr.link} view={qr.view} code={qr.view ? '' : boardLabel(DOC_NAME).code} title={boardLabel(DOC_NAME).title} onClose={() => setQr(null)} />}
     {toast && <div style={{ position: 'absolute', left: '50%', top: 24, transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: 8, background: 'rgba(24,24,27,.9)', color: '#fff', font: "500 13px 'Pretendard', sans-serif", pointerEvents: 'none' }}>{toast}</div>}
     {trail.length > 1 && <svg data-testid="laser-trail" width={W} height={H} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>{trail.slice(1).map((q, j) => { const a = trail[j], f = Math.max(0, 1 - (Date.now() - q.t) / TRAIL_MS)
       return <line key={q.t + ':' + j} x1={a.x} y1={a.y} x2={q.x} y2={q.y} stroke="#ff2a2a" strokeWidth={3 + 5 * f} strokeLinecap="round" opacity={f} style={{ filter: 'drop-shadow(0 0 4px rgba(255,40,40,.8))' }} /> })}</svg>}

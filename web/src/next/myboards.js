@@ -15,7 +15,17 @@ export const newBoardName = (title = '') => (cleanBoardName(title) ? `${cleanBoa
 export function boardLabel(name) { if (new RegExp(`^[${ABC}]{${CODE_LEN}}$`).test(name || '')) return { title: '칠판', code: name }
   const m = new RegExp(`^(.+)-([${ABC}]{${CODE_LEN}})$`).exec(name || ''); return m ? { title: m[1], code: m[2] } : { title: name || '', code: '' } }
 
-export const myBoards = () => (Array.isArray(read(LIST, null)) ? read(LIST, []) : []).filter(b => b && typeof b.name === 'string')   // [{ name, t(마지막으로 연 때) }] 최근 것부터
+// 「칠판 코드로 열기」(2026-10-28 — QR 밑 코드를 손으로 칠 때) — 데스크톱 `web_board.board_from_text`와 같은 규칙 + 코드·게시 링크.
+// 칠판 코드 8자 → { code }(이름에 제목이 붙었을 수 있어 서버에 물음 — `/api/boards?code=`), 주소 …?board=이름 → { board }, 게시 …?view= → { view }, 그 밖 = 이름 그대로
+export function boardFromText(text) {
+  const t = (text || '').trim(); let q = null
+  if (/[?&](board|view)=/.test(t)) try { q = new URL(t, 'http://x').searchParams } catch { q = null }
+  if (q?.get('view')) return { view: q.get('view').replace(/[^\w-]/g, '').slice(0, 64) }
+  const name = (q?.get('board') ?? t).replace(/\s/g, '').replace(/[^\w\-가-힣]/g, '').slice(0, 64)
+  return new RegExp(`^[${ABC}]{${CODE_LEN}}$`, 'i').test(name) ? { code: name.toLowerCase() } : { board: name }
+}
+
+export const myBoards =() => (Array.isArray(read(LIST, null)) ? read(LIST, []) : []).filter(b => b && typeof b.name === 'string')   // [{ name, t(마지막으로 연 때) }] 최근 것부터
 export const isMyBoard = name => myBoards().some(b => b.name === name)
 export function rememberBoard(name) { if (!name) return; write(LIST, [{ name, t: Date.now() }, ...myBoards().filter(b => b.name !== name)].slice(0, MAX)); write(LAST, name) }
 export function forgetBoard(name) { write(LIST, myBoards().filter(b => b.name !== name)); if (read(LAST, '') === name) write(LAST, myBoards()[0]?.name || '') }
