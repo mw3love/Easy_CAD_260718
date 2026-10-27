@@ -20,7 +20,7 @@ import { routeOrtho } from '../route.js'
 import { projectToCurve, projectToPath, snapLabelOff } from './arrowedit.js'
 import { beginSegment, beginSubdivide, bendCurve, BEND_TS, curvePoint, dragSegment, endSegment, nearestSegment, onPill, SEG_HANDLE_PX, SEG_HIT_PX, segmentHandles, setCurveEnd, snapCurve, subdividePreview } from './arrowedit.js'
 import { sarrowRouting } from './arrows.js'
-import { fromEcad, newId } from './model.js'
+import { fromEcad, newId, toEcad } from './model.js'
 import { bakeSarrow } from './xform.js'
 import {
   applyRect, boardContents, keepBinds, duplicate, readingOrder, tableOp, expandGroups, flatten, followArrows, groupItems, localRect, mirror, moveItems, removeItems, resizeRect,
@@ -96,7 +96,7 @@ const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0]
 // 뜬 대화창 폭(좁은 창 — main.jsx가 칠판 칸에 `--mb-right-inset`으로 적음) — 「다 보기」·프레임으로 가기·AI 답 자리는 그만큼 오른쪽을 뺌(2026-10-19)
 export const rightInset = el => (el ? parseFloat(getComputedStyle(el).getPropertyValue('--mb-right-inset')) || 0 : 0)
 
-export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, onFit, onDark, onHelp, onAsk, onMeet, marks = [], readOnly = false, phone = false, keepTool = false, onKeepTool }, ref) {   // keepTool = 「도구 유지」(그린 뒤에도 그 도구 — 2026-10-27 사용자, Excalidraw 자물쇠)   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
+export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, onAddSymbol, onFit, onDark, onHelp, onAsk, onMeet, marks = [], readOnly = false, phone = false, keepTool = false, onKeepTool }, ref) {   // keepTool = 「도구 유지」(그린 뒤에도 그 도구 — 2026-10-27 사용자, Excalidraw 자물쇠)   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
   const [sel, setSel] = useState([])
   useEffect(() => { if (phone && sel.length) setSel([]) }, [phone, sel])   // 휴대폰 = 고치기 없음 — 답을 붙인 뒤 고른 표시·속성 카드가 남지 않게(2026-10-27)
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
@@ -1256,6 +1256,12 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const b = unionBox(its.map(it => sceneBox(it, textBox))), pad = 16   // 작고 일정한 여백(2026-10-18 사용자 선택 — 전엔 내용의 6%라 큰 묶음일수록 여백이 컸음)
     const it = base([b.x - pad, b.y - pad], { type: 'frame', rect: [0, 0, b.w + 2 * pad, b.h + 2 * pad], name: frameAutoName(its), no: nextFrameNo(m.items), z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })
     commit([...m.items, it], [it._id], '프레임으로 감싸기'); setStatus(`프레임 ${it.no} — 내보내기 하면 이 틀이 한 쪽이 돼요`)
+  }
+  // 고른 것 → 「내 심볼」(이 브라우저, `mysym.js`) — .ecad 모양으로 넘기고 이름·폴더는 main이 물음. 잠금·레이어·묶음 표시는 빼고(놓을 때 새로 묶음), 연결된 화살표 짝은 고른 것끼리만
+  function addToMySymbols() {
+    const m = R.current.model, ids = new Set(withContents(R.current.sel)), its = m.items.filter(it => ids.has(it._id) && it.type !== 'titleblock' && it.type !== 'frame'); if (!its.length) return
+    const items = toEcad({ items: its }).items.map(({ uid, locked, layer_id, group_id, ...o }) => o)   // eslint-disable-line no-unused-vars
+    onAddSymbol(items, frameAutoName(its).replace(/^(도형|아이콘|묶음)$/, ''))
   }
   // 감쌀 때 기본 이름(2026-10-27 사용자: 「프레임 N」보다 안에 든 것으로 — 알아보기 쉽게, 이름은 나중에 바꿔도 됨).
   // 하나면 「종류 · 제목」(제목 없으면 종류만), 여럿이면 「종류 N개」·「가장 많은 종류 외 N」. 묶음 = 하나, 선·도형만인 묶음 = 아이콘(SVG는 표시 칸이 없어 모양으로 짐작), 화살표는 셈에서 뺌
@@ -2445,6 +2451,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           if (selIt.some(it => it.group_id)) out.push(['그룹 해제', 'Ctrl+Shift+G', act(() => commit(ungroupItems(m.items, ids), ids, '묶음 풂'))])
           out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
           if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push('-', ['프레임으로 감싸기', 'Alt+G', act(wrapFrame)])
+          if (onAddSymbol && !card && selIt.every(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push(['내 심볼에 추가…', '', act(addToMySymbols)])   // 2026-10-27 사용자 — KAIROS 아이콘 등을 심볼 칸에(이 브라우저)
           if (selIt.some(it => isLegendLine(it))) out.push(['범례 넣기', '', act(insertLegend)])   // 선·화살표를 고르고 우클릭(2026-10-27 실검증 — 「표」 창 안에만 있으면 못 찾음, 표 창 단추도 그대로)
           out.push('-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
           if (onAsk) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])   // 「정리해 줘」 ① — 고른 것이 재료

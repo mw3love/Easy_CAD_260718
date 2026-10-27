@@ -50,3 +50,28 @@ test('접속자 = 동그라미 — 5명이면 3명 + 「+2」, 누르면 공유 
   await who.click(); await expect(page.getByText('지금 이 칠판에 5명')).toBeVisible()
   for (const c of ctxs) await c.close()
 })
+
+test('내 심볼(이 브라우저) — 우클릭 추가 → 판에 보임 → 놓기 · 새로 고쳐도 남음 · 이름 바꾸기 · 파일로 저장 → 지우기 → 불러오기', async ({ page }) => {
+  await openBoard(page, boardName('mysym')); await setCam(page)
+  await pickShape(page, '원'); await dragScene(page, { x: 0, y: 0 }, { x: 120, y: 80 }); await page.keyboard.press('Escape')
+  await clickScene(page, 60, 40); const p = await toPage(page, 60, 40); await page.mouse.click(p.x, p.y, { button: 'right' })
+  await page.locator('div[style*="z-index: 30"] > div > button', { hasText: '내 심볼에 추가' }).click()
+  const dlg = page.getByTestId('symadd'); await expect(dlg).toBeVisible()
+  await dlg.getByPlaceholder('예: 송신탑').fill('동그라미'); await dlg.getByRole('button', { name: '추가' }).click()
+  const mine = page.getByTestId('mine'); await expect(mine.getByRole('button', { name: '동그라미' })).toBeVisible()   // 폴더 없으면 「내 심볼」
+  await expect(mine).toContainText('내 심볼')
+  const n0 = (await liveDoc(page)).items.length
+  await mine.getByRole('button', { name: '동그라미' }).click(); await clickScene(page, 400, 300)
+  await expect.poll(async () => (await liveDoc(page)).items.length).toBe(n0 + 1)
+  await page.reload(); await expect(page.getByTestId('mine').getByRole('button', { name: '동그라미' })).toBeVisible()   // 이 브라우저에 남음
+  await page.getByTestId('mine').getByRole('button', { name: '동그라미' }).click({ button: 'right' })
+  await page.getByTestId('mine-pop').getByRole('button', { name: '이름 바꾸기' }).click()
+  await page.getByTestId('mine-pop').locator('input').fill('원 심볼'); await page.getByTestId('mine-pop').locator('input').press('Enter')
+  await expect(page.getByTestId('mine').getByRole('button', { name: '원 심볼' })).toBeVisible()
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('mine').getByRole('button', { name: '파일로 저장' }).click()])
+  const path = await dl.path()
+  await page.getByTestId('folder-menu').click(); await page.getByTestId('mine-pop').getByRole('button', { name: /지우기/ }).click()
+  await expect(page.getByTestId('mine').getByRole('button', { name: '원 심볼' })).toHaveCount(0)
+  await page.getByTestId('mine').locator('input[type=file]').setInputFiles(path)
+  await expect(page.getByTestId('mine').getByRole('button', { name: '원 심볼' })).toBeVisible()
+})

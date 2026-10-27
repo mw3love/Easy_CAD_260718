@@ -1,6 +1,7 @@
 // 우하 「미니맵」 카드 — 데스크톱 `_MinimapView`·`_build_minimap_panel`: 문서 전체를 작게(바뀌면 0.15초 몰아서 한 번 다시 그림), 지금 보는 범위 = 네모(즉시 따라감),
 // 누르거나 끌면 그 자리가 화면 가운데로. 제목 줄 = 미니맵 · − · % · ＋(% 누르면 100% — 2026-10-20 사용자: 다 보기는 Z가 맡아 겹쳤고 100%로 돌아갈 길이 없었음. 옛 10-18 = % 누르면 다 보기).
 // 보는 범위 네모 = 데스크톱과 같은 고정 시안 #22d3ee 테두리만. 데스크톱은 실제 그림을 축소하지만, 웹은 9천 개 도면에서도 가볍게 도형 윤곽만 캔버스에 그린다(보드는 바탕색 면).
+// 2026-10-27 사용자(「회색 상자만 보임」): 그림 = 진짜 그림 작게·웹·PDF 카드 = 대표 그림·메모·문서 = 흰 종이 + 글 줄 — 그림은 한 번만 읽어 두고(이미 칠판이 읽은 것) 다 읽히면 다시 그림.
 import { useEffect, useRef } from 'react'
 import { DOCKED, FoldBtn, useFold } from './fold.jsx'
 import { docBounds, itemBounds } from './doc.js'
@@ -17,7 +18,16 @@ function fitOf(items, W, H) {
   const k = Math.min(W / w, H / h); return { k, ox: (W - w * k) / 2 - x * k, oy: (H - h * k) / 2 - y * k }
 }
 
-function draw(ctx, items, f, dark, W, H) {
+const PICS = new Map()   // 그림 주소 → Image(문서마다 새로 읽지 않게 — 너무 많아지면 비움)
+function pic(src, onLoad) {
+  let im = PICS.get(src)
+  if (!im) { if (PICS.size > 400) PICS.clear(); im = new Image(); im.src = src; PICS.set(src, im) }
+  if (im.complete) return im.naturalWidth ? im : null
+  im.addEventListener('load', onLoad, { once: true }); return null
+}
+const picOf = it => (it.type === 'image' && it.data ? 'data:image/png;base64,' + it.data : (it.type === 'web' || it.type === 'pdf') && it.thumb ? it.thumb : '')
+
+function draw(ctx, items, f, dark, W, H, again) {
   ctx.clearRect(0, 0, W, H); if (!f) return
   const P = (x, y) => [x * f.k + f.ox, y * f.k + f.oy]
   ctx.lineWidth = 1; ctx.strokeStyle = dark ? 'rgba(220,226,235,.75)' : 'rgba(40,48,60,.7)'
@@ -30,7 +40,14 @@ function draw(ctx, items, f, dark, W, H) {
     if (it.type === 'path') { for (const e of it.elements) { if (e.length >= 3) ctx[e[0] === 'M' ? 'moveTo' : 'lineTo'](...L(e[e.length - 2], e[e.length - 1])) } ctx.stroke(); continue }
     const b = itemBounds(it), [x, y] = P(b.x, b.y), w = Math.max(1, b.w * f.k), h = Math.max(1, b.h * f.k)
     if (it.type === 'board') { ctx.fillStyle = cssColor(it.bg) || '#ffffff'; ctx.fillRect(x, y, w, h); continue }
-    if (it.type === 'text' || it.type === 'image' || it.type === 'web' || it.type === 'doc' || it.type === 'pdf' || it.type === 'memo' || it.type === 'legend') { ctx.fillStyle = dark ? 'rgba(220,226,235,.35)' : 'rgba(40,48,60,.28)'; ctx.fillRect(x, y, w, h); continue }
+    const src = picOf(it), im = src && pic(src, again)
+    if (im) { ctx.drawImage(im, x, y, w, h); continue }
+    if (it.type === 'memo' || it.type === 'doc' || it.type === 'legend' || it.type === 'web' || it.type === 'pdf') {   // 흰 종이(어두운 화면에서도 — 칠판의 메모와 같게) + 글 줄 몇 개
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h)
+      if (w >= 8 && h >= 6) { ctx.fillStyle = 'rgba(40,48,60,.3)'; const g = Math.max(2, Math.min(4, h / 6)); for (let ly = y + g; ly + 1 < y + h - g / 2 && ly < y + g * 7; ly += g) ctx.fillRect(x + w * 0.12, ly, w * (ly === y + g ? 0.5 : 0.76), Math.max(0.6, g * 0.35)) }
+      continue
+    }
+    if (it.type === 'text' || it.type === 'image') { ctx.fillStyle = dark ? 'rgba(220,226,235,.35)' : 'rgba(40,48,60,.28)'; ctx.fillRect(x, y, w, h); continue }
     if (it.type === 'ellipse') { ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.stroke(); continue }
     if (it.fill) { ctx.fillStyle = cssColor(it.fill); ctx.fillRect(x, y, w, h) }
     ctx.strokeRect(x, y, w, h)
@@ -42,9 +59,12 @@ export function Minimap({ items, cam, size, setCam, dark, docked, width = W0 }) 
   const W = Math.round(width), H = Math.round(W * 9 / 16)
   const [f0, toggleFold] = useFold('minimap'), folded = !docked && f0
   const cv = useRef(null), fitRef = useRef(null)
-  useEffect(() => {   // 내용이 바뀌면 0.15초 몰아서 한 번(데스크톱 `_REBUILD_DEBOUNCE_MS`)
-    const t = setTimeout(() => { fitRef.current = fitOf(items, W, H); const c = cv.current; if (c) draw(c.getContext('2d'), items, fitRef.current, dark, W, H) }, 150)
-    return () => clearTimeout(t)
+  useEffect(() => {   // 내용이 바뀌면 0.15초 몰아서 한 번(데스크톱 `_REBUILD_DEBOUNCE_MS`) — 그림이 늦게 읽히면 그때 한 번 더(몰아서)
+    let t2 = 0
+    const paint = () => { const c = cv.current; if (c) draw(c.getContext('2d'), items, fitRef.current, dark, W, H, again) }
+    const again = () => { clearTimeout(t2); t2 = setTimeout(paint, 100) }
+    const t = setTimeout(() => { fitRef.current = fitOf(items, W, H); paint() }, 150)
+    return () => { clearTimeout(t); clearTimeout(t2) }
   }, [items, dark, W])   // eslint-disable-line react-hooks/exhaustive-deps
   const f = fitRef.current || fitOf(items, W, H)
   // 지금 보는 범위(칠판 좌표) → 미니맵 네모

@@ -10,6 +10,7 @@ import { Viewer } from './viewer.jsx'
 import { fromEcad, toEcad } from './model.js'
 import { setInkDark } from './render.jsx'
 import { Palette, useLibrary } from './palette.jsx'
+import { useMySymbols, mergeLib } from './mysym.js'
 import { Layers, layersOf, layerIdOf } from './layers.jsx'
 import { Frames } from './frames.jsx'
 import { Minimap } from './minimap.jsx'
@@ -96,6 +97,31 @@ const SampleSelect = ({ onPick }) => <select data-testid="sample-select" onChang
   style={{ font: "500 12px 'Pretendard', sans-serif", padding: '4px 6px', borderRadius: 6, border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>
   <option value="">샘플 열기…</option>{SAMPLES.map(([n, u]) => <option key={u} value={u}>{n}</option>)}
 </select>
+
+// 「내 심볼에 추가」 창(2026-10-27 사용자 — KAIROS 아이콘 등을 심볼 칸에): 이름 + 이 브라우저 폴더(있는 것 고르기 또는 새 이름). 저장은 `mysym.js`
+function SymAddForm({ init, folders, onOk, onClose }) {
+  const NEW = '\u0000new', [name, setName] = useState(init.name || ''), [pick, setPick] = useState(folders[folders.length - 1] ?? NEW), [fresh, setFresh] = useState(folders.length ? '' : '내 심볼')
+  const folder = pick === NEW ? fresh.trim() : pick, ok = !!name.trim() && !!folder
+  const go = () => { if (ok) onOk(name.trim(), folder) }
+  const inp = { height: 30, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: "400 13px 'Pretendard', sans-serif" }
+  return <div data-testid="symadd" onPointerDown={e => { if (e.target === e.currentTarget) onClose() }} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose(); if (e.key === 'Enter') go() }}
+    style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div style={{ width: 300, background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: 16, boxShadow: '0 10px 30px rgba(0,0,0,.2)', display: 'flex', flexDirection: 'column', gap: 10, color: C.ink, font: "400 12px 'Pretendard', sans-serif" }}>
+      <div style={{ font: "700 15px 'Pretendard', sans-serif" }}>내 심볼에 추가</div>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}><span style={{ color: C.muted }}>이름</span>
+        <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="예: 송신탑" style={inp} /></label>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}><span style={{ color: C.muted }}>폴더</span>
+        {folders.length > 0 && <select value={pick} onChange={e => setPick(e.target.value)} style={inp}>
+          {folders.map(f => <option key={f} value={f}>{f}</option>)}<option value={NEW}>＋ 새 폴더…</option></select>}
+        {pick === NEW && <input value={fresh} onChange={e => setFresh(e.target.value)} placeholder="새 폴더 이름" style={inp} />}</label>
+      <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.5 }}>이 브라우저에 저장돼요. 다른 PC로는 도형 칸 「파일로 저장」 → 「파일 불러오기」.</div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
+        <button onClick={onClose} style={{ all: 'unset', cursor: 'pointer', padding: '6px 12px', borderRadius: 6, border: `1px solid ${C.line}` }}>취소</button>
+        <button disabled={!ok} onClick={go} style={{ all: 'unset', cursor: ok ? 'pointer' : 'default', opacity: ok ? 1 : 0.5, padding: '6px 14px', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>추가</button>
+      </div>
+    </div>
+  </div>
+}
 
 // 접속자 = 이름 첫 글자 동그라미(2026-10-27 사용자: 이름을 잇대 쓰면 10명이면 잘림) — 4칸까지(넘치면 3명 + 「+N」), 색 = 칠판에서 그 사람이 고른 테두리 색, 누르면 공유 창(전체 목록)
 const FACES = 4
@@ -406,7 +432,8 @@ function App() {
   const lastTable = useRef([3, 3, true])   // 위 막대에서 표를 끌면 = 마지막에 넣은 행·열(처음은 3×3)
   const [webAt, setWebAt] = useState(null)   // 위 막대에서 「웹」을 끌어 놓은 자리 — 주소 칸이 뜨고 그 자리에 넣음
   const toolDown = (e, k) => paletteDown(e, k, kind => ed.current?.startToolDrag(kind, { table: lastTable.current, onWeb: p => { setWebAt(p); setWebOpen(true) } }))   // 클릭 = 지금처럼, 끌기 = 놓은 자리에 기본형
-  const lib = useLibrary()   // 「내 심볼」(서버 `/api/symbols`)
+  const libServer = useLibrary(), [mySyms, myApi] = useMySymbols(), lib = useMemo(() => mergeLib(libServer, mySyms), [libServer, mySyms])   // 함께 쓰는 심볼(서버) + 내 심볼(이 브라우저, 2026-10-27)
+  const [symAdd, setSymAdd] = useState(null)   // 「내 심볼에 추가」 창 = { items, name }   // 「내 심볼」(서버 `/api/symbols`)
   const paletteDown = (e, t, start = k => ed.current?.startPaletteDrag(k)) => {
     if (e.button !== 0) return
     const sx = e.clientX, sy = e.clientY
@@ -524,7 +551,7 @@ function App() {
               <button key={l} onClick={f} title={t} style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px 4px 7px', borderRadius: 6, border: `1px solid ${C.line}`, font: "500 12px 'Pretendard', sans-serif" }}>
                 <span aria-hidden style={{ width: 16, height: 16, display: 'block', color: 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ICONS[ic].replace('<svg ', '<svg width="16" height="16" ') }} />{l}</button>)}
           </div></BoardForm>,
-        shape: <Palette docked lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} />,
+        shape: <Palette docked lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} mine={{ mine: mySyms, api: myApi }} say={setStatus} />,
         frame: orderedFrames(model.items).length ? <Frames docked items={model.items} sel={selKey ? selKey.split(',') : []} onReorder={ids => ed.current?.reorderFrames(ids)} onRename={(id, n) => ed.current?.renameFrame(id, n)} onGo={id => ed.current?.goFrame(id)} onPresent={id => ed.current?.startPresent(id)} dark={dark} />
           : <div data-testid="frames-empty" style={{ padding: '10px 12px', color: C.muted, fontSize: 12, lineHeight: 1.6 }}><div style={{ font: "700 15px 'Pretendard', sans-serif", color: C.ink, marginBottom: 6 }}>프레임</div>아직 없어요 — 위 막대 「프레임」을 눌러 칠판에서 영역을 감싸면 여기에 쌓여요(순서 = 출력·발표 순서).</div>,
         layer: <Layers docked model={model} setModel={setModel} active={activeLayer} setActive={setActiveLayer} onChanged={onCommit} dark={dark} /> }} />}
@@ -534,8 +561,11 @@ function App() {
           if (fs.length) return ed.current?.dropFiles(fs, e)
           const u = (e.dataTransfer?.getData('text/uri-list') || '').split(/\r?\n/).find(x => x && !x.startsWith('#')); if (u) ed.current?.dropUrl(u, e.dataTransfer.getData('text/x-mb-caption') || '', e) }}
         style={{ flex: 1, position: 'relative', overflow: 'hidden', '--mb-right-inset': narrow && chatOpen ? `${chatW + 12}px` : '0px' }}>
-        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} phone={phone} keepTool={keepTool} onKeepTool={toggleKeep} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onAsk={(text, kind) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind }) }} />
+        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} phone={phone} keepTool={keepTool} onKeepTool={toggleKeep} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onAddSymbol={(items, name) => setSymAdd({ items, name })} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onAsk={(text, kind) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind }) }} />
         {helpOpen && <HelpCard onClose={() => setHelpOpen(false)} />}
+        {symAdd && <SymAddForm init={symAdd} folders={mySyms.folders} onClose={() => setSymAdd(null)} onOk={(name, folder) => {
+          const ok = myApi.addSymbol(name, folder, symAdd.items); setSymAdd(null)
+          if (ok) { setDockTab('shape'); setStatus(`「${name}」을 내 심볼 「${folder}」에 넣었어요 — 이 브라우저에 저장`) } else setStatus('이 브라우저 저장 공간이 모자라요 — 그림이 든 것은 클 수 있어요') }} />}
         {!model.items.length && !meetSt && !aiBusy && <EmptyGuide onAsk={() => { setChatOpen(true); setChatFocus({ id: Date.now() }) }} onDeep={() => { setChatOpen(true); setChatFocus({ id: Date.now(), tool: 'deep' }) }}
           onMeet={() => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : ed.current?.meetStart())} />}
         {status && <div data-testid="status-toast" role="status" title={status} style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 6, maxWidth: 'min(640px, max(240px, calc(100% - 480px)))', padding: '6px 14px', borderRadius: 99,

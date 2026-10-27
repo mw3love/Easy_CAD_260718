@@ -1,6 +1,7 @@
 // 오른쪽 위 「속성」 카드(고를 때만) — 고른 것 모두의 선 색·굵기·선 모양·채움, 화살표 칸(종류·화살촉·머리 크기·모서리), 글자 크기·색.
 // 데스크톱 `host_style._refresh_properties`와 같은 자리·같은 항목·같은 차례(종류 → 선 → 채움 → 화살표 → 글자). 섞어 고르면 해당하는 것에만.
 // 첫 화면 규칙(CLAUDE.md): 폭 192, 제목 15px 굵게, 켜짐만 코랄.
+import { isMine, folderTitle } from './mysym.js'
 import { useEffect, useRef, useState } from 'react'
 import { ColorChip, FloatPanel } from './colorpop.jsx'
 import { FmtButtons, edAct, edRun, edState, useEdTick } from './textfmt.jsx'
@@ -328,7 +329,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
             style={btn(!!swapOne && k === kindOf(swapOne), { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>{shapeIcon(k)}<span style={{ fontSize: 12 }}>{kindName(k)}</span></button>)}
           {/* 내 심볼 — 폴더마다 구분선(데스크톱 `_fill_swap_menu`). 묶음으로 바뀌고 라벨은 안 옮김(여러 조각 중 어디에 둘지 애매 — 데스크톱과 같음) */}
           {(library?.folders || []).map(f => { const list = (library.symbols || []).filter(s => s.folder === f); if (!list.length) return null
-            return <div key={f}><div style={{ borderTop: `1px solid ${C.line}`, margin: '3px 0', padding: '3px 8px 0', fontSize: 11, color: C.muted }}>{f}</div>
+            return <div key={f}><div style={{ borderTop: `1px solid ${C.line}`, margin: '3px 0', padding: '3px 8px 0', fontSize: 11, color: C.muted }}>{folderTitle(f)}{isMine(f) ? ' · 이 브라우저' : ''}</div>
               {list.map(s => <button key={s.id} onClick={() => { onSwapTo(swapGrp || [swapOne._id], 'customsym:' + s.id); setPop(null) }} style={btn(false, { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>
                 <img alt="" src={'data:image/png;base64,' + s.thumb} width="20" height="20" style={{ filter: dark ? 'invert(1) hue-rotate(180deg)' : undefined }} />
                 <span style={{ fontSize: 12, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.name}</span></button>)}</div> })}
