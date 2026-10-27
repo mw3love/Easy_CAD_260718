@@ -346,6 +346,7 @@ function App() {
   const toggleKeep = () => { const v = !keepRef.current; keepRef.current = v; setKeepToolS(v); try { localStorage.setItem('mb-keep-tool', v ? '1' : '0') } catch { /* 기억 못 해도 그만 */ }
     setStatus(v ? '도구 유지 켬 — 그린 뒤에도 그 도구 그대로(Esc = 선택으로)' : '도구 유지 끔 — 하나 그리면 선택으로 돌아가요') }
   const [status, setStatus] = useState('')
+  const [saveNote, setSaveNote] = useState('')   // 저장 상태 글 — 화면엔 안 보이게(시험 `waitSaved`가 글을 찾음)
   // 어두운 화면(데스크톱 🌙와 같은 뜻) — 고른 값은 이 브라우저에 기억, 없으면 시스템 설정(next.html이 첫 값을 정함)
   const [dark, setDark] = useState(() => document.documentElement.dataset.theme === 'dark')
   setInkDark(dark)   // 칠판 기본 잉크(검정 ↔ 흰색) — 그리기 전에
@@ -396,18 +397,18 @@ function App() {
   const flush = useCallback(async () => {
     const S = sync.current; if (!S.base) return
     if (S.busy) { S.again = true; return }
-    const m = modelRef.current, p = diffModel(S.base, m); if (!p) { setStatus(`서버 「${DOC_NAME}」에 저장됨`); return }   // 보낼 게 없음 = 이미 저장됨(「고치는 중…」이 남아 있었음, 2026-10-19 점검)
+    const m = modelRef.current, p = diffModel(S.base, m); if (!p) { setSaveNote(`서버 「${DOC_NAME}」에 저장됨`); return }   // 보낼 게 없음 = 이미 저장됨(「고치는 중…」이 남아 있었음, 2026-10-19 점검)
     S.busy = true; const rev0 = S.rev
     try {
       const rev = await api.patch({ base: rev0, ...p })
       if (rev == null) { setStatus('서버 저장 실패 — 다시 들어가야 할 수도(비밀번호)'); return }
-      S.base = snapshotModel(m); S.rev = rev; setStatus(`서버 「${DOC_NAME}」에 저장됨`)
+      S.base = snapshotModel(m); S.rev = rev; setSaveNote(`서버 「${DOC_NAME}」에 저장됨`)
       if (rev > rev0 + 1) { S.busy = false; await pull(rev0) }   // 그사이 남도 고쳤음 — 바로 받아 옴
     } catch { setStatus('서버 연결 끊김') } finally { S.busy = false; if (S.again) { S.again = false; flush() } }
   }, [pull])
   const onCommit = useCallback(() => {
     if (!server) { setStatus('고침 — 서버 없음, 「내려받기」로 저장'); return }
-    setStatus('고치는 중…'); clearTimeout(saveT.current)
+    setSaveNote('고치는 중…'); clearTimeout(saveT.current)   // 평소 저장은 알림 없이(2026-10-27 사용자: 고칠 때마다 뜰 필요 없음) — 실패·끊김만 알림
     saveT.current = setTimeout(flush, 150)   // 0.6 → 0.15초(2026-10-19 사용자: 거의 실시간)
   }, [server, flush])
   // 받아 오기 = 롱 폴링 — 서버가 바뀔 때까지 들고 있다가 바로 돌려줌(2초마다 묻던 것 → 0.x초, 2026-10-19). 끌기 등으로 못 받으면 0.3초 뒤 다시
@@ -568,6 +569,7 @@ function App() {
           if (ok) { setDockTab('shape'); setStatus(`「${name}」을 내 심볼 「${folder}」에 넣었어요 — 이 브라우저에 저장`) } else setStatus('이 브라우저 저장 공간이 모자라요 — 그림이 든 것은 클 수 있어요') }} />}
         {!model.items.length && !meetSt && !aiBusy && <EmptyGuide onAsk={() => { setChatOpen(true); setChatFocus({ id: Date.now() }) }} onDeep={() => { setChatOpen(true); setChatFocus({ id: Date.now(), tool: 'deep' }) }}
           onMeet={() => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : ed.current?.meetStart())} />}
+        <span data-testid="save-note" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{saveNote}</span>
         {status && <div data-testid="status-toast" role="status" title={status} style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 6, maxWidth: 'min(640px, max(240px, calc(100% - 480px)))', padding: '6px 14px', borderRadius: 99,
           background: 'rgba(24,24,27,.86)', color: '#fff', font: "500 13px 'Pretendard', sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', pointerEvents: 'none', opacity: toastOn ? 1 : 0, transition: 'opacity .3s' }}>{status}</div>}
         {aiBusy && <div data-testid="ai-busy" role="status" style={{ position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 6, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 99,

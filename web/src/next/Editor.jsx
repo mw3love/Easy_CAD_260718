@@ -117,7 +117,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
 
   // 확정 — 붙은 화살표 따라가기 + 되돌리기 칸
   // merge = 같은 열쇠로 1.5초 안에 또 고치면 되돌리기 한 칸으로 묶음(−/+ 연타·색 고르기 끌기)
-  // 고친 뒤 알릴 말 — 고치면 곧바로 「고치는 중…」·「저장됨」(main `onCommit`)이 알림을 덮으므로 저장 알림 뒤에 다시(크레딧·막힘처럼 꼭 봐야 할 말만)
+  // 고친 뒤 알릴 말 — 크레딧·막힘처럼 꼭 봐야 할 말만 조금 뒤에 다시(옛 저장 알림이 덮던 것 — 2026-10-27부터 저장은 알림 없음)
   const sayLater = msg => setTimeout(() => setStatus(msg), 1200)
   const commit = useCallback((next, nextSel, label = '', merge = null) => {
     const prev = R.current.model.items, h = hist.current, now = Date.now()
