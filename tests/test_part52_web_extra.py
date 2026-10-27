@@ -148,3 +148,10 @@ def test_web_image_alt_survives_desktop_save():
     png = "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAFElEQVR4nGP4z8DAwMDAwMDAwAAAHwAB/2Y2E7QAAAAASUVORK5CYII="
     out = _roundtrip(dict(_BASE, type="image", rect=[0.0, 0.0, 680.0, 510.0], data=png, alt="송신탑 그려줘"))
     assert out["type"] == "image" and out["alt"] == "송신탑 그려줘"
+
+
+def test_web_symbol_name_survives_desktop_save():
+    # 2026-10-27 웹 내 심볼·아이콘 묶음 이름(속성 카드 제목 「마이크」) — 데스크톱을 거쳐도 남아야 함
+    d = dict(_BASE, type="rect", rect=[0.0, 0.0, 50.0, 30.0], pen="#ff000000", width=1.0, fill=None, style=1, group_id="g1", sym_name="마이크")
+    out = _roundtrip(d)
+    assert out["sym_name"] == "마이크" and out["group_id"] == "g1"

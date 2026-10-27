@@ -122,7 +122,7 @@ const fmtOn = (h, k) => (k === 'bold' ? allChars(h, 1) : k === 'hl' ? allChars(h
 // 도형 바꾸기(데스크톱 `_fill_swap_menu` 기본도형 8종 — 「내 심볼」은 심볼 팔레트를 옮길 때). 같은 _id라 붙은 화살표·라벨·색은 그대로
 const SWAP_KINDS = ['rect', 'ellipse', 'triangle', 'decision', 'terminal', 'data', 'prep', 'database']
 const kindOf = it => (it.type === 'symbol' ? it.kind : it.type)
-const swapPatch = k => (k === 'rect' || k === 'ellipse' ? { type: k, kind: undefined, cuts: undefined } : { type: 'symbol', kind: k, cuts: undefined })
+const swapPatch = k => (k === 'rect' || k === 'ellipse' ? { type: k, kind: undefined, cuts: undefined, sym_name: undefined } : { type: 'symbol', kind: k, cuts: undefined, sym_name: undefined })
 const kindName = k => (k === 'rect' ? '사각형' : k === 'ellipse' ? '원' : SYMBOLS[k]?.name || k)
 const shapeIcon = k => paletteIcon(k === 'rect' || k === 'ellipse' ? k : 'sym:' + k, 22, 14, 1.3)   // 도형 카드와 같은 그림(칠판 기본 비율)
 // 회전 대상 — 회전 손잡이가 있는 것(데스크톱 `_is_rotatable`: 끝점으로 모양을 정하는 화살표·선·펜은 뺌)
@@ -280,7 +280,8 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
   const boardsOnly = items.every(it => it.type === 'board'), allText = items.every(it => it.type === 'text')
   const showLine = lineItems.length > 0 && !allText   // 독립 글만 골랐으면 「선」 줄을 숨김(글 색은 「글자」에서)
   const types = new Set(items.map(typeName))
-  const title = items.length === 1 ? typeName(items[0]) : types.size === 1 ? `${[...types][0]} ${items.length}개` : `${items.length}개 · 혼합`
+  const symName = items[0]?.sym_name && items.every(it => it.sym_name === items[0].sym_name && it.group_id === items[0].group_id) ? items[0].sym_name : ''   // 내 심볼·아이콘 이름(2026-10-27 사용자: 「묶음 6개」 대신 「마이크」)
+  const title = symName || (items.length === 1 ? typeName(items[0]) : types.size === 1 ? `${[...types][0]} ${items.length}개` : `${items.length}개 · 혼합`)
 
   const color = one(lineItems.map(it => norm(it[lineKey(it)] ?? (it.type === 'table' ? '#333333' : null)))) ?? ''   // 표 선은 안 정했으면 render.jsx 기본(#333333) — 하나만 골라도 「서로 다름」으로 보였음
   const style = one(wItems.map(it => it.style || 1))
@@ -323,7 +324,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: folded ? 0 : 2 }}>
       {(swapOne || swapGrp) && !folded ? <div ref={swapRef} data-ppop="swap" style={{ flex: 1, minWidth: 0 }}>
         <button title="클릭: 다른 도형으로 바꾸기(크기·연결 유지)" aria-expanded={pop === 'swap'} onClick={() => setPop(pop === 'swap' ? null : 'swap')} style={btn(pop === 'swap', { width: '100%', justifyContent: 'flex-start', gap: 6, padding: '0 4px', height: 28 })}>
-          {swapOne ? shapeIcon(kindOf(swapOne)) : null}<span data-testid="prop-type" style={{ font: "700 15px 'Pretendard', sans-serif", overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{swapOne ? title : `묶음 ${items.length}개`}</span><span style={{ color: C.muted, marginLeft: 'auto' }}>▾</span></button>
+          {swapOne ? shapeIcon(kindOf(swapOne)) : null}<span data-testid="prop-type" title={symName && items.length > 1 ? `${symName} · 조각 ${items.length}개` : undefined} style={{ font: "700 15px 'Pretendard', sans-serif", overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{swapOne ? title : symName || `묶음 ${items.length}개`}</span><span style={{ color: C.muted, marginLeft: 'auto' }}>▾</span></button>
         {pop === 'swap' && <FloatPanel anchor={swapRef} id="swap" width={180} testid="pop-swap">   {/* 떠 있는 목록 — 카드 안에 펼쳐 스크롤이 생겼음(2026-10-23 전수조사) */}
           {SWAP_KINDS.map(k => <button key={k} onClick={() => { if (swapGrp) onSwapTo(swapGrp, k === 'rect' || k === 'ellipse' ? k : 'sym:' + k); else if (k !== kindOf(swapOne)) set(it => (it._id === swapOne._id ? swapPatch(k) : null), '도형 바꾸기'); setPop(null) }}
             style={btn(!!swapOne && k === kindOf(swapOne), { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>{shapeIcon(k)}<span style={{ fontSize: 12 }}>{kindName(k)}</span></button>)}

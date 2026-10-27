@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { DOC_NAME } from './doc.js'
-import { answerTable, contextText, inlineParts, parseAnswer } from '../chatFormat.js'
+import { answerTable, contextText, iconName, inlineParts, parseAnswer } from '../chatFormat.js'
 import { CHART_KINDS, chartChoices } from './chart.js'
 import { CHART_ICONS } from './props.jsx'
 import { urlSpans } from './geom.js'
@@ -56,6 +56,7 @@ const TOOLS = [['image', '🎨 이미지 만들기', '사진·일러스트 같�
   ['icon', '✏️ 아이콘 만들기 (SVG)', '선으로 된 도형 — 칠판에서 고칠 수 있어요', '무엇의 아이콘? 예: 파라볼라 안테나'],
   ['live', '▶ 인터랙티브 HTML', '원리를 직접 만져 보는 HTML 카드 하나(고른 것이 재료, 약 45크레딧)', '무엇을 움직여 볼까요? 예: 가격 × 물량 = 수출액'],
   ['deep', '📰 Deep Mode', '한 주제로 칠판 한 판 — 질문지 → 지면 계획 → 만들기(크레딧 많이)', '어떤 주제로 한 판? 예: 신입에게 어텐션 설명']]   // 딥모드는 서버가 할 수 있을 때만(/api/models `jobs.deep`)
+const CUT_MORE = '끊긴 곳부터 이어서 계속 써 줘. 앞 내용은 되풀이하지 말고 끊긴 문장부터.'   // 끊긴 답 「이어서 쓰기」(2026-10-27)
 const EMPTY_ASK = { report: '정리해 줘' }   // 이름표만 두고 빈 칸으로 보내면
 const BOARD_JOBS = new Set(['report', 'deep-build', 'deep-section'])   // 칠판을 바꾸거나 칠판 자료로 만드는 일 — 칠판 위에도 알약(main `aiBusy`)
 // 도는 동그라미(칠판 알약·대화창 「생각 중」 공용)
@@ -273,7 +274,8 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     const r = await chatPost({ model: useModel, board: DOC_NAME, ...(Object.keys(picks).length ? { models: picks } : {}), ...(kind ? { kind } : {}), ...(Object.keys(prefs).length ? { ask_pref: prefs } : {}), ...(prevHtml ? { prev_html: prevHtml } : {}), ...(history.at(-1)?.infographic ? { infographic: true } : {}), ...(history.at(-1)?.base_image ? { base_image: history.at(-1).base_image } : {}), ...(history.at(-1)?.base_svg ? { base_svg: history.at(-1).base_svg } : {}), ...extra, messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) })
     const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
     if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
-    return { role: 'assistant', content: d.content, model: d.model, ...(d.swap ? { swap: d.swap } : {}), at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}), ...(d.refs?.length ? { refs: d.refs } : {}),
+    return { role: 'assistant', content: d.content, model: d.model, ...(d.swap ? { swap: d.swap } : {}), ...(d.cut ? { cut: true } : {}),   // cut = 길이 상한에 걸려 끊김(2026-10-27)
+      at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}), ...(d.refs?.length ? { refs: d.refs } : {}),
       ...(d.images?.length ? { images: d.images, prompt: d.caption || history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}),
       ...(d.svgs?.length ? { svgs: d.svgs, prompt: history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}), ...(d.credits != null ? { credits: d.credits } : {}),   // caption = 이어 고친 그림이면 처음 요청(서버)
       ...(d.html ? { html: d.html, title: d.title || (d.kind === 'live' ? '인터랙티브 HTML' : '정리 문서') } : {}), ...(d.kind === 'ask' ? { choices: d.choices || [], askKey: d.key || '' } : {}),
@@ -443,13 +445,19 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', done)
   }
   // 아이콘 후보 — 누르면 빈자리, 끌면 놓은 자리(칠판이 도형을 끌고 정렬선). 붙인 도형은 다음 질문에 안 실음
-  function pinSvgPick(i, j) { const ids = ed.current?.pinSvg(msgs[i].svgs[j]); if (ids) { setSkipSel(ids.join()); markPicked(i, j) } }
+  // 붙인 묶음 이름 = 아이콘 요청(「안테나 아이콘 그려 줘」 → 「안테나」, 2026-10-27). 고친 답(후보 하나)이면 바로 앞 아이콘 답의 요청을 거슬러 — 「선을 더 굵게」는 이름이 아님
+  function iconTitle(i) {
+    let k = i
+    while (msgs[k].svgs?.length === 1) { let j = k - 1; while (j >= 0 && msgs[j].role !== 'assistant') j--; if (j < 0 || !msgs[j].svgs?.length) break; k = j }
+    return iconName(msgs[k].prompt)
+  }
+  function pinSvgPick(i, j) { const ids = ed.current?.pinSvg(msgs[i].svgs[j], iconTitle(i)); if (ids) { setSkipSel(ids.join()); markPicked(i, j) } }
   function svgDown(e, i, j) {
     if (e.button !== 0) return
     dragged.current = false
     const sx = e.clientX, sy = e.clientY
     const move = ev => { if (Math.hypot(ev.clientX - sx, ev.clientY - sy) <= 6) return; done(); dragged.current = true
-      ed.current?.dragSvg(msgs[i].svgs[j], ids => { setSkipSel((ids || []).join()); markPicked(i, j) }) }
+      ed.current?.dragSvg(msgs[i].svgs[j], ids => { setSkipSel((ids || []).join()); markPicked(i, j) }, iconTitle(i)) }
     const done = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', done) }
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', done)
   }
@@ -470,6 +478,21 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     setBusy(Date.now()); setBusyJob(m.kind || '')
     try { const a = await ask(history, m.kind || '', m.kind === 'report' && history.at(-2)?.html ? history.at(-2).html : ''); update(msgs.map((x, j) => (j === i ? a : x))) } catch (e) {
       setMsgs([...msgs.filter(x => x.role !== 'error'), { role: 'error', content: String(e.message || e) }])
+    } finally { setBusy(null) }
+  }
+  // 후보 「2개 더 보기」(2026-10-27 사용자) — 같은 질문(그 앞 대화까지)·같은 종류로 한 번 더 물어 이 답 후보 뒤에 덧붙임(앞 후보·고른 표시는 그대로). 새로 그린 답(후보 2개)에만, 4개까지
+  const MORE_MAX = 4
+  const canMore = m => (m.kind === 'image' || m.kind === 'icon') && (m.images || m.svgs || []).length >= 2 && (m.images || m.svgs).length < MORE_MAX
+  async function more(i) {
+    const history = msgs.slice(0, i).filter(m => m.role !== 'error'), m = msgs[i]
+    if (busy || history.at(-1)?.role !== 'user' || !canMore(m)) return
+    setBusy(Date.now()); setBusyJob(m.kind)
+    try {
+      const a = await ask(history, m.kind), key = m.kind === 'image' ? 'images' : 'svgs'
+      if (!a[key]?.length) throw new Error('후보를 더 못 만들었어요')
+      setMsgs(cur => { const next = cur.map(x => (x.at === m.at ? { ...x, [key]: [...x[key], ...a[key]].slice(0, MORE_MAX), ...(a.credits != null ? { credits: (x.credits || 0) + a.credits } : {}) } : x)); save(next); return next })
+    } catch (e) {
+      setMsgs(cur => [...cur.filter(x => x.role !== 'error'), { role: 'error', content: String(e.message || e) }])
     } finally { setBusy(null) }
   }
   const [menuAt, setMenuAt] = useState(null)   // ⋯ 메뉴를 연 답의 at
@@ -572,6 +595,11 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
                 : <DeepPlan m={m} busy={busy} css={css} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
                   build={() => deepBuild(i)} show={() => ed.current?.showIds([m.built]) || setGone(g => ({ ...g, [m.at + ':deep']: true }))} />)
                 : <Answer text={m.content} chart={m.kind === 'ask' ? null : chartAct(m)} />}
+              {/* 길이 상한에 걸려 끊긴 답(2026-10-27 — 긴 연설문 등이 다 된 것처럼 보였음). 이어 쓰기는 맨 끝 답에서만(앞 답이면 「⋯ › 여기서 이어 묻기」) */}
+              {m.cut && <div data-testid="answer-cut" style={{ ...css.meta, color: '#d97706', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+                <span>답이 길어서 중간에 끊겼어요</span>
+                {i === msgs.length - 1 && <button data-testid="answer-cut-more" style={css.ghost} disabled={!!busy} onClick={() => send(CUT_MORE, 'chat')} title="끊긴 곳부터 이어서 써 달라고 보내요">이어서 쓰기</button>}
+              </div>}
               {m.kind === 'deep' && (m.model || gone[m.at + ':deep']) && <div style={{ ...css.meta, marginTop: 6, textAlign: 'right' }}>{gone[m.at + ':deep'] ? '판이 지워졌어요 · ' : ''}{m.model || ''}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · 약 ${Math.round(m.credits)}크레딧` : ''}</div>}
               {m.kind === 'ask' && <div data-testid="ask-choices" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
                 {(m.choices || []).map(k => <button key={k} data-testid="ask-choice" data-kind={k} disabled={!!busy} onClick={() => choose(i, k)} title={(ASK_LABEL[k] || [])[1]}
@@ -611,6 +639,8 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
                     <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgPreview(sv))}`} alt={`아이콘 후보 ${j + 1}`} draggable={false} style={{ display: 'block', width: '100%', height: '100%', padding: 10, boxSizing: 'border-box' }} />
                     {flash === `${i}:${j}` && <span style={{ position: 'absolute', left: 6, top: 6, ...css.meta, color: DONE, background: '#fff', borderRadius: 4, padding: '0 4px' }}>✓ 추가됨</span>}
                   </div> })}</div>}
+              {canMore(m) && <div style={{ marginTop: 6 }}><button data-testid="answer-more" style={css.ghost} disabled={!!busy} onClick={() => more(i)}
+                title="같은 요청으로 후보 2개를 더 만들어 아래에 덧붙여요(앞 후보는 그대로)">＋ 2개 더 보기 · 약 {m.kind === 'image' ? 20 : 10}크레딧</button></div>}
               {m.refs?.length > 0 && <div data-testid="answer-refs" style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {m.refs.map(r => <button key={r.n} onClick={() => ed.current?.showItem(r.uid) || setGone(g => ({ ...g, [m.at + ':' + r.n]: true }))} title="칠판의 그 도형으로 가기"
                   style={{ all: 'unset', cursor: 'pointer', ...css.meta, color: '#d97706', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

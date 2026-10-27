@@ -721,7 +721,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function customItems(key) {
     const e = (library || []).find(s => 'customsym:' + s.id === key); if (!e) return null
     const items = fromEcad({ items: structuredClone(e.items) }).items, gid = items.length >= 2 ? newId() : null, top = topZ(R.current.model.items) + 1
-    return items.map(it => ({ ...it, group_id: gid, z: top + (it.z || 0) }))
+    return items.map(it => ({ ...it, group_id: gid, sym_name: e.name || undefined, z: top + (it.z || 0) }))   // sym_name = 속성 카드 제목(2026-10-27)
   }
   // protos를 왼쪽 위가 (x, y)인 자리로
   const placeAt = (protos, x, y) => { const b = unionBox(protos.map(it => sceneBox(it, textBox))); return moveItems(protos, protos.map(it => it._id), x - b.x, y - b.y) }
@@ -1786,7 +1786,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (readOnly) return
     const p = e ? toSceneP(e) : pasteAt(); R.current.mouse = p
     for (const f of files) {
-      if (/\.svg$/i.test(f.name) || f.type === 'image/svg+xml') { if (!insertSvg(await f.text(), p, f.name)) { await insertImage(f); setStatus(`${f.name} — 도형으로 못 읽는 부분(옮기기·그라디언트 등)이 있어 그림으로 넣었어요`) } }
+      if (/\.svg$/i.test(f.name) || f.type === 'image/svg+xml') { if (!insertSvg(await f.text(), p, f.name, f.name.replace(/\.svg$/i, ''))) { await insertImage(f); setStatus(`${f.name} — 도형으로 못 읽는 부분(옮기기·그라디언트 등)이 있어 그림으로 넣었어요`) } }
       else if (/^image\//.test(f.type)) await insertImage(f)
       else if (AUDIO_RE.test(f.name) || /^audio\//.test(f.type)) startMeeting(f, p)
       else if (/\.pdf$/i.test(f.name) || f.type === 'application/pdf') await insertPdf(f, p)
@@ -1798,24 +1798,25 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // SVG → 고칠 수 있는 도형(§8 항목63) — 데스크톱 `_insert_svgs_at`과 같게: 긴 변 160·가운데 = at, 펜 = 지금 그리기색·채움 없음(글자는 제 색),
   // 묶음 하나로(2026-10-25 사용자: 모여 있어야 뜻이 있음 — 끌어 고르기도 하나만 걸리면 통째, 낱개로 고치려면 Ctrl+Shift+G. 옛 2026-08-04 「묶지 않음」을 뒤집음). 못 읽는 모양이면 false
   const SVG_LONG = 160
-  const svgProtos = (svg, at) => { const z = topZ(R.current.model.items) + 1, its = svgItems(svg, SVG_LONG, at).items, g = its.length > 1 ? 'g' + newId() : null
-    return its.map((s, i) => base(s.pos, s.type === 'text' ? { ...s, bg: null, z: z + i, group_id: g } : { ...penOf(false), ...(s.type === 'path' || s.type === 'line' ? null : { fill: null }), ...s, z: z + i, group_id: g })) }
-  function insertSvg(svg, at, what = 'SVG') {
+  // name = 묶음 이름(속성 카드 제목 — .svg 파일 이름·아이콘 요청, 2026-10-27), 없으면 「묶음 N개」
+  const svgProtos = (svg, at, name = '') => { const z = topZ(R.current.model.items) + 1, its = svgItems(svg, SVG_LONG, at).items, g = its.length > 1 ? 'g' + newId() : null, sym_name = name || undefined
+    return its.map((s, i) => base(s.pos, s.type === 'text' ? { ...s, bg: null, z: z + i, group_id: g, sym_name } : { ...penOf(false), ...(s.type === 'path' || s.type === 'line' ? null : { fill: null }), ...s, z: z + i, group_id: g, sym_name })) }
+  function insertSvg(svg, at, what = 'SVG', name = '') {
     if (!svgFits(svg)) return false
-    const m = R.current.model, its = svgProtos(svg, at)
+    const m = R.current.model, its = svgProtos(svg, at, name)
     commit([...m.items, ...its], its.map(it => it._id), what); setTool('select')
     setStatus(`${what} → 도형 ${its.length}개 묶음 — 선 하나씩 고치려면 묶음 풀기(Ctrl+Shift+G)`)
     return true
   }
   // 대화창 ✏️ 아이콘 후보(2단계) — 넣는 모양은 위와 같게, 자리는 그림 후보처럼: 누르면 가운데 먼저·겹치면 빈자리, 끌면 놓은 자리(정렬선).
   // AI가 만든 것은 `svgFits`로 막지 않음(데스크톱 「심볼」과 같게 — 못 읽는 부분만 건너뜀). 넣은 도형 _id들(없으면 null)
-  function pinSvg(svg) {
-    const ps = svgProtos(svg, { x: 0, y: 0 }); if (!ps.length) { setStatus('아이콘을 도형으로 못 읽었어요'); return null }
+  function pinSvg(svg, name = '') {
+    const ps = svgProtos(svg, { x: 0, y: 0 }, name); if (!ps.length) { setStatus('아이콘을 도형으로 못 읽었어요'); return null }
     const m = R.current.model, b = unionBox(ps.map(it => sceneBox(it, textBox))), at = spotNear(b.w, b.h), its = placeAt(ps, at.x, at.y)
     commit([...m.items, ...its], its.map(it => it._id), '아이콘 붙이기'); setTool('select')
     return its.map(it => it._id)
   }
-  const dragSvg = (svg, onPlaced) => { const ps = svgProtos(svg, { x: 0, y: 0 }); if (ps.length) startPaletteDrag('svg', ps, onPlaced) }
+  const dragSvg = (svg, onPlaced, name = '') => { const ps = svgProtos(svg, { x: 0, y: 0 }, name); if (ps.length) startPaletteDrag('svg', ps, onPlaced) }
   // HTML 파일 = 정리 문서 카드(스크립트는 끔 — 칠판이 안전하게, 2026-10-21 사용자)
   async function insertHtmlFile(f, at) {
     const html = await f.text(), m = R.current.model, title = (/<title[^>]*>([^<]*)<\/title>/i.exec(html)?.[1] || '').trim() || f.name.replace(/\.html?$/i, '')

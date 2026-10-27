@@ -75,3 +75,24 @@ test('그림 후보 끌기 = 실제 크기로 따라오고 정렬선 · 놓은 �
   await expect(pick).toHaveAttribute('data-picked', '1')
   await waitSaved(page)
 })
+
+test('그림 후보 「2개 더 보기」 — 같은 질문을 다시 보내 뒤에 덧붙임 · 앞 후보·고른 표시 그대로 · 4개면 단추 없음(2026-10-27)', async ({ page }) => {
+  const name = boardName('imgmore'), seen = []
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
+  await page.route('**/api/chat', r => { seen.push(r.request().postDataJSON()); const k = seen.length
+    return r.fulfill({ json: { kind: 'image', content: '그림 후보 2장', model: 'img-m', elapsed: 4, credits: 20, images: [{ url: `/api/img/${name}/${k}_a.png` }, { url: `/api/img/${name}/${k}_b.png` }] } }) })
+  await page.route('**/api/img/**', r => r.fulfill({ body: PNG, contentType: 'image/png' }))
+  await openBoard(page, name, { chat: true }); await setCam(page)
+  await page.getByPlaceholder('물어보세요', { exact: false }).click()
+  await page.keyboard.type('산 위 송신탑 그려줘'); await page.keyboard.press('Enter')
+  await expect(page.getByTestId('image-pick')).toHaveCount(2)
+  await pinCandidate(page, 0)
+  await expect(page.getByTestId('answer-more')).toContainText('약 20크레딧')
+  await page.getByTestId('answer-more').click()
+  await expect(page.getByTestId('image-pick')).toHaveCount(4)
+  expect(seen[1].kind).toBe('image'); expect(seen[1].messages).toEqual(seen[0].messages)   // 같은 질문 그대로
+  await expect(page.getByTestId('image-pick').first()).toHaveAttribute('data-picked', '1')
+  await expect(page.locator('[data-testid=image-pick] img').nth(2)).toHaveAttribute('src', `/api/img/${name}/2_a.png`)
+  await expect(page.getByTestId('answer-kind')).toHaveCount(1)                        // 새 답이 아니라 같은 답에
+  await expect(page.getByTestId('answer-more')).toHaveCount(0)
+})

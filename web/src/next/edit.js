@@ -212,8 +212,8 @@ export function removeItems(items, ids) {
   })
 }
 
-export const groupItems = (items, ids) => { const g = 'g' + newId(); return upd(items, ids, it => ({ ...it, group_id: g })) }
-export const ungroupItems = (items, ids) => upd(items, ids, it => ({ ...it, group_id: null }))
+export const groupItems = (items, ids) => { const g = 'g' + newId(); return upd(items, ids, it => ({ ...it, group_id: g, sym_name: undefined })) }   // sym_name = 내 심볼·아이콘 이름(2026-10-27) — 새로 묶거나 풀면 더는 그 심볼이 아님
+export const ungroupItems = (items, ids) => upd(items, ids, it => ({ ...it, group_id: null, sym_name: undefined }))
 export const toggleLock = (items, ids) => { const lock = !items.filter(it => ids.includes(it._id)).every(it => it.locked); return upd(items, ids, it => ({ ...it, locked: lock })) }
 // 맨 앞/맨 뒤(데스크톱 bring_to_front/send_to_back — 고른 것끼리 차례는 유지)
 export function zOrder(items, ids, front) {

@@ -32,6 +32,8 @@ test('아이콘 → 후보 둘 → 누르면 고칠 수 있는 도형 → 「선
   expect(its.map(it => it.type)).toEqual(DESK.map(it => it.type))                    // 파일 놓기·데스크톱과 같은 도형
   expect(its[0].group_id).toBeTruthy(); expect(its.every(it => it.group_id === its[0].group_id)).toBe(true)   // 묶음 하나 — 선 하나만 고치려면 묶음 풀기
   await expect(page.getByTestId('svg-pick').first()).toHaveAttribute('data-picked', '1')
+  expect(its.every(it => it.sym_name === '파라볼라 안테나')).toBe(true)              // 묶음 이름 = 요청(2026-10-27 — 속성 카드 제목이 「묶음 N개」 대신)
+  await expect(page.getByTestId('prop-type')).toHaveText('파라볼라 안테나')
 
   await page.getByPlaceholder('무엇의 아이콘', { exact: false }).click()
   await page.keyboard.type('선을 더 굵게'); await page.keyboard.press('Enter')
@@ -56,4 +58,29 @@ test('아이콘 → 후보 둘 → 누르면 고칠 수 있는 도형 → 「선
   await page.keyboard.type('고마워'); await page.keyboard.press('Enter')
   await expect(page.getByTestId('answer-kind')).toHaveCount(3)
   expect(sent[2].kind).toBeUndefined()
+})
+
+test('아이콘 후보 「2개 더 보기」 — 4개로 · 더 만든 것도 같은 이름으로 붙음 · 고친 답(하나)엔 단추 없음(2026-10-27)', async ({ page }) => {
+  const sent = []
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
+  await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); sent.push(b)
+    return r.fulfill({ json: b.base_svg ? { kind: 'icon', content: '고쳤어요', svgs: [ICON], model: 'icon-m', elapsed: 2 } : { kind: 'icon', content: '아이콘 후보 2개', svgs: [ICON, ICON2], model: 'icon-m', elapsed: 3 } }) })
+  await openBoard(page, boardName('iconmore'), { chat: true }); await setCam(page)
+  await page.getByPlaceholder('물어보세요', { exact: false }).click()
+  await page.keyboard.type('마이크 SVG로 그려 줘'); await page.keyboard.press('Enter')
+  await expect(page.getByTestId('svg-pick')).toHaveCount(2)
+  await expect(page.getByTestId('answer-more')).toContainText('약 10크레딧')
+  await page.getByTestId('answer-more').click()
+  await expect(page.getByTestId('svg-pick')).toHaveCount(4)
+  await page.getByTestId('svg-pick').nth(3).click()
+  await expect.poll(async () => (await liveDoc(page)).items.length).toBeGreaterThan(0)
+  await expect(page.getByTestId('prop-type')).toHaveText('마이크')
+  await page.getByPlaceholder('무엇의 아이콘', { exact: false }).or(page.getByPlaceholder('물어보세요', { exact: false })).first().click()
+  await page.keyboard.type('선을 더 굵게'); await page.keyboard.press('Enter')
+  await expect(page.getByTestId('svg-pick')).toHaveCount(5)
+  await expect(page.getByTestId('answer-more')).toHaveCount(0)
+  const n = (await liveDoc(page)).items.length
+  await page.getByTestId('svg-pick').nth(4).click()                                    // 고친 아이콘 = 앞 요청의 이름(「선을 더 굵게」가 아님)
+  await expect.poll(async () => (await liveDoc(page)).items.length).toBeGreaterThan(n)
+  await expect(page.getByTestId('prop-type')).toHaveText('마이크')
 })

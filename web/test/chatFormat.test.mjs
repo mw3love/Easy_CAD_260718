@@ -1,7 +1,7 @@
 // node --test web/test — KAIROS 대화창 순수 함수(§8 항목61 ⓒ)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { answerToRichText, contextText, freeSpot, inlineParts, parseAnswer, sourceLine } from '../src/chatFormat.js'
+import { answerToRichText, contextText, freeSpot, iconName, inlineParts, parseAnswer, sourceLine } from '../src/chatFormat.js'
 
 test('답 글 읽기 — 표(| 가 | 나 |): 붙은 줄 한 덩어리, |---| 이면 첫 줄 머리글(2026-10-20)', () => {
   const ln = parseAnswer('날씨 요약\n| 항목 | 내일 |\n|---|:---:|\n| 기온 | **9~18℃** |\n| 오전 | 비 |\n\n끝')
@@ -66,4 +66,14 @@ test('답 표 → 칠판 표 칸: 줄 길이 맞춤·굵게·출처 번호 뺌',
   const t = answerTable([['모델', '점수'], ['**GPT**', '28.4 [1]'], ['나', '25.1[2, 3]', '덤']])
   assert.deepEqual(t.cells, [['모델', '점수', ''], ['GPT', '28.4', ''], ['나', '25.1', '덤']])
   assert.deepEqual(t.refs, [1, 2, 3])
+})
+
+test('아이콘 이름 — 요청에서 「아이콘·SVG·그려 줘」를 뗌(2026-10-27, 속성 카드 제목)', () => {
+  assert.equal(iconName('안테나 아이콘 그려 줘'), '안테나')
+  assert.equal(iconName('마이크 SVG로 만들어줘'), '마이크')
+  assert.equal(iconName('선 그림으로 고양이 그려 줘'), '고양이')
+  assert.equal(iconName('송신탑 아이콘 하나 그려줘'), '송신탑')
+  assert.equal(iconName('카메라 아이콘을 그려주세요.'), '카메라')
+  assert.equal(iconName('파라볼라 안테나'), '파라볼라 안테나')
+  assert.equal(iconName('SVG 아이콘 만들어줘'), '')
 })

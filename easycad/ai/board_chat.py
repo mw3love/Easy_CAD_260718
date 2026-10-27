@@ -221,6 +221,8 @@ def chat(api_key: str, history: list, *, model: str, context: str = "", kind: st
     resp = client.chat.completions.create(model=use, max_tokens=gw.DEFAULT_MAX_TOKENS, messages=messages)
     content = resp.choices[0].message.content or ""
     out = {"content": content, "model": use, "elapsed": round(time.time() - t0, 1), "kind": kind}
+    if getattr(resp.choices[0], "finish_reason", None) == "length":   # 길이 상한에 걸려 끊김(2026-10-27 — 전엔 다 된 것처럼 보임) → 대화창 「이어서 쓰기」
+        out["cut"] = True
     if search:
         raw = resp.model_dump() if hasattr(resp, "model_dump") else dict(getattr(resp, "__dict__", {}))
         out["content"], out["sources"] = renumber_sources(content, cited_sources(content, raw))

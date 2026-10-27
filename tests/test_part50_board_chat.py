@@ -49,6 +49,15 @@ def test_chat_sends_whole_conversation_to_chosen_model():
     assert seen["model"] == "m-1" and "고른 글" in seen["messages"][-1]["content"]
 
 
+def test_chat_marks_answer_cut_at_length_limit():
+    # 2026-10-27 길이 상한에 걸린 답은 cut — 대화창이 「끊겼어요 · 이어서 쓰기」를 보임(끝난 답엔 없음)
+    def fake(reason):
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kw: SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="긴 연설문…"), finish_reason=reason)]))))
+    assert board_chat.chat("k", [{"role": "user", "content": "연설문 길게 써 줘"}], model="m", kind="chat", client=fake("length"))["cut"] is True
+    assert "cut" not in board_chat.chat("k", [{"role": "user", "content": "연설문 길게 써 줘"}], model="m", kind="chat", client=fake("stop"))
+
+
 @pytest.fixture
 def server(tmp_path, monkeypatch):
     import server as srv

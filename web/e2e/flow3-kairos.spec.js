@@ -129,3 +129,20 @@ test('답을 기다리다 「취소」 — 바로 풀리고 까닭이 보이고,
   await box.click(); await page.keyboard.type('다시 물음'); await page.keyboard.press('Enter')
   await expect(page.getByText('계통도 고치기').first()).toBeVisible()
 })
+
+test('길이 상한에 걸려 끊긴 답 — 「끊겼어요」 + 「이어서 쓰기」 = 끊긴 곳부터 이어 달라고 보냄(2026-10-27)', async ({ page }) => {
+  const seen = []
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
+  await page.route('**/api/chat', async r => { const b = r.request().postDataJSON(); seen.push(b)
+    await r.fulfill({ json: seen.length === 1 ? { content: '존경하는 직원 여러분, 오늘', model: 'fake-model', elapsed: 9, cut: true } : { content: '이 자리에 모인 까닭은…', model: 'fake-model', elapsed: 4 } }) })
+  await openBoard(page, boardName('cut'), { chat: true }); await setCam(page)
+  await page.getByPlaceholder('물어보세요', { exact: false }).click(); await page.keyboard.type('연설문 길게 써 줘'); await page.keyboard.press('Enter')
+  await expect(page.getByTestId('answer-cut')).toContainText('끊겼어요')
+  await page.getByTestId('answer-cut-more').click()
+  await expect(page.getByText('이 자리에 모인 까닭은').first()).toBeVisible()
+  expect(seen[1].kind).toBe('chat')                                                  // 길 고르기 없이 대화로
+  expect(seen[1].messages.at(-2)).toMatchObject({ role: 'assistant', content: '존경하는 직원 여러분, 오늘' })   // 끊긴 답을 앞 대화로
+  expect(seen[1].messages.at(-1).content).toContain('이어서')
+  await expect(page.getByTestId('answer-cut')).toHaveCount(1)
+  await expect(page.getByTestId('answer-cut-more')).toHaveCount(0)                   // 맨 끝 답이 아니면 단추 없음
+})

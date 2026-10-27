@@ -63,6 +63,8 @@ test('내 심볼(이 브라우저) — 우클릭 추가 → 판에 보임 → �
   const n0 = (await liveDoc(page)).items.length
   await mine.getByRole('button', { name: '동그라미' }).click(); await clickScene(page, 400, 300)
   await expect.poll(async () => (await liveDoc(page)).items.length).toBe(n0 + 1)
+  expect((await liveDoc(page)).items.at(-1).sym_name).toBe('동그라미')                       // 속성 카드 제목 = 심볼 이름(2026-10-27)
+  await expect(page.getByTestId('prop-type')).toHaveText('동그라미')
   await page.reload(); await expect(page.getByTestId('mine').getByRole('button', { name: '동그라미' })).toBeVisible()   // 이 브라우저에 남음
   await page.getByTestId('mine').getByRole('button', { name: '동그라미' }).click({ button: 'right' })
   await page.getByTestId('mine-pop').getByRole('button', { name: '이름 바꾸기' }).click()

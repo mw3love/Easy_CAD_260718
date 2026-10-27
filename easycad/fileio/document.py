@@ -372,7 +372,7 @@ _WEB_TYPES = ("frame", "web", "memo", "legend", "doc", "pdf")   # doc = 정리 �
 # 데스크톱이 정하는 칸(옮기기·크기·돌리기·쌓는 순서·잠금·묶음·레이어·포트·자국·AI 보드 표시) — 웹 종류도 이것만은 데스크톱 값이 이김
 _DESK_KEYS = ("type", "pos", "scale", "rotation", "z", "origin", "locked", "group_id", "layer_id", "rect", "ports", "cuts", "pb_part", "pb_card", "pb_piece")
 
-_WEB_ONLY_KEYS_ALL =("fit_text", "chat_at", "legend", "legend_key", "uid", "deep_of", "deep_sec")   # legend·legend_key = 웹 범례 표시(다시 모을 때 이름 지키기), uid = 웹 공동작업 도형 이름표(2026-10-18), deep_of·deep_sec = 딥모드 판 물건 표시(§8 항목66 3-1 — 웹 「디자인」 다시 짓기)
+_WEB_ONLY_KEYS_ALL =("fit_text", "chat_at", "legend", "legend_key", "uid", "deep_of", "deep_sec", "sym_name")   # sym_name = 웹 내 심볼·아이콘 묶음 이름(속성 카드 제목, 2026-10-27), legend·legend_key = 웹 범례 표시(다시 모을 때 이름 지키기), uid = 웹 공동작업 도형 이름표(2026-10-18), deep_of·deep_sec = 딥모드 판 물건 표시(§8 항목66 3-1 — 웹 「디자인」 다시 짓기)
 
 
 _WEB_ONLY_KEYS ={"table": ("font", "color", "pen", "cell_styles", "cell_runs", "row_heights", "chart", "table_wh", "chart_theme"), "image": ("alt",)}  # row_heights = 행 높이 비율(웹 2026-10-18, 데스크톱은 같은 높이로 그림), chart·table_wh = 그래프 모양·표일 때 크기(§8 항목66 1단계 — 데스크톱도 그래프로 그림 `core_chart`, chart_theme = 색 순서 — 딥모드 디자인)

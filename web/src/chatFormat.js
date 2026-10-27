@@ -73,6 +73,17 @@ export function sourceLine(model, at) {
   return `KAIROS · ${model} · ${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
+// 아이콘 요청 → 칠판에 붙인 묶음 이름(2026-10-27 사용자: 속성 카드 제목이 「묶음 6개」 대신 「안테나」) — 「안테나 아이콘 그려 줘」 → 「안테나」. 못 뽑으면 ''
+const ICON_TAIL = /^(그려|그리|만들|생성|해\s*줘|해줘|해\s*주|줘|주세요|주라|부탁|좀|하나|한\s*개|두\s*개)/, ICON_WORD = /^(아이콘|svg|벡터|라인|아트)/i
+export function iconName(ask) {
+  const toks = String(ask || '').split(/\r?\n/)[0].replace(/선\s*그림(으로|로)?|라인\s*아트(로)?/g, ' ').replace(/[.!?~]+/g, ' ').trim().split(/\s+/).filter(Boolean)
+  while (toks.length && ICON_TAIL.test(toks.at(-1))) toks.pop()
+  const kept = toks.filter(t => !ICON_WORD.test(t))
+  if (kept.length) kept[kept.length - 1] = kept.at(-1).replace(/(을|를)$/, '')
+  const s = kept.join(' ').trim()
+  return s.length > 20 ? s.slice(0, 20) + '…' : s
+}
+
 const hit = (a, b, pad) => a.x < b.x + b.w + pad && b.x < a.x + a.w + pad && a.y < b.y + b.h + pad && b.y < a.y + a.h + pad
 
 // 화면(view) 안에서 w×h 상자가 다른 것(boxes)과 안 겹치는 자리 — 왼쪽 위부터 줄 단위로 훑는다. 화면에 없으면 모든 것의 오른쪽.
