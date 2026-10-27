@@ -61,10 +61,10 @@ test('창을 닫으면 접속자 이름이 바로 빠짐', async ({ browser }) =
   const ca = await browser.newContext(), cb = await browser.newContext()
   const a = await ca.newPage(), b = await cb.newPage()
   await openBoard(a, name, { who: '기자' }); await openBoard(b, name, { who: '작가' })
-  const who = a.getByText('👥', { exact: false }).first()
-  await expect(who).toContainText('작가', { timeout: 4000 })
+  const who = a.getByTestId('people')
+  await expect(who).toHaveAttribute('title', /작가/, { timeout: 4000 })
   await b.goto('about:blank')                                                                // 탭 닫기와 같음(pagehide)
-  await expect(who).not.toContainText('작가', { timeout: 3000 })                             // 전엔 15초 넘게 남았음
+  await expect(who).not.toHaveAttribute('title', /작가/, { timeout: 3000 })                             // 전엔 15초 넘게 남았음
   await ca.close(); await cb.close()
 })
 

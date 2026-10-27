@@ -3,7 +3,7 @@
 // 화면 틀(사용자 선택): 위 막대는 데스크톱처럼 아이콘 밑 짧은 이름, 칠판 위 떠 있는 카드(좌상 도형), 오른쪽 KAIROS 대화창(4단계).
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Editor, rightInset } from './Editor.jsx'
+import { Editor, rightInset, personColor } from './Editor.jsx'
 import { DOC_NAME, VIEW_TOKEN, api, docBounds, emptyDoc, loadServerDoc, parseDoc, saveServerDoc } from './doc.js'
 import { diffModel, rebase, snapshotModel } from './sync.js'
 import { Viewer } from './viewer.jsx'
@@ -91,30 +91,46 @@ function WebForm({ onInsert, onClose }) {
   </div>
 }
 
-// 샘플 열기 — 지금 칠판을 그 내용으로 바꿈(서버 없으면 위 막대, 있으면 칠판 메뉴 안)
+// 샘플 열기 — 지금 칠판을 그 내용으로 바꿈(개발 시험용 — 서버 없을 때 위 막대에만, 2026-10-27 칠판 칸에서 뺌)
 const SampleSelect = ({ onPick }) => <select data-testid="sample-select" onChange={e => { const u = e.target.value; e.target.value = ''; if (u) onPick(u) }} defaultValue="" title="샘플 칠판으로 바꾸기 — 지금 칠판 내용이 바뀌어요(Ctrl+Z로 되돌리기)"
   style={{ font: "500 12px 'Pretendard', sans-serif", padding: '4px 6px', borderRadius: 6, border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>
   <option value="">샘플 열기…</option>{SAMPLES.map(([n, u]) => <option key={u} value={u}>{n}</option>)}
 </select>
 
+// 접속자 = 이름 첫 글자 동그라미(2026-10-27 사용자: 이름을 잇대 쓰면 10명이면 잘림) — 4칸까지(넘치면 3명 + 「+N」), 색 = 칠판에서 그 사람이 고른 테두리 색, 누르면 공유 창(전체 목록)
+const FACES = 4
+const Faces = ({ list, onClick }) => { const shown = list.slice(0, list.length > FACES ? FACES - 1 : FACES), more = list.length - shown.length
+  const dot = { width: 24, height: 24, borderRadius: '50%', marginLeft: -6, boxSizing: 'border-box', border: `2px solid ${C.bar}`, display: 'flex', alignItems: 'center', justifyContent: 'center', font: "700 11px 'Pretendard', sans-serif" }
+  return <button data-testid="people" onClick={onClick} title={`지금 이 칠판에 ${list.length}명 — ${list.map(p => p.name + (p.me ? ' (나)' : '')).join(', ')}`} aria-label={`접속자 ${list.length}명`}
+    style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', paddingLeft: 6 }}>
+    {shown.map(p => <span key={p.id} style={{ ...dot, background: p.color, color: '#fff' }}>{[...(p.name || '?')][0]}</span>)}
+    {more > 0 && <span style={{ ...dot, background: C.group, color: C.ink, fontSize: 10 }}>+{more}</span>}
+  </button> }
+
 // 칠판 고르기 — 새 칠판·최근 칠판(2026-10-19 점검: 주소창에 `?board=`를 직접 쳐야만 옮겨 갈 수 있었음). 옮겨 가기 = 그 주소로 다시 열기(칠판 이름은 주소가 정함)
 const TEST_BOARD = /^(claude|e2e)_/   // Claude·화면 시험이 만든 칠판은 목록에서 숨김
 const ago = s => { const d = Date.now() / 1000 - s; return d < 60 ? '방금' : d < 3600 ? `${Math.floor(d / 60)}분 전` : d < 86400 ? `${Math.floor(d / 3600)}시간 전` : `${Math.floor(d / 86400)}일 전` }
-function BoardForm({ onClose, onSample, docked, children }) {   // docked = 왼쪽 판 「칠판」 칸(2026-10-23 — 위 막대 팝업에서 옮김), children = 아래 파일 단추들
-  const [list, setList] = useState(null), [name, setName] = useState(''), [all, setAll] = useState(false)
+// 2026-10-27 사용자 점검: 이름 칸이 맨 위에 늘 있어 찾기 칸으로 보였음·보통은 「만들기」 먼저 → 「＋ 새 칠판」을 누르면 그 자리에 이름 칸(이름 = 칠판 주소라 건너뛸 수 없음).
+// 샘플 열기는 개발 시험용이라 뺌(서버 없을 때 위 막대에만), 「저장」은 위 막대·Ctrl+S와 겹쳐 뺌(서버는 저절로 저장) — 아래는 파일 열기·내려받기만
+function BoardForm({ onClose, docked, children }) {   // docked = 왼쪽 판 「칠판」 칸(2026-10-23 — 위 막대 팝업에서 옮김), children = 아래 파일 단추들
+  const [list, setList] = useState(null), [name, setName] = useState(''), [all, setAll] = useState(false), [making, setMaking] = useState(false)
   useEffect(() => { api.boards().then(setList) }, [])
   const goTo = n => { location.href = `${location.pathname}?board=${encodeURIComponent(n)}` }
   const clean = name.trim().replace(/[^\w\-가-힣]/g, '').slice(0, 64), taken = !!list?.some(b => b.name === clean)
   const make = () => { if (clean) goTo(clean) }
   const shown = (list || []).filter(b => all || !TEST_BOARD.test(b.name)), hidden = (list || []).length - shown.length
   return <div data-testid="board-form" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }} style={{ ...(docked ? { padding: '8px 10px' } : { position: 'absolute', top: 48, left: 0, zIndex: 20, width: 280, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, boxShadow: '0 4px 14px rgba(0,0,0,.18)' }), display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif", color: C.ink }}>
-    <div style={{ font: docked ? "700 15px 'Pretendard', sans-serif" : "700 13px 'Pretendard', sans-serif" }}>칠판</div>
-    <div style={{ display: 'flex', gap: 6 }}>
-      <input autoFocus={!docked} value={name} onChange={e => setName(e.target.value)} placeholder="새 칠판 이름 (예: 송신소점검)" onKeyDown={e => { if (e.key === 'Enter') make() }}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span style={{ flex: 1, font: docked ? "700 15px 'Pretendard', sans-serif" : "700 13px 'Pretendard', sans-serif" }}>칠판</span>
+      {!making && <button data-testid="board-new" onClick={() => setMaking(true)} title="새 칠판 만들기 — 이름을 정하면 그 칠판으로 옮겨 가요"
+        style={{ all: 'unset', cursor: 'pointer', padding: '3px 10px', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>＋ 새 칠판</button>}
+    </div>
+    {making && <div style={{ display: 'flex', gap: 6 }}>
+      <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="새 칠판 이름 (예: 송신소점검)" onKeyDown={e => { if (e.key === 'Enter') make(); if (e.key === 'Escape') { e.stopPropagation(); setMaking(false); setName('') } }}
         style={{ flex: 1, minWidth: 0, height: 26, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: 'inherit' }} />
       <button disabled={!clean} onClick={make} style={{ all: 'unset', cursor: clean ? 'pointer' : 'default', opacity: clean ? 1 : 0.5, padding: '4px 10px', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>{taken ? '열기' : '만들기'}</button>
-    </div>
-    {clean && clean !== name.trim() && <span style={{ fontSize: 11, color: C.muted }}>이름은 「{clean}」(글자·숫자·_·- 만)</span>}
+    </div>}
+    {making && clean && clean !== name.trim() && <span style={{ fontSize: 11, color: C.muted }}>이름은 「{clean}」(글자·숫자·_·- 만)</span>}
     <span style={{ color: C.muted }}>최근 칠판</span>
     <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 300, overflowY: 'auto', margin: '-4px -4px 0' }}>
       {list === null ? <span style={{ color: C.muted, padding: 4 }}>불러오는 중…</span> : !shown.length ? <span style={{ color: C.muted, padding: 4 }}>아직 없어요</span>
@@ -125,7 +141,6 @@ function BoardForm({ onClose, onSample, docked, children }) {   // docked = 왼�
           <span style={{ fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{b.items}개 · {ago(b.mtime)}</span></button>)}
     </div>
     {hidden > 0 && <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: C.muted }}><input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)} />시험 칠판 {hidden}개도 보기</label>}
-    <SampleSelect onPick={onSample} />   {/* 위 막대에서 옮김(2026-10-22 디자인 점검 — 평소엔 안 써서 알림 자리만 좁혔음) */}
     {children}
   </div>
 }
@@ -448,6 +463,11 @@ function App() {
         <button onClick={toggleDark} title="밝게 / 어둡게" style={{ all: 'unset', cursor: 'pointer', fontSize: 18, padding: '2px 4px' }}>{dark ? '☀️' : '🌙'}</button></div>}
       <Narrow.Provider value={narrow}>
       <div style={{ display: phone ? 'none' : 'flex', alignItems: 'center', gap: narrow ? 4 : 8, padding: '4px 8px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>
+        {/* 칠판 이름 = 맨 왼쪽(2026-10-27 사용자 — Figma·Miro처럼 파일 이름은 왼쪽 위), 누르면 왼쪽 판 「칠판」 칸(새 칠판·최근 칠판·파일) */}
+        <button data-testid="board-title" onClick={() => setDockTab(dockTab === 'board' ? '' : 'board')} title={server ? `칠판 「${DOC_NAME}」 — 누르면 새 칠판·최근 칠판·파일` : '새 칠판·최근 칠판·파일'}
+          style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: narrow ? 110 : 180, padding: '4px 8px', borderRadius: 6, font: "700 14px 'Pretendard', sans-serif", color: C.ink, background: dockTab === 'board' ? 'rgba(218,119,86,.22)' : 'transparent' }}
+          onMouseEnter={e => { if (dockTab !== 'board') e.currentTarget.style.background = 'rgba(218,119,86,.12)' }} onMouseLeave={e => { e.currentTarget.style.background = dockTab === 'board' ? 'rgba(218,119,86,.22)' : 'transparent' }}>
+          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{server ? DOC_NAME : 'Magic Board'}</span><span aria-hidden style={{ fontSize: 10, color: C.muted }}>▾</span></button>
         <Group>
  {/* 칠판·열기·내려받기는 왼쪽 판 「칠판」 칸으로(2026-10-23 사용자) */}
           <Btn icon="save" label="저장" onClick={server ? saveServer : saveFile} title={server ? `서버 「${DOC_NAME}」에 저장` : '.ecad로 내려받기'} />
@@ -483,10 +503,9 @@ function App() {
           <Btn icon="theme" label={dark ? '밝게' : '어둡게'} onClick={toggleDark} title="밝은 화면 / 어두운 화면 (D)" />   {/* 보기 묶음으로(2026-10-23 사용자 — 오른쪽 구석은 KAIROS 몫) */}
         </Group>
         {!narrow && !server && <SampleSelect onPick={openSample} />}
-        <span title={server ? `칠판 「${DOC_NAME}」` : ''} style={{ marginLeft: 'auto', color: C.muted, fontSize: 12, minWidth: 0, flexShrink: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{server ? `「${DOC_NAME}」 · ` : ''}</span>
-        <span style={{ marginLeft: server ? -4 : 'auto', color: C.muted, fontSize: 12, whiteSpace: 'nowrap' }}>{Math.round(cam.z * 100)}%</span>   {/* 배율은 늘 보이게(이름이 길면 이름만 줄임) */}   {/* 칠판 이름·배율만 — 알림은 칠판 아래 가운데(2026-10-22 디자인 점검: 여기선 60px만 보여 잘렸음) */}
-        {server && <span title={people.length ? `지금 이 칠판에: ${people.join(', ')}` : ''} style={{ fontSize: 12, color: C.muted, whiteSpace: 'nowrap', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>👥 {people.length ? people.join(' · ') : (me || '나')}</span>}
-        <div data-pop="share" style={{ position: 'relative', opacity: server ? 1 : 0.4 }}>   {/* 서버가 없으면 숨기지 않고 흐리게 — 안 보이면 왜 없는지 몰랐음(2026-10-20 사용자) */}
+        <div style={{ marginLeft: 'auto' }} />   {/* 오른쪽 이름·배율 뺌(2026-10-27 사용자 — 이름은 왼쪽 끝, 배율은 미니맵 %와 겹침) */}
+        <div data-pop="share" style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, opacity: server ? 1 : 0.4 }}>   {/* 서버가 없으면 숨기지 않고 흐리게 — 안 보이면 왜 없는지 몰랐음(2026-10-20 사용자) */}
+          {server && <Faces list={[{ id: sync.current.id, name: me || '나', me: true }, ...others].map(p => ({ ...p, color: personColor(p.id) }))} onClick={() => setShareOpen(o => !o)} />}
           <Btn icon="share" label="공유" on={shareOpen} onClick={() => (server ? setShareOpen(o => !o) : setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 공유·KAIROS를 쓸 수 있어요'))} title={server ? '게시 — 로그인 없이 보기·발표만 되는 링크(큰 TV 발표용)' : '서버에 연결 안 됨 — python web/server.py를 켜면 공유할 수 있어요'} />
           {server && shareOpen && <ShareForm people={people} me={me} onClose={() => setShareOpen(false)} />}
         </div>
@@ -499,15 +518,16 @@ function App() {
       </Narrow.Provider>
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>   {/* 왼쪽 판 + 작업공간 + 오른쪽 KAIROS 대화창(좁은 창은 대화창만 칠판 위에 뜸) */}
       {!phone && <Dock tab={dockTab} setTab={setDockTab} width={dockW} setWidth={setDockW} help={helpOpen} onHelp={() => setHelpOpen(o => !o)} mini={w => <Minimap docked width={w} items={mapItems} cam={cam} size={size} setCam={setCam} dark={dark} />} panes={{
-        board: <BoardForm docked onClose={() => {}} onSample={openSample}>
+        board: <BoardForm docked onClose={() => {}}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderTop: `1px solid ${C.line}`, paddingTop: 8 }}>
-            {[['열기', () => file.current.click(), '.ecad 파일 열기(지금 칠판을 그 내용으로 바꿈)'], ['내려받기', saveFile, '.ecad 파일로 내려받기'], ['저장', server ? saveServer : saveFile, server ? `서버 「${DOC_NAME}」에 저장 (Ctrl+S)` : '.ecad로 내려받기 (Ctrl+S)']].map(([l, f, t]) =>
-              <button key={l} onClick={f} title={t} style={{ all: 'unset', cursor: 'pointer', padding: '4px 10px', borderRadius: 6, border: `1px solid ${C.line}`, font: "500 12px 'Pretendard', sans-serif" }}>{l}</button>)}
+            {[['open', '파일 열기', () => file.current.click(), '.ecad 파일 열기(지금 칠판을 그 내용으로 바꿈)'], ['download', '내려받기', saveFile, '.ecad 파일로 내려받기']].map(([ic, l, f, t]) =>
+              <button key={l} onClick={f} title={t} style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px 4px 7px', borderRadius: 6, border: `1px solid ${C.line}`, font: "500 12px 'Pretendard', sans-serif" }}>
+                <span aria-hidden style={{ width: 16, height: 16, display: 'block', color: 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ICONS[ic].replace('<svg ', '<svg width="16" height="16" ') }} />{l}</button>)}
           </div></BoardForm>,
         shape: <Palette docked lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} />,
         frame: orderedFrames(model.items).length ? <Frames docked items={model.items} sel={selKey ? selKey.split(',') : []} onReorder={ids => ed.current?.reorderFrames(ids)} onRename={(id, n) => ed.current?.renameFrame(id, n)} onGo={id => ed.current?.goFrame(id)} onPresent={id => ed.current?.startPresent(id)} dark={dark} />
           : <div data-testid="frames-empty" style={{ padding: '10px 12px', color: C.muted, fontSize: 12, lineHeight: 1.6 }}><div style={{ font: "700 15px 'Pretendard', sans-serif", color: C.ink, marginBottom: 6 }}>프레임</div>아직 없어요 — 위 막대 「프레임」을 눌러 칠판에서 영역을 감싸면 여기에 쌓여요(순서 = 출력·발표 순서).</div>,
-        layer: <Layers docked model={model} setModel={setModel} active={activeLayer} setActive={setActiveLayer} onChanged={onCommit} onMoveSel={id => ed.current?.moveSelToLayer(id)} dark={dark} /> }} />}
+        layer: <Layers docked model={model} setModel={setModel} active={activeLayer} setActive={setActiveLayer} onChanged={onCommit} dark={dark} /> }} />}
       {/* --mb-right-inset = 뜬 대화창 폭 — 우상 속성·우하 미니맵 카드가 그만큼 왼쪽으로 비킴 */}
       <div ref={box} onDragOver={e => { const ts = [...(e.dataTransfer?.types || [])]; if (ts.includes('Files') || ts.includes('text/uri-list')) e.preventDefault() }}
         onDrop={e => { const fs = [...(e.dataTransfer?.files || [])]; e.preventDefault()   // 끌어 놓기 — 파일(그림·녹음 = 회의록) 또는 주소(대화창 그림 후보·웹 주소 = 웹 카드). 막지 않으면 브라우저가 그 파일·주소로 떠남

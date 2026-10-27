@@ -11,6 +11,8 @@ test('「칠판」으로 새 칠판 만들기 → 그리면 최근 목록에 →
   const form = page.getByTestId('board-form')
   await expect(form.getByTestId('board-row').filter({ hasText: a })).toBeVisible()    // 지금 칠판도 목록에(1개)
   await expect(form.getByTestId('board-row').filter({ hasText: /^e2e_/ })).toHaveCount(0)   // 시험 칠판은 숨김
+  await expect(form.getByPlaceholder('새 칠판 이름', { exact: false })).toHaveCount(0)   // 처음엔 이름 칸 없음(찾기 칸으로 보였음 — 2026-10-27)
+  await form.getByTestId('board-new').click()
   await form.getByPlaceholder('새 칠판 이름', { exact: false }).fill(b)
   await form.getByRole('button', { name: '만들기' }).click()
   await expect(page).toHaveURL(new RegExp(`board=${encodeURIComponent(b)}`))

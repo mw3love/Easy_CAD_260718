@@ -20,7 +20,7 @@ test('팝업 — 다른 팝업을 열면 앞 것은 닫힘 · Esc · 바깥 누�
   await page.getByTestId('dock-board').click(); await expect(page.getByTestId('board-form')).toHaveCount(0)   // 열린 칸을 다시 누르면 접힘
 })
 
-test('알림은 칠판 아래 가운데(잠깐) · 위 막대는 칠판 이름·배율만 · 샘플 열기는 칠판 메뉴 안', async ({ page }) => {
+test('알림은 칠판 아래 가운데(잠깐) · 칠판 이름 = 위 막대 맨 왼쪽(누르면 칠판 칸) · 배율·샘플은 없음', async ({ page }) => {
   const name = boardName('toast')
   await openBoard(page, name)
   const toast = page.getByTestId('status-toast')
@@ -29,7 +29,13 @@ test('알림은 칠판 아래 가운데(잠깐) · 위 막대는 칠판 이름·
   expect(tb.y).toBeGreaterThan(bb.y + bb.height - 80)                                // 칠판 아래쪽
   expect(Math.abs(tb.x + tb.width / 2 - (bb.x + bb.width / 2))).toBeLessThan(4)    // 가운데
   await expect(toast).toHaveCSS('opacity', '0', { timeout: 8000 })                  // 잠깐 뒤 사라짐
-  await expect(page.getByText('100%', { exact: true }).first()).toBeVisible()
-  await expect(page.getByTestId('sample-select')).toHaveCount(0)                    // 위 막대엔 없음
-  await page.getByTestId('dock-board').click(); await expect(page.getByTestId('board-form').getByTestId('sample-select')).toBeVisible()
+  const title = page.getByTestId('board-title'); await expect(title).toContainText(name)
+  const tbx = await title.boundingBox(), tools = await page.getByRole('button', { name: '저장', exact: true }).boundingBox()
+  expect(tbx.x).toBeLessThan(tools.x)                                                // 맨 왼쪽(2026-10-27 사용자)
+  await expect(page.getByText('100%', { exact: true })).toHaveCount(1)              // 배율은 미니맵에만(위 막대 것과 겹쳤음)
+  await expect(page.getByTestId('sample-select')).toHaveCount(0)                    // 샘플 = 개발 시험용 — 서버 있으면 어디에도 없음
+  await title.click(); await expect(page.getByTestId('board-form')).toBeVisible()
+  await expect(page.getByTestId('board-form').getByTestId('sample-select')).toHaveCount(0)
+  await expect(page.getByTestId('board-form').getByRole('button', { name: '저장' })).toHaveCount(0)   // 위 막대·Ctrl+S와 겹침
+  await title.click(); await expect(page.getByTestId('board-form')).toHaveCount(0)
 })

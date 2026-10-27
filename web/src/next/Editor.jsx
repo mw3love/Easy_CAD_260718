@@ -57,7 +57,7 @@ const HANDLE = 10, HIT_PX = 4, EDGE_PX = 5
 const INK = '#ff1f1f1f'   // 새로 그리는 선·글 기본색(밝은 칠판)
 // 다른 사람 색 — 접속 id로 늘 같은 색(테두리·이름표)
 const PERSON_COLORS = ['#e8590c', '#7048e8', '#0c8599', '#d6336c', '#2f9e44', '#1971c2']
-const personColor = id => PERSON_COLORS[[...String(id)].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7) % PERSON_COLORS.length]
+export const personColor = id => PERSON_COLORS[[...String(id)].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7) % PERSON_COLORS.length]
 const BOXY = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'path', 'frame', 'web', 'memo', 'legend', 'doc', 'pdf'])
 
 // 글 상자 크기(아이템 안 단위) — 그릴 때와 같은 재기, 아이템 객체마다 한 번
@@ -148,7 +148,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -1254,8 +1254,32 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function wrapFrame() {
     const m = R.current.model, ids = new Set(withContents(R.current.sel)), its = m.items.filter(it => ids.has(it._id) && it.type !== 'titleblock' && it.type !== 'frame'); if (!its.length) return
     const b = unionBox(its.map(it => sceneBox(it, textBox))), pad = 16   // 작고 일정한 여백(2026-10-18 사용자 선택 — 전엔 내용의 6%라 큰 묶음일수록 여백이 컸음)
-    const it = base([b.x - pad, b.y - pad], { type: 'frame', rect: [0, 0, b.w + 2 * pad, b.h + 2 * pad], name: '', no: nextFrameNo(m.items), z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })
+    const it = base([b.x - pad, b.y - pad], { type: 'frame', rect: [0, 0, b.w + 2 * pad, b.h + 2 * pad], name: frameAutoName(its), no: nextFrameNo(m.items), z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })
     commit([...m.items, it], [it._id], '프레임으로 감싸기'); setStatus(`프레임 ${it.no} — 내보내기 하면 이 틀이 한 쪽이 돼요`)
+  }
+  // 감쌀 때 기본 이름(2026-10-27 사용자: 「프레임 N」보다 안에 든 것으로 — 알아보기 쉽게, 이름은 나중에 바꿔도 됨).
+  // 하나면 「종류 · 제목」(제목 없으면 종류만), 여럿이면 「종류 N개」·「가장 많은 종류 외 N」. 묶음 = 하나, 선·도형만인 묶음 = 아이콘(SVG는 표시 칸이 없어 모양으로 짐작), 화살표는 셈에서 뺌
+  function frameAutoName(its) {
+    const cut = s => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > 24 ? s.slice(0, 23) + '…' : s }
+    const one = it => {
+      if (it.type === 'web') return ['웹', it.title]
+      if (it.type === 'doc') return [it.live ? '인터랙티브 HTML' : '정리 문서', it.title]
+      if (it.type === 'pdf') return ['PDF', it.name]
+      if (it.type === 'image') return ['이미지', it.alt]
+      if (it.type === 'memo') return ['메모', (it.lines || []).map(l => (typeof l?.t === 'string' ? l.t : '')).find(t => t.trim())]
+      if (it.type === 'table') return [it.chart ? '그래프' : '표', '']
+      if (it.type === 'legend') return ['범례', '']
+      if (it.type === 'text') return ['글', it.text]
+      return ['도형', '']
+    }
+    const VEC = new Set(['path', 'line', 'polygon', 'rect', 'ellipse', 'symbol']), groups = new Map(), units = []
+    for (const it of its) { if (it.group_id) { if (!groups.has(it.group_id)) groups.set(it.group_id, []); groups.get(it.group_id).push(it) } else units.push(it) }
+    const named = [...units.filter(it => it.type !== 'sarrow' && it.type !== 'arrow').map(one), ...[...groups.values()].map(g => (g.every(x => VEC.has(x.type)) ? ['아이콘', ''] : ['묶음', '']))]
+    if (!named.length) return ''   // 화살표만 — 이름 없이(번호만)
+    if (named.length === 1) { const [k, t] = named[0], s = cut(t); return s ? `${k} · ${s}` : k }
+    const cnt = new Map(); for (const [k] of named) cnt.set(k, (cnt.get(k) || 0) + 1)
+    const [top, n] = [...cnt].sort((a, b) => b[1] - a[1])[0]
+    return n === named.length ? `${top} ${n}개` : `${top} 외 ${named.length - 1}`
   }
 
   function insertTable(rows, cols, header) {

@@ -19,8 +19,8 @@ const UNLOCK = <Svg><rect x="3.5" y="7" width="9" height="6.5" rx="1" opacity=".
 const PEN = <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={C.on} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M11 2.5 L13.5 5 L5.5 13 L2.5 13.5 L3 10.5 Z" /></svg>
 const iconBtn = { all: 'unset', cursor: 'pointer', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, color: C.ink }
 
-// model·setModel = 문서, active/setActive = 「그리는 중」, onChanged = 저장 알림, onMoveSel(id) = 고른 도형을 그 레이어로(Editor — 되돌리기 칸)
-export function Layers({ model, setModel, active, setActive, onChanged, onMoveSel, dark, docked }) {
+// model·setModel = 문서, active/setActive = 「그리는 중」, onChanged = 저장 알림. 고른 도형 옮기기는 칠판 우클릭 「레이어로 이동 ▸」(2026-10-27 사용자 — 판의 「선택 → 그리는 중」 단추는 「그 레이어 고르기」로 읽혀 뺌)
+export function Layers({ model, setModel, active, setActive, onChanged, dark, docked }) {
   const [f0, toggleFold] = useFold('layers'), folded = !docked && f0
   const layers = layersOf(model), [menu, setMenu] = useState(null), [renaming, setRenaming] = useState(null)
   const count = id => model.items.filter(it => layerIdOf(it) === id).length
@@ -56,7 +56,6 @@ export function Layers({ model, setModel, active, setActive, onChanged, onMoveSe
     </div>
     <div style={{ display: 'flex', gap: 4, marginTop: 2 }}>
       <button onClick={add} title="레이어를 하나 더 만들어요" style={{ ...iconBtn, width: 'auto', height: 24, padding: '0 8px', border: `1px solid ${C.line}`, fontSize: 12 }}>＋ 레이어</button>
-      <button onClick={() => onMoveSel(cur)} title="선택한 도형을 「그리는 중」 레이어로 옮겨요" style={{ ...iconBtn, width: 'auto', height: 24, padding: '0 8px', border: `1px solid ${C.line}`, fontSize: 12 }}>선택 → 그리는 중</button>
     </div>
     {menu && <div onMouseLeave={() => setMenu(null)} style={{ position: 'absolute', left: 40, top: menu.y + 28, zIndex: 5, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 3, boxShadow: '0 4px 12px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', minWidth: 110 }}>
       <button onClick={() => { setRenaming(menu.id); setMenu(null) }} style={{ ...iconBtn, width: 'auto', justifyContent: 'flex-start', padding: '4px 8px', fontSize: 12 }}>이름 변경</button>
