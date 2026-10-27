@@ -59,6 +59,7 @@ def default_data_dir() -> str:
 class Handler(SimpleHTTPRequestHandler):
     data_dir = default_data_dir()
     password = ""                 # 공용 편집 비밀번호(없으면 누구나 — 내 PC 개발)
+    server_key = True             # 「🔑 내 키」 없는 사람도 이 서버 PC 키로 KAIROS(끄면 각자 키로만 — `--no-server-key`, 2026-10-27 사용자)
     presence = collab.Presence()
     lock = threading.Lock()       # 부분 저장·게시 표를 한 번에 하나씩
     changed = threading.Condition()   # 저장되면 깨움 — 받아 오기를 기다리던 요청(롱 폴링, 2026-10-19 사용자: 거의 실시간)
@@ -90,7 +91,15 @@ class Handler(SimpleHTTPRequestHandler):
         if re.fullmatch(r"[!-~]{8,300}", mine):
             return mine
         team = (self._team() or {}).get("key") or ""
-        return team if re.fullmatch(r"[!-~]{8,300}", team) else gw.resolve_api_key()
+        if re.fullmatch(r"[!-~]{8,300}", team):
+            return team
+        return gw.resolve_api_key() if self.server_key else ""
+
+    def _no_key(self, extra: str = ""):
+        """키가 없을 때 답 — 서버 키를 끈 서버면 「내 키」를 넣으라고(대화창이 `need_key`로 키 칸을 엶)"""
+        if not self.server_key:
+            return self._json(503, {"error": "🔑 내 KAIROS 키가 필요해요 — 대화창 위 「🔑」에 키를 넣어 주세요(이 서버는 각자 키로만 물어요)", "need_key": True})
+        return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다" + extra})
 
     def _base(self) -> str:
         """게이트웨이 주소 — 팀 키를 쓰는 요청이고 팀에 `base`가 있으면 그 주소(다른 계정 키는 주소도 다름 — jbnu = factchat-cloud, 2026-10-27 실측 401), 아니면 서버 주소."""
@@ -102,7 +111,7 @@ class Handler(SimpleHTTPRequestHandler):
     def _models(self):
         key = self._key()
         if not key:
-            return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
+            return self._no_key("(~/.claude/.secrets/easycad-gateway.key)")
         import hashlib
         kid = hashlib.sha256(key.encode()).hexdigest()[:16]   # 키마다 따로(계정마다 모델이 다를 수 있음) — 키 자체는 안 들고 있음
         hit = _MODELS.get(kid)
@@ -145,7 +154,7 @@ class Handler(SimpleHTTPRequestHandler):
         self._picked = {k: v for k, v in picked.items() if k in PICK_JOBS and isinstance(v, str) and re.fullmatch(r"[\w.:/\-]{1,120}", v)}
         key = self._key()
         if not key:
-            return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
+            return self._no_key("(~/.claude/.secrets/easycad-gateway.key)")
         try:
             msgs, ctx = req.get("messages") or [], req.get("context") or ""
             last = next((m for m in reversed(msgs) if isinstance(m, dict) and m.get("role") == "user"), {})
@@ -432,7 +441,7 @@ class Handler(SimpleHTTPRequestHandler):
         data = self.rfile.read(n)
         key = self._key()
         if not key:
-            return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
+            return self._no_key("(~/.claude/.secrets/easycad-gateway.key)")
         job = secrets.token_hex(6)
         model, base = (q.get("model") or [""])[0] or gw.FALLBACK_DEFAULT_MODEL, self._base()   # 주소는 일감 밖에서(연결을 다시 쓰면 머리말이 바뀜)
         Handler.jobs[job] = {"board": name, "status": "run", "msg": "받아쓰기 올리는 중…"}
@@ -457,7 +466,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(400, {"error": "받아 적은 말이 없어요"})
         key = self._key()
         if not key:
-            return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
+            return self._no_key("(~/.claude/.secrets/easycad-gateway.key)")
         job = secrets.token_hex(6)
         model, base = (q.get("model") or [""])[0] or gw.FALLBACK_DEFAULT_MODEL, self._base()
         duration = float(req.get("duration") or 0)
@@ -481,7 +490,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(400, {"error": "베낄 그림이 없어요"})
         key = self._key()
         if not key:
-            return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
+            return self._no_key("(~/.claude/.secrets/easycad-gateway.key)")
         try:
             png = base64.b64decode(raw.split(",", 1)[1] if raw.startswith("data:") else raw)
         except ValueError:
@@ -567,7 +576,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"results": []})
         key = self._key()
         if not key:
-            return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다 — 낱말 찾기만 돼요"})
+            return self._no_key(" — 낱말 찾기만 돼요")
         try:
             res = self._find(name, q, key, k=max(1, min(20, int(req.get("k") or 8))))
         except Exception as e:
@@ -701,7 +710,10 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         path, q = self._route()
         if path == "/api/session":   # 비밀번호가 필요한가·이미 들어왔나 (+ 팀 서버면 내 팀·이 칠판을 써도 되나·우리 팀 첫 칠판 — §8 항목67)
-            out = {"auth": self._locked(), "ok": self._authed()}
+            out = {"auth": self._locked(), "ok": self._authed(), "server_key": self.server_key}
+            if q.get("board") and out["ok"]:   # 이 칠판이 서버에 있나 — 남이 준 링크로 처음 열면 이름을 한 번 물음(main.jsx Gate)
+                nm = self._name(q["board"][0])
+                out["exists"] = bool(nm) and os.path.exists(self._doc_path(nm))
             if out["ok"] and self._teams().exists:
                 t = self._team()
                 out["team"] = t["name"] if t else None
@@ -732,15 +744,19 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/credits":   # 대화창 머리줄 「남은 크레딧」(2026-10-21 사용자 — baze CLI 검토) — 이 요청의 키(「🔑 내 키」면 그 사람 것)
             key = self._key()
             if not key:
-                return self._json(503, {"error": "키 없음"})
+                return self._no_key()
             try:
                 remaining, quota = gw.get_credit_balance(key, self._base())
             except Exception as e:   # 못 받아도 대화는 됨 — 화면은 숫자를 안 보임
                 return self._json(502, {"error": str(e)})
             return self._json(200, {"remaining": remaining, "quota": quota})
         if path == "/api/boards":   # 칠판 목록(데스크톱 「웹 칠판 열기」, §8 항목61 ④-2) — 최근에 고친 것부터
+            # 비밀번호 없는 서버 = 칠판 주소가 곧 열쇠(2026-10-27 사용자) → 전체 목록은 숨기고, 아는 이름(`?names=`)만 알려 줌(웹 「내 칠판」·데스크톱 올리기 전 확인)
+            want = [n for n in (q.get("names") or [""])[0].split(",") if n] if "names" in q else None
+            if want is None and not self._locked():
+                return self._json(200, {"boards": [], "hidden": True})
             out = []
-            for fn in os.listdir(self.data_dir) if os.path.isdir(self.data_dir) else []:
+            for fn in (os.listdir(self.data_dir) if os.path.isdir(self.data_dir) else []) if want is None else [n + ".ecad" for n in want[:200]]:
                 name = fn[:-5] if fn.endswith(".ecad") else ""
                 if not NAME_RE.match(name) or not self._name(name):   # `<이름>.prev.ecad`(되돌림용 앞 판) 등은 뺌, 팀이면 그 팀 칠판만(§8 항목67)
                     continue
@@ -843,7 +859,7 @@ class Handler(SimpleHTTPRequestHandler):
             req = self._body(30 * 1024 * 1024) or {}
             key = self._key()
             if not key:
-                return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다"})
+                return self._no_key()
             try:
                 out = board_ocr.read(key, base64.b64decode(req.get("data") or ""), base_url=self._base())
             except Exception as e:
@@ -853,7 +869,7 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/stt-token":   # 대화창 🎤 — 실시간 받아쓰기 일회용 표(키는 서버에만, 2026-10-20)
             key = self._key()
             if not key:
-                return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다"})
+                return self._no_key()
             try:
                 return self._json(200, meeting.live_token(key, base_url=self._base()))
             except Exception as e:
@@ -1085,15 +1101,18 @@ def main(argv=None):
     ap.add_argument("--port", type=int, default=5191)
     ap.add_argument("--data", default=default_data_dir())
     ap.add_argument("--password", default=os.environ.get("MB_PASSWORD", ""), help="공용 편집 비밀번호(없으면 데이터 폴더의 edit_password.txt, 그것도 없으면 누구나 편집)")
+    ap.add_argument("--no-server-key", action="store_true", default=os.environ.get("MB_SERVER_KEY", "1") == "0", help="이 서버 PC 키를 안 씀 — KAIROS는 각자 「🔑 내 키」로만(공개 주소에서 크레딧을 지킬 때)")
     a = ap.parse_args(argv)
     Handler.data_dir = a.data
     pw_file = os.path.join(a.data, "edit_password.txt")
     Handler.password = a.password or (open(pw_file, encoding="utf-8").read().strip() if os.path.exists(pw_file) else "")
+    Handler.server_key = not a.no_server_key
     gw.preload_network()   # 통신 부품을 먼저 — 두 요청이 동시에 처음 부르면 모듈 잠금 교착(gateway.preload_network 참조)
     if not os.path.isdir(os.path.join(HERE, "dist")):
         print("web/dist가 없습니다 — 먼저 `cd web && npm run build` (API만 씁니다)")
     print(f"Magic Board 칠판: http://{'localhost' if a.host in ('0.0.0.0', '127.0.0.1') else a.host}:{a.port}  · 저장 폴더: {a.data}")
-    print("편집: " + ("공용 비밀번호 필요" if Handler.password else "누구나(비밀번호 없음 — --password 또는 edit_password.txt로 정함)"))
+    print("편집: " + ("공용 비밀번호 필요" if Handler.password else "누구나(비밀번호 없음 — 칠판 주소가 곧 열쇠, 칠판 목록은 숨김 · --password 또는 edit_password.txt로 정함)"))
+    print("KAIROS: " + ("「🔑 내 키」가 없으면 이 서버 PC 키" if Handler.server_key else "각자 「🔑 내 키」로만(--no-server-key)"))
     teams = collab.Teams.at(a.data)
     if teams.exists:   # 팀별 칠판(§8 항목67)
         print("팀: " + (", ".join(f"{t['name']}(칠판 {len(t['boards'])}개{', 키 따로' if t['key'] else ''})" for t in teams.teams) or "없음 — teams.json을 확인해 주세요")

@@ -88,7 +88,7 @@ def _req(url, method="GET", body=None, cookie=""):
 def test_server_password_patch_since_publish(server):
     base, data = server
     (data / "b1.ecad").write_text(json.dumps(_doc() | {"items": [{"type": "rect", "rect": [0, 0, 1, 1]}]}), encoding="utf-8")
-    assert _req(base + "/api/session")[1] == {"auth": True, "ok": False}
+    assert _req(base + "/api/session")[1] == {"auth": True, "ok": False, "server_key": True}
     assert _req(base + "/api/doc/b1")[0] == 401                       # 비밀번호 전엔 못 봄
     assert _req(base + "/api/chat", "POST", {"messages": []})[0] == 401   # 크레딧도 못 씀
     assert _req(base + "/api/login", "POST", {"password": "틀림"})[0] == 403

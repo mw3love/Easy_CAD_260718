@@ -20,6 +20,13 @@ class WebBoardError(Exception):
     """사용자에게 그대로 보여 줄 수 있는 한국어 오류."""
 
 
+def board_from_text(text: str) -> str:
+    """칠판 주소(…?board=이름) 또는 이름 그대로 → 이름(웹 「주소 복사」를 그대로 붙여 넣어도 되게)."""
+    t = (text or "").strip()
+    q = urllib.parse.parse_qs(urllib.parse.urlparse(t).query).get("board") if "board=" in t else None
+    return clean_name(q[0] if q else t)
+
+
 def clean_name(name: str) -> str:
     """칠판 이름 — 서버가 받는 글자(영문·숫자·_·-·한글)만 남기고 64자까지."""
     return re.sub(r"[^\w\-가-힣]", "", (name or "").strip().replace(" ", "_"))[:64]
@@ -69,7 +76,14 @@ class WebBoardClient:
         st, d = self._req("GET", "/api/boards")
         if st != 200:
             raise WebBoardError(f"칠판 목록을 받지 못했어요(응답 {st}).")
+        self.hidden = bool(d.get("hidden"))   # 비밀번호 없는 서버 = 칠판 주소가 곧 열쇠라 전체 목록을 숨김(2026-10-27) — 화면은 이름·주소를 물음
         return d.get("boards") or []
+
+    def board_exists(self, name: str) -> bool:
+        """서버에 그 이름의 칠판이 있나 — 목록을 숨기는 서버에서도 아는 이름은 물어볼 수 있음(`?names=`)."""
+        self._ensure_login()
+        st, d = self._req("GET", "/api/boards?names=" + urllib.parse.quote(name))
+        return st == 200 and any(b.get("name") == name for b in (d or {}).get("boards") or [])
 
     def get_doc(self, name: str) -> dict:
         self._ensure_login()

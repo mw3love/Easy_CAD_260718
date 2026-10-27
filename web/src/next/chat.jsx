@@ -190,6 +190,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   const [busyJob, setBusyJob] = useState('')   // 기다리는 일의 종류(모르면 '' = 서버가 짐작)   // request = { id, text, kind } — 칠판에서 시킨 질문(바뀔 때마다 한 번 보냄)   // floating = 좁은 창 — 칠판 위에 뜬 카드(2026-10-19)
   const [msgs, setMsgs] = useState([]), [loaded, setLoaded] = useState(false), [draft, setDraft] = useState(''), [busy, setBusy] = useState(null)
   const [, tick] = useState(0), [models, setModels] = useState(null), [server, setServer] = useState(true), [gone, setGone] = useState({})
+  const needKey = !!models?.need_key   // 서버 키를 끈 서버(`--no-server-key`) + 내 키 없음 — 모델 목록부터 「키 필요」로 옴
   const [model, setModel] = useState(() => { try { return localStorage.getItem(MODEL_KEY) || '' } catch { return '' } })
   const [picks, setPicksState] = useState(() => { try { return JSON.parse(localStorage.getItem(PICKS_KEY) || '{}') || {} } catch { return {} } }), [cfgOpen, setCfgOpen] = useState(false)
   const setPick = (job, id) => {
@@ -200,6 +201,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   const [past, setPastState] = useState([]), pastRef = useRef([]), [pastOpen, setPastOpen] = useState(false)   // 지난 대화(새것부터)
   const setPast = p => { pastRef.current = p; setPastState(p) }
   const [keyOpen, setKeyOpen] = useState(false), [keyDraft, setKeyDraft] = useState(''), [myKey, setMyKey] = useState(() => !!getKairosKey())   // 내 KAIROS 키 칸
+  useEffect(() => { if (!myKey && msgs.at(-1)?.role === 'error' && msgs.at(-1).content.startsWith('🔑')) setKeyOpen(true) }, [msgs])   // eslint-disable-line react-hooks/exhaustive-deps — 서버 키를 끈 서버(`need_key`)에서 물으면 키 칸을 바로 엶
   // 방금 칠판에 붙인 것은 어디 붙었나 보이게 고른 채로 남는데, 그대로 다음 질문에 실려 갔음(2026-10-19 점검) — 고름이 그대로인 동안은 안 실음
   const [skipSel, setSkipSel] = useState('')
   const sel = selKey && selKey === skipSel ? [] : ed.current?.selTexts() || []   // eslint-disable-line react-hooks/exhaustive-deps
@@ -555,8 +557,8 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
       <div style={css.bar}>   {/* 대화 관리 줄 — 새 대화 · 지난 대화 · 내 키 */}
         <button style={css.ghost} disabled={!!busy || !msgs.some(m => m.role === 'user')} onClick={newChat} title="지금 대화는 「지난 대화」로 넘기고 빈 대화로 — 앞 대화가 다음 질문에 안 실려요">＋ 새 대화</button>
         {past.length > 0 && <button style={css.ghost} disabled={!!busy} aria-expanded={pastOpen} onClick={() => setPastOpen(o => !o)} title="지난 대화를 골라 다시 열어요(지금 대화는 목록으로)">지난 대화 {past.length} ▾</button>}
-        <button style={{ ...css.ghost, marginLeft: 'auto', ...(myKey ? { color: '#0f766e', borderColor: '#0f766e' } : null) }} aria-expanded={keyOpen} onClick={() => setKeyOpen(o => !o)}
-          title={myKey ? '내 KAIROS 키로 부르는 중 — 바꾸거나 지우기' : '내 KAIROS 키 넣기(안 넣으면 서버 PC 키)'}>🔑 {myKey ? '내 키' : '서버 키'}</button>
+        <button data-testid="key-btn" style={{ ...css.ghost, marginLeft: 'auto', ...(myKey ? { color: '#0f766e', borderColor: '#0f766e' } : needKey ? { color: '#da7756', borderColor: '#da7756' } : null) }} aria-expanded={keyOpen} onClick={() => setKeyOpen(o => !o)}
+          title={myKey ? '내 KAIROS 키로 부르는 중 — 바꾸거나 지우기' : needKey ? '이 서버는 각자 키로만 물어요 — 내 KAIROS 키 넣기' : '내 KAIROS 키 넣기(안 넣으면 서버 PC 키)'}>🔑 {myKey ? '내 키' : needKey ? '키 넣기' : '서버 키'}</button>
       </div>
       {pastOpen && <div data-testid="past-list" style={css.drop}>
         {past.map((c, j) => <button key={c.at + ':' + j} style={css.row} onClick={() => openPast(j)} title={c.title}>
@@ -564,7 +566,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
           <span style={css.meta}>{new Date(c.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · {c.messages.filter(m => m.role === 'user').length}문</span></button>)}
       </div>}
       {keyOpen && <div data-testid="key-box" style={{ ...css.drop, padding: 10, gap: 6 }}>
-        <span style={css.meta}>내 KAIROS API 키 — 이 브라우저에만 저장되고, 물을 때만 서버로 같이 가요(서버는 남기지 않아요). 비우면 서버 PC 키를 써요.</span>
+        <span style={css.meta}>내 KAIROS API 키 — 이 브라우저에만 저장되고, 물을 때만 서버로 같이 가요(서버는 남기지 않아요). {needKey ? '이 서버는 각자 키로만 물어요(한 번 넣으면 이 브라우저에 남아요).' : '비우면 서버 PC 키를 써요.'}</span>
         <div style={{ display: 'flex', gap: 6 }}>
           <input type="password" autoComplete="off" placeholder={myKey ? '새 키로 바꾸기' : '키 붙여넣기'} value={keyDraft} onChange={e => setKeyDraft(e.target.value)}
             onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' && KEY_RE.test(keyDraft.trim())) saveKey(keyDraft) }} style={{ ...css.input, minHeight: 0, padding: '4px 8px', flex: 1 }} />
@@ -579,7 +581,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
           ? <div key={i} style={css.me}>{m.addTo ? <span style={css.ctx}>위 질문에 덧붙여</span> : null}{m.reply_to ? <span style={css.ctx}>↩ 「{replyLabel(m.reply_to)}」에 이어서</span> : null}
             {m.ctxCount ? <span style={css.ctx}>칠판에서 고른 것 {m.ctxCount}개와 함께</span> : null}{m.imgCount ? <span style={css.ctx}>칠판에서 고른 그림 {m.imgCount}장을 고쳐 달라고</span> : null}{m.content}</div>
           : m.role === 'error'
-            ? <div key={i} style={css.err}>{m.content}<div style={{ marginTop: 6 }}><button style={css.ghost} onClick={retry}>질문 다시 고치기</button></div></div>
+            ? <div key={i} style={css.err}>{m.content}<div style={{ marginTop: 6, display: 'flex', gap: 6 }}>{m.content.startsWith('🔑') && !myKey && <button style={css.pin} onClick={() => setKeyOpen(true)}>🔑 키 넣기</button>}<button style={css.ghost} onClick={retry}>질문 다시 고치기</button></div></div>
             : <div key={i} style={css.ai}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                 <span data-testid="answer-kind" style={{ ...css.kind, ...(KINDS[m.kind] ? KINDS[m.kind][1] : null) }}>{(KINDS[m.kind] || KINDS.chat)[0]}</span>

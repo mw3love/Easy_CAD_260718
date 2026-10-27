@@ -61,17 +61,17 @@ def q(name):
 
 def test_team_login_list_and_session(srv):
     base, data, _ = srv
-    assert _req(base + "/api/session")[1] == {"auth": True, "ok": False}
+    assert _req(base + "/api/session")[1] == {"auth": True, "ok": False, "server_key": True}
     assert _req(base + "/api/login", "POST", {"password": "틀림"})[0] == 403
     a, b, admin = _login(base, "에이1234"), _login(base, "비2345"), _login(base, "관리자0000")
     assert len({a, b, admin}) == 3
     names = lambda c: sorted(x["name"] for x in _req(base + "/api/boards", cookie=c)[1]["boards"])
     assert names(a) == ["A회의"] and names(b) == ["B회의"] and names(admin) == ["A회의", "B회의", "main"]
     ss = _req(base + "/api/session?board=" + q("B회의"), cookie=a)[1]
-    assert ss == {"auth": True, "ok": True, "team": "A팀", "board_ok": False, "home": "A회의"}
+    assert ss == {"auth": True, "ok": True, "server_key": True, "exists": False, "team": "A팀", "board_ok": False, "home": "A회의"}
     assert _req(base + "/api/session?board=" + q("A회의"), cookie=a)[1]["board_ok"] is True
     assert _req(base + "/api/session?board=" + q("새칠판"), cookie=a)[1]["board_ok"] is True   # 아직 아무도 안 쓴 이름
-    assert _req(base + "/api/session?board=main", cookie=admin)[1] == {"auth": True, "ok": True, "team": None, "board_ok": True}
+    assert _req(base + "/api/session?board=main", cookie=admin)[1] == {"auth": True, "ok": True, "server_key": True, "exists": True, "team": None, "board_ok": True}
     # 세션을 묻는 것(GET)만으로는 새 이름을 가져가지 않음
     assert "새칠판" not in json.loads((data / "teams.json").read_text(encoding="utf-8"))[0]["boards"]
 
@@ -162,7 +162,7 @@ def test_teams_without_admin_password_and_broken_file(srv):
     assert _req(base + "/api/doc/" + q("A회의"), cookie=a)[0] == 401          # 팀 열쇠도 안 통함
     assert _req(base + "/api/login", "POST", {"password": "에이1234"})[0] == 403
     (data / "teams.json").unlink()
-    assert _req(base + "/api/session")[1] == {"auth": False, "ok": True}       # 파일을 지우면 예전처럼(비밀번호 없음 = 누구나)
+    assert _req(base + "/api/session")[1] == {"auth": False, "ok": True, "server_key": True}       # 파일을 지우면 예전처럼(비밀번호 없음 = 누구나)
 
 
 def test_teams_clean_drops_bad_and_duplicate_entries(tmp_path):

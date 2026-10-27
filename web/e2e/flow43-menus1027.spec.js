@@ -62,7 +62,7 @@ test('왼쪽 프레임 판 줄 우클릭 = 발표·이름 바꾸기·내보내�
   await page.getByTestId('frame-row').first().click({ button: 'right' }); await page.locator(MENU, { hasText: '프레임만 지우기' }).click()
   await expect.poll(async () => (await liveDoc(page)).items.map(it => it.type).sort()).toEqual(['rect', 'rect'])
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
-  await page.getByTestId('dock-board').click(); await page.getByText('시험 칠판', { exact: false }).click()   // 시험이 만든 칠판(e2e_)은 숨김이 기본
+  await page.getByTestId('dock-board').click()   // 지금 칠판 = 「내 칠판 — 이 브라우저」에 있음
   await page.getByTestId('board-row').filter({ hasText: name }).click({ button: 'right' })
   expect(await names(page)).toEqual(['새 탭에서 열기', '주소 복사'])
   await page.locator(MENU, { hasText: '주소 복사' }).click()

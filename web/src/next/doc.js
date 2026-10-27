@@ -1,4 +1,5 @@
 // 직접 만드는 칠판의 문서 = .ecad 그대로(데스크톱 `easycad/fileio/document.py` 형식). 웹은 이걸 바꾸지 않고 그린다.
+import { pickBoard } from './myboards.js'
 import { paperWH } from './geom.js'
 
 export const emptyDoc = () => ({ format: 'easycad-doc', version: 1, items: [] })
@@ -47,7 +48,11 @@ export function boardMembership(items) {
 }
 
 // 서버(감시 PC, `web/server.py`) 저장 — `/api/doc/<이름>` = `<이름>.ecad`
-export const DOC_NAME = (new URLSearchParams(typeof location === 'undefined' ? '' : location.search).get('board') || 'main').replace(/[^\w\-가-힣]/g, '').slice(0, 64) || 'main'
+// 주소에 칠판이 없으면(`/`) 마지막으로 쓰던 칠판, 처음이면 새 비밀 주소(`myboards.js` — 2026-10-27 Excalidraw처럼 빈 칠판) — 주소창도 그 칠판으로 바꿔 둠(그대로 복사해 공유)
+const PICK = typeof location === 'undefined' ? { name: '', auto: '' } : pickBoard(location.search)
+export const AUTO_BOARD = PICK.auto
+export const DOC_NAME = (PICK.name || 'main').replace(/[^\w\-가-힣]/g, '').slice(0, 64) || 'main'
+if (PICK.auto) { const u = new URL(location.href); u.searchParams.set('board', DOC_NAME); history.replaceState(null, '', u.pathname + u.search + u.hash) }
 const URL_ = `/api/doc/${encodeURIComponent(DOC_NAME)}`
 export async function loadServerDoc() {
   try {
@@ -81,6 +86,7 @@ export const api = {
   getInvite: async () => { try { const r = await fetch(`/api/invite/${B}`, { cache: 'no-store' }); return r.ok ? await r.json() : null } catch { return null } },
   setInvite: async (on, renew = false) => { const r = await post(`/api/invite/${B}`, { on, renew }); return r.ok ? (await r.json()).token : null },
   join: async token => { try { return (await post('/api/join', { board: B, token })).ok } catch { return false } },
-  boards: async () => { try { const r = await fetch('/api/boards', { cache: 'no-store' }); return r.ok ? (await r.json()).boards || [] : [] } catch { return [] } },   // 칠판 목록(최근 고친 것부터) — 위 막대 「칠판」
+  boards: async () => { try { const r = await fetch('/api/boards', { cache: 'no-store' }); return r.ok ? (await r.json()).boards || [] : [] } catch { return [] } },   // 칠판 목록(최근 고친 것부터) — 비밀번호 없는 서버는 빈 목록(전체 목록 = 남의 비밀 주소)
+  boardInfo: async names => { if (!names.length) return []; try { const r = await fetch(`/api/boards?names=${names.map(encodeURIComponent).join(',')}`, { cache: 'no-store' }); return r.ok ? (await r.json()).boards || [] : [] } catch { return [] } },   // 아는 이름만 — 「내 칠판」의 개수·고친 때(없는 칠판 = 아직 저장 안 한 새 칠판은 빠짐)
   pub: async (token, rev = -1, wait = 0) => { const r = await fetch(`/api/pub/${token}?rev=${rev}${wait ? `&wait=${wait}` : ''}`, { cache: 'no-store' }); if (r.status === 204) return { same: true }; if (!r.ok) return { gone: true }; const d = parseDoc(await r.text()); return { doc: d } },
 }

@@ -37,8 +37,13 @@ def test_client_put_list_get_and_password(server):
     assert cl.list_boards() == []
     assert cl.put_doc("송신소_도면", DOC) == 1
     (data / "송신소_도면.prev.ecad").write_text("{}", encoding="utf-8")   # 되돌림용 앞 판은 목록에 안 나옴
-    boards = cl.list_boards()
+    assert cl.list_boards() == [] and cl.hidden                         # 비밀번호 없는 서버 = 전체 목록 숨김(칠판 주소가 곧 열쇠, 2026-10-27)
+    assert cl.board_exists("송신소_도면") and not cl.board_exists("없는칠판")   # 아는 이름은 물어볼 수 있음
+    assert web_board.board_from_text("http://pc:5191/?board=%EC%86%A1%EC%8B%A0%EC%86%8C_%EB%8F%84%EB%A9%B4") == "송신소_도면"
+    srv.Handler.password = "pw"
+    boards = web_board.WebBoardClient(base, "pw").list_boards()        # 비밀번호 서버 = 전처럼 목록
     assert [b["name"] for b in boards] == ["송신소_도면"] and boards[0]["items"] == 1
+    srv.Handler.password = ""
     got = cl.get_doc("송신소_도면")
     assert got["items"][0]["type"] == "rect" and got["items"][0]["uid"] and got["rev"] == 1   # 서버가 이름표·판 번호를 붙임
     with pytest.raises(web_board.WebBoardError, match="없어요"):

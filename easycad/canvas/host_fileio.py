@@ -1016,14 +1016,20 @@ class _FileIOMixin:
         except web_board.WebBoardError as e:
             QMessageBox.warning(self, "웹 칠판 열기", str(e))
             return
-        if not boards:
+        if not boards and getattr(cl, "hidden", False):   # 비밀번호 없는 서버 = 목록을 숨김(칠판 주소가 곧 열쇠) — 웹 「주소 복사」를 붙여 넣어 엶
+            text, ok = QInputDialog.getText(self, "웹 칠판 열기", f"서버 {cl.base}는 칠판 목록을 숨겨요.\n웹 칠판의 「주소 복사」로 받은 주소(또는 칠판 이름)를 붙여 넣어 주세요.")
+            name = web_board.board_from_text(text) if ok else ""
+            if not name:
+                return
+        elif not boards:
             QMessageBox.information(self, "웹 칠판 열기", f"서버({cl.base})에 칠판이 아직 없어요.")
             return
-        rows = [f"{b['name']}   ·  {b['items']}개 · {_t.strftime('%m-%d %H:%M', _t.localtime(b['mtime']))}" for b in boards]
-        pick, ok = QInputDialog.getItem(self, "웹 칠판 열기", f"서버 {cl.base}의 칠판(최근에 고친 것부터)", rows, 0, False)
-        if not ok:
-            return
-        name = boards[rows.index(pick)]["name"]
+        else:
+            rows = [f"{b['name']}   ·  {b['items']}개 · {_t.strftime('%m-%d %H:%M', _t.localtime(b['mtime']))}" for b in boards]
+            pick, ok = QInputDialog.getItem(self, "웹 칠판 열기", f"서버 {cl.base}의 칠판(최근에 고친 것부터)", rows, 0, False)
+            if not ok:
+                return
+            name = boards[rows.index(pick)]["name"]
         try:
             doc = cl.get_doc(name)
         except web_board.WebBoardError as e:
@@ -1060,7 +1066,7 @@ class _FileIOMixin:
             return
         cl = self._web_client()
         try:
-            exists = any(b["name"] == name for b in cl.list_boards())
+            exists = cl.board_exists(name)   # 목록을 숨기는 서버에서도(2026-10-27)
             if exists and name != getattr(doc0, "web_board", None):
                 r = QMessageBox.question(self, "웹 칠판에 올리기", f"서버에 「{name}」 칠판이 이미 있어요.\n지금 도면으로 덮어쓸까요? (같이 쓰는 사람의 내용도 바뀌어요)")
                 if r != QMessageBox.StandardButton.Yes:
