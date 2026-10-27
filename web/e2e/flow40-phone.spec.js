@@ -28,6 +28,8 @@ test('휴대폰 — 큰 버튼 셋 · 손가락 이동·확대 · 고치기 없�
   await expect(page.getByTestId('dock-frame')).toHaveCount(0)                           // 왼쪽 판 없음
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)   // 옆으로 넘치지 않음
   await page.screenshot({ path: 'test-results/phone-empty.png' })
+  expect(await page.evaluate(() => document.querySelector('meta[name=viewport]').content)).toContain('user-scalable=no')   // 브라우저 확대 막음(뭉개짐 — 10-27 사용자)
+  for (const id of ['phone-top', 'phone-bar']) await expect(page.getByTestId(id)).toHaveCSS('touch-action', 'none')
 
   // 묻고 붙이기 — 대화창은 화면 전체, 「✕ 칠판」으로 닫고 다시 열 수 있음
   await bar.getByRole('button', { name: 'KAIROS' }).click()

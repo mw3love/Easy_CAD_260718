@@ -7,6 +7,7 @@ const menuBtns = page => page.locator('div[style*="z-index: 30"] > div > button'
 
 test('스타일 복사·붙여넣기 = Alt+C / Alt+V', async ({ page }) => {
   await openBoard(page, boardName('stylekey')); await setCam(page)
+  expect(await page.evaluate(() => document.querySelector('meta[name=viewport]').content)).not.toContain('user-scalable')   // PC는 그대로(휴대폰만 막음)
   for (const x of [0, 300]) { await pickShape(page, '사각형'); await dragScene(page, { x, y: 0 }, { x: x + 160, y: 80 }); await page.keyboard.press('Escape') }
   await clickScene(page, 700, 500)
   await clickScene(page, 80, 40); await page.keyboard.press('Alt+c')

@@ -290,6 +290,12 @@ function App() {
   const [narrow, setNarrow] = useState(() => window.innerWidth < NARROW_W)   // 좁은 창 = 위 막대 아이콘만 + 대화창은 칠판 위에 뜸
   const [phone, setPhone] = useState(() => window.innerWidth < PHONE_W), phoneRef = useRef(phone); phoneRef.current = phone
   useEffect(() => { const on = () => { setNarrow(window.innerWidth < NARROW_W); setPhone(window.innerWidth < PHONE_W) }; window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
+  // 휴대폰 = 브라우저가 화면 전체를 그림처럼 키우지 않게(2026-10-27 사용자: 확대하면 뭉개짐 — 칠판 밖(위·아래 막대·대화창)을 벌리면 브라우저 확대가 됐음, 아이폰 Safari는 칠판의 touch-action도 무시)
+  // 확대는 칠판 두 손가락(Editor)만 — 글자를 다시 그려 또렷함
+  useEffect(() => { if (!phone) return; const meta = document.querySelector('meta[name=viewport]'), old = meta?.content
+    meta?.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no')
+    const stop = e => e.preventDefault(); document.addEventListener('gesturestart', stop); document.addEventListener('gesturechange', stop)   // 아이폰 Safari 확대 몸짓
+    return () => { if (old) meta.setAttribute('content', old); document.removeEventListener('gesturestart', stop); document.removeEventListener('gesturechange', stop) } }, [phone])
   const [activeLayer, setActiveLayer] = useState('default')   // 「그리는 중」 레이어(파일을 열면 기본부터 — 데스크톱 `_apply_loaded_layers`)
   const [model, setModel] = useState(() => fromEcad(emptyDoc()))
   const [cam, setCam] = useState({ x: 0, y: 0, z: 1 })   // 화면 = 칠판 × z + (x, y)
@@ -436,7 +442,7 @@ function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
-      {phone && <div data-testid="phone-top" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>   {/* 휴대폰 위 = 칠판 이름·사람 수·밝기만 */}
+      {phone && <div data-testid="phone-top" style={{ touchAction: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>   {/* 휴대폰 위 = 칠판 이름·사람 수·밝기만 */}
         <span style={{ flex: 1, minWidth: 0, font: "700 15px 'Pretendard', sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{server ? `「${DOC_NAME}」` : 'Magic Board'}</span>
         {server && <span title={people.join(', ')} style={{ fontSize: 13, color: C.muted, whiteSpace: 'nowrap' }}>👥 {people.length || 1}</span>}
         <button onClick={toggleDark} title="밝게 / 어둡게" style={{ all: 'unset', cursor: 'pointer', fontSize: 18, padding: '2px 4px' }}>{dark ? '☀️' : '🌙'}</button></div>}
@@ -520,7 +526,7 @@ function App() {
       </div>
       {chatOpen && <ChatPanel ed={ed} selKey={selKey} floating={narrow} full={phone} onClose={() => setChatOpen(false)} request={chatAsk} focus={chatFocus} onBusy={setAiBusy} width={chatW} setWidth={setChatW} />}
       </div>
-      {phone && <div data-testid="phone-bar" style={{ display: 'flex', gap: 8, padding: '8px 10px calc(8px + env(safe-area-inset-bottom))', background: C.bar, borderTop: `1px solid ${C.line}` }}>   {/* 휴대폰 아래 = 엄지로 누르는 큰 버튼 셋 */}
+      {phone && <div data-testid="phone-bar" style={{ touchAction: 'none', display: 'flex', gap: 8, padding: '8px 10px calc(8px + env(safe-area-inset-bottom))', background: C.bar, borderTop: `1px solid ${C.line}` }}>   {/* 휴대폰 아래 = 엄지로 누르는 큰 버튼 셋 */}
         {[['⤢', '다 보기', () => fit(modelRef.current.items), false, false],
           ['🎙', meetSt === 'saved' ? '정리하기' : meetSt ? '끝내기' : '회의', () => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : meetSt ? ed.current?.meetStop() : ed.current?.meetStart()), !!meetSt, meetSt === 'start' || meetSt === 'stopping'],
           ['✦', 'KAIROS', () => setChatOpen(true), false, false]].map(([ic, label, f, on, off]) =>
