@@ -107,9 +107,10 @@ def cookie_value(header: str | None, name: str = "mb_key") -> str:
     return ""
 
 
-# ── 접속자(이름만, 15초 안에 신호 보낸 사람) ──
+# ── 접속자(이름만, 5초 안에 신호 보낸 사람) ──
 class Presence:
-    def __init__(self, ttl: float = 15.0):
+    # 5초(2026-10-27 — 15 → 5): 화면은 1초마다 신호. 「나감」 신호가 안 오는 경우(시크릿 창 닫기 실측·휴대폰 다른 앱·노트북 덮기)에 이름이 15초 남았음
+    def __init__(self, ttl: float = 5.0):
         self.ttl, self.boards = ttl, {}
 
     def ping(self, board: str, client: str, name: str, now: float | None = None, sel=None, edit: str = "") -> list:

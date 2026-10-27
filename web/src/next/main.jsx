@@ -278,7 +278,7 @@ function LoginForm({ onDone, nameOnly = false }) {   // nameOnly = 편집 초대
     </div></div>
 }
 // 「공유」 — 노션처럼 두 탭(2026-10-19 사용자): 공유 = 편집 초대 링크(비밀번호 없이 이름만 적고 편집) + 지금 접속한 사람, 게시 = 로그인 없이 보기·발표만
-function ShareForm({ onClose, people = [], me = '' }) {
+function ShareForm({ onClose, people = [] }) {   // people = [{ id, name, me }] — 사람(창)마다 하나, 이름이 같아도 따로
   const [tab, setTab] = useState('share')
   const [tok, setTok] = useState(undefined), [inv, setInv] = useState(undefined), [msg, setMsg] = useState('')
   useEffect(() => { api.getPublish().then(setTok); api.getInvite().then(r => setInv(r || { token: null, password: true })) }, [])
@@ -307,7 +307,7 @@ function ShareForm({ onClose, people = [], me = '' }) {
         <div style={{ fontSize: 11, color: C.muted }}>링크가 없을 때는 팀 비밀번호로만 들어와요</div></>}
       <div style={{ borderTop: `1px solid ${C.line}`, paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
         <span style={{ fontWeight: 600 }}>지금 이 칠판에 {people.length}명</span>
-        {people.map(n => <span key={n} style={{ color: n === me ? C.ink : C.muted }}>• {n}{n === me ? ' (나)' : ''}</span>)}</div>
+        {people.map(p => <span key={p.id} style={{ color: p.me ? C.ink : C.muted }}>• {p.name}{p.me ? ' (나)' : ''}</span>)}</div>
     </> : <>
       <div style={{ color: C.muted }}>로그인 없이 열려요. 고치기·대화는 안 되고, 여기서 고친 건 바로 보여요(큰 TV 발표용).</div>
       {tok === undefined ? <span style={{ color: C.muted }}>확인 중…</span> : tok ? <>{linkBox(viewLink)}
@@ -359,7 +359,7 @@ function App({ team }) {   // team = 팀 서버(§8 항목67)에서 내 팀 이�
   const toggleFull = () => { try { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen() } catch { /* 막힌 환경이면 그대로 */ } }
   const toggleDark = () => setDark(d => { try { localStorage.setItem('mb.theme', d ? 'light' : 'dark') } catch { /* 기억 못 해도 그만 */ } return !d })
   const [server, setServer] = useState(false)
-  const [me, setMe] = useState(() => { try { return localStorage.getItem('mb.name') || '' } catch { return '' } }), [people, setPeople] = useState([]), [others, setOthers] = useState([]), [shareOpen, setShareOpen] = useState(false)
+  const [me, setMe] = useState(() => { try { return localStorage.getItem('mb.name') || '' } catch { return '' } }), [others, setOthers] = useState([]), [shareOpen, setShareOpen] = useState(false)
   const sync = useRef({ base: null, rev: 0, busy: false, again: false, id: Math.random().toString(36).slice(2, 10) }), modelRef = useRef(model); modelRef.current = model
   const box = useRef(null), size = useSize(box), file = useRef(null), ed = useRef(null), saveT = useRef(null)
 
@@ -419,8 +419,8 @@ function App({ team }) {   // team = 팀 서버(§8 항목67)에서 내 팀 이�
     ;(async () => { while (live) { const t0 = Date.now(); await pull(null, 20).catch(() => null); if (live && Date.now() - t0 < 250) await new Promise(r => setTimeout(r, 300)) } })()
     return () => { live = false } }, [server, pull])
   useEffect(() => { if (!server) return   // 접속자 — 5초마다 이름 신호
-    // 1초마다 — 내가 고른·고치는 도형도 같이(2026-10-19 사용자: 누가 어디를 고치는지). 바뀐 게 없어도 보냄(15초 안 오면 나간 것으로)
-    const ping = () => api.presence(sync.current.id, me || '이름 없음', ed.current?.getSel?.() || [], ed.current?.editingId?.() || '').then(p => { if (!p) return; setPeople(p.people || []); setOthers(o => (JSON.stringify(o) === JSON.stringify(p.others || []) ? o : p.others || [])) })
+    // 1초마다 — 내가 고른·고치는 도형도 같이(2026-10-19 사용자: 누가 어디를 고치는지). 바뀐 게 없어도 보냄(5초 안 오면 나간 것으로 — 서버 `Presence` ttl)
+    const ping = () => api.presence(sync.current.id, me || '이름 없음', ed.current?.getSel?.() || [], ed.current?.editingId?.() || '').then(p => { if (!p) return; setOthers(o => (JSON.stringify(o) === JSON.stringify(p.others || []) ? o : p.others || [])) })
     const bye = () => api.leave(sync.current.id)   // 창을 닫으면 바로 빠짐(2026-10-26 실검증 — 전엔 15초 신호 끊김을 기다려 20초쯤 남았음)
     ping(); const t = setInterval(ping, 1000); window.addEventListener('pagehide', bye); return () => { clearInterval(t); window.removeEventListener('pagehide', bye) } }, [server, me])
 
@@ -486,11 +486,13 @@ function App({ team }) {   // team = 팀 서버(§8 항목67)에서 내 팀 이�
     window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on)
   }, [])
 
+  // 접속자 = 나 + 다른 창(id마다 — 이름으로 세면 이름이 같은 사람(로그인 없는 서버는 다 「이름 없음」)이 한 명으로 줄었음, 2026-10-27 사용자: 셋인데 1)
+  const crowd = [{ id: sync.current.id, name: me || '나', me: true }, ...others]
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
       {phone && <div data-testid="phone-top" style={{ touchAction: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>   {/* 휴대폰 위 = 칠판 이름·사람 수·밝기만 */}
         <span style={{ flex: 1, minWidth: 0, font: "700 15px 'Pretendard', sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{server ? `「${DOC_NAME}」` : 'Magic Board'}{server && team && <span style={{ marginLeft: 6, font: "600 12px 'Pretendard', sans-serif", color: C.muted }}>{team}</span>}</span>
-        {server && <span title={people.join(', ')} style={{ fontSize: 13, color: C.muted, whiteSpace: 'nowrap' }}>👥 {people.length || 1}</span>}
+        {server && <span data-testid="people-count" title={crowd.map(p => p.name).join(', ')} style={{ fontSize: 13, color: C.muted, whiteSpace: 'nowrap' }}>👥 {crowd.length}</span>}
         <button onClick={toggleDark} title="밝게 / 어둡게" style={{ all: 'unset', cursor: 'pointer', fontSize: 18, padding: '2px 4px' }}>{dark ? '☀️' : '🌙'}</button></div>}
       <Narrow.Provider value={narrow}>
       <div style={{ display: phone ? 'none' : 'flex', alignItems: 'center', gap: narrow ? 4 : 8, padding: '4px 8px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>
@@ -538,9 +540,9 @@ function App({ team }) {   // team = 팀 서버(§8 항목67)에서 내 팀 이�
         {!narrow && !server && <SampleSelect onPick={openSample} />}
         <div style={{ marginLeft: 'auto' }} />   {/* 오른쪽 이름·배율 뺌(2026-10-27 사용자 — 이름은 왼쪽 끝, 배율은 미니맵 %와 겹침) */}
         <div data-pop="share" style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, opacity: server ? 1 : 0.4 }}>   {/* 서버가 없으면 숨기지 않고 흐리게 — 안 보이면 왜 없는지 몰랐음(2026-10-20 사용자) */}
-          {server && <Faces list={[{ id: sync.current.id, name: me || '나', me: true }, ...others].map(p => ({ ...p, color: personColor(p.id) }))} onClick={() => setShareOpen(o => !o)} />}
+          {server && <Faces list={crowd.map(p => ({ ...p, color: personColor(p.id) }))} onClick={() => setShareOpen(o => !o)} />}
           <Btn icon="share" label="공유" on={shareOpen} onClick={() => (server ? setShareOpen(o => !o) : setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 공유·KAIROS를 쓸 수 있어요'))} title={server ? '게시 — 로그인 없이 보기·발표만 되는 링크(큰 TV 발표용)' : '서버에 연결 안 됨 — python web/server.py를 켜면 공유할 수 있어요'} />
-          {server && shareOpen && <ShareForm people={people} me={me} onClose={() => setShareOpen(false)} />}
+          {server && shareOpen && <ShareForm people={crowd} onClose={() => setShareOpen(false)} />}
         </div>
         <Btn special icon="generate" label="KAIROS" on={chatOpen} onClick={() => setChatOpen(o => !o)} title="KAIROS 대화창 열기/닫기 — 답을 칠판에 카드로 붙여요" />   {/* 오른쪽 구석 = 대화창 바로 위(2026-10-23 사용자) */}
         <input ref={file} type="file" accept=".ecad,application/json" hidden onChange={async e => {

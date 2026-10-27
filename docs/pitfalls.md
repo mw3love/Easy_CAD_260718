@@ -1727,3 +1727,4 @@
 - 아이폰 Safari 같은 버그는 이 PC Playwright WebKit(`%LOCALAPPDATA%/ms-playwright/webkit-2336/Playwright.exe`를 `webkit.launch({ executablePath })`, 시험 실행기 밖 node 스크립트 — 설정의 `channel: 'chrome'`이 webkit에도 붙어 실행기 안에선 못 띄움)로 재현할 수 있다(2026-10-27).
 - ⚠ 윈도 파일 이름은 대소문자를 안 가린다 — 칠판 이름으로 권한을 나눌 때(팀별 칠판) 「Main」과 `main.ecad`는 같은 파일. 이름 비교·「파일 있음」 검사는 casefold로(2026-10-27).
 - ⚠ `secrets.compare_digest(str, str)`는 ASCII만 — 한글 비밀번호·토큰이면 TypeError로 요청이 죽는다. `.encode("utf-8")` 바이트로 비교(`web/collab.py` `_same`, 2026-10-27).
+- ⚠ 접속자를 **이름으로 세지 말 것** — 로그인 없는 서버는 다 「이름 없음」이라 셋이 한 명으로 줄었음(2026-10-27). id(`others`)로 센다. 또 Playwright `route`는 `fetch(..., { keepalive: true })`를 못 가로챔(시험에서 막으려면 `fetch` 자체를 멈춤).

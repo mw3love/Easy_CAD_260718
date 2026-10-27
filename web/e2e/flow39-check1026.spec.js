@@ -68,6 +68,21 @@ test('창을 닫으면 접속자 이름이 바로 빠짐', async ({ browser }) =
   await ca.close(); await cb.close()
 })
 
+test('「나감」 신호가 안 와도 5초쯤이면 빠짐 · 이름이 같아도 사람 수대로(10-27 — 시크릿 창 닫기 15초, 셋인데 「👥 1」)', async ({ browser }) => {
+  const name = boardName('crowd')
+  const cs = await Promise.all([0, 1, 2].map(() => browser.newContext()))
+  const [a, b, c] = await Promise.all(cs.map(x => x.newPage()))
+  await c.setViewportSize({ width: 600, height: 900 })                                                    // 휴대폰 최소판 = 「👥 N」
+  for (const p of [a, b, c]) await openBoard(p, name, { who: '이름 없음' })
+  await expect(a.getByTestId('people')).toHaveAttribute('aria-label', '접속자 3명', { timeout: 4000 })
+  await expect(c.getByTestId('people-count')).toHaveText('👥 3')
+  const t0 = Date.now(); await b.evaluate(() => { window.fetch = () => new Promise(() => {}) })            // 신호가 그냥 끊김(휴대폰 다른 앱·노트북 덮기 — 「나감」 없음)
+  await expect(a.getByTestId('people')).toHaveAttribute('aria-label', '접속자 2명', { timeout: 9000 })
+  expect(Date.now() - t0).toBeGreaterThan(3000)                                                           // 나감 신호가 정말 막혔음 = ttl로 빠짐
+  await expect(c.getByTestId('people-count')).toHaveText('👥 2')
+  for (const x of cs) await x.close()
+})
+
 test('선을 고르고 우클릭 「범례 넣기」(표 창 안에만 있으면 못 찾음)', async ({ page }) => {
   await openBoard(page, boardName('legendmenu')); await setCam(page)
   await page.keyboard.press('2'); await dragScene(page, { x: 0, y: 0 }, { x: 200, y: 0 }); await page.keyboard.press('Escape')
