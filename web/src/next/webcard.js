@@ -53,6 +53,7 @@ export function webCardFields(info) {
 
 export const WEB_INFO_H = 76   // 대표 그림 없는 막힌 사이트의 몸통(아이콘 + 설명 두 줄)
 export const WEB_ZOOMS = [0.5, 0.75, 1]   // 칸 안 페이지 배율(속성 카드)
+export const DOC_SLEEP_PX = 40   // 정리 문서(스크립트 없음)는 가벼워 이보다 작을 때만 끔(2026-10-27 사용자: 줄이면 안 보임 — 작게라도 보이게)
 export const WEB_SLEEP_PX = 200   // 화면에서 카드 폭이 이보다 작으면 칸 안 페이지를 끔(그림·이름만) — 페이지 하나가 탭 하나만큼 무거움
 
 export const isYoutube = it => /^https:\/\/www\.youtube\.com\/embed\//.test(it.embed || '')

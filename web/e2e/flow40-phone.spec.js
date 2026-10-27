@@ -57,12 +57,15 @@ test('휴대폰 — 큰 버튼 셋 · 손가락 이동·확대 · 고치기 없�
   await page.screenshot({ path: 'test-results/phone-board.png' })
 })
 
-test('휴대폰 — 정리 문서·웹 카드는 속 페이지를 안 띄움(아이폰에서 확대하면 카드 밖으로 쏟아졌음), 톡 누르면 새 탭', async ({ page }) => {
+test('휴대폰 — 정리 문서 속 페이지는 칠판 위층에(아이폰에서 SVG 안이면 확대할 때 카드 밖으로 쏟아졌음), 톡 누르면 새 탭', async ({ page }) => {
   await openBoard(page, boardName('phonecard'))
   await page.evaluate(() => window.__mb.ed.dropFiles([new File(['<h1>보고서</h1><p>본문</p>'], '보고서.html', { type: 'text/html' })]))
   await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'doc').length).toBe(1)
   await page.getByTestId('phone-bar').getByRole('button', { name: '다 보기' }).click()
-  await expect(page.getByTestId('board').locator('iframe')).toHaveCount(0)               // 칠판 안 iframe 없음
+  await expect(page.getByTestId('board').locator('iframe')).toHaveCount(0)               // 칠판(SVG) 안 iframe 없음 — 아이폰에서 확대하면 밖으로 쏟아졌음
+  await expect(page.getByTestId('phone-cards').locator('iframe')).toHaveCount(1)        // 속 페이지는 위층에서 보임(10-27 사용자: 제목만이면 10개일 때 못 찾음)
+  const fb = await page.getByTestId('phone-cards').locator('iframe').boundingBox(), db = await page.evaluate(() => { const r = document.querySelector('[data-doc-box]').getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height } })
+  expect(fb.x).toBeGreaterThanOrEqual(db.x - 1); expect(fb.y).toBeGreaterThanOrEqual(db.y - 1); expect(fb.x).toBeLessThan(db.x + db.w)   // 카드 자리 안에서 시작
   const b = await page.getByTestId('board').boundingBox(), cx = b.x + b.width / 2, cy = b.y + b.height / 2
   const pop = page.waitForEvent('popup')
   const cdp = await page.context().newCDPSession(page)

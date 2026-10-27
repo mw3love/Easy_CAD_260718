@@ -353,6 +353,18 @@ function chartPrim(p, k) {
   if (p.t === 'circle') return <circle key={k} cx={p.cx} cy={p.cy} r={p.r} fill={p.f} stroke={p.s} strokeWidth={p.sw}>{tip}</circle>
   return <text key={k} x={p.x} y={p.y} textAnchor={p.a} dominantBaseline="central" fontSize={p.fs} fontWeight={p.b ? 700 : 400} fontFamily={APP_FONT} fill={p.c} style={{ whiteSpace: 'pre' }}>{p.s}</text>
 }
+// 카드 속 페이지(iframe) — 칠판 안(foreignObject)과 휴대폰 위층(Editor `phoneCards`, 아이폰 Safari는 SVG 안 iframe에 칠판 배율을 안 먹임 — 2026-10-27)이 같이 씀
+export function docFrame(it, bh, web) { const lv = isLive(it), k = it.rect[2] / (lv ? LIVE_W : 794)
+  return lv
+    ? <iframe data-docid={it._id} data-liveid={it._id} srcDoc={liveSrc(it.html)} title={it.title || '인터랙티브 HTML'} sandbox="allow-scripts" csp={LIVE_CSP} scrolling="no"
+        style={{ border: 0, width: LIVE_W, height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} />
+    : <iframe data-docid={it._id} srcDoc={it.html} title={it.title || '정리 문서'} sandbox="" scrolling="no"
+        style={{ border: 0, width: 794, height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: 'none' }} /> }
+export const webZoom = (it, fsScale) => (!isYoutube(it) && it.zoom > 0 && it.zoom < 1 ? it.zoom : isYoutube(it) && fsScale > 1 ? 1 / fsScale : 1)
+export function webFrame(it, web, noFs, fsScale) { const zm = webZoom(it, fsScale)
+  return <iframe data-webid={it._id} src={frameSrc(it, noFs)} title={it.title || it.url} allow="autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
+    sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-presentation" style={{ border: 0, width: `${100 / zm}%`, height: `${100 / zm}%`, transform: zm < 1 ? `scale(${zm})` : undefined, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} /> }
+
 export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode = 'inline', page, web, noFs, ytBig, fsScale }) {   // noFs·ytBig·fsScale = 발표 화면(유튜브 전체 화면 단추 숨김 · 크게 보는 중 · 화면 배율)   // web = 웹 카드 칸 안 페이지: 없음 = 그림 카드(내보내기·장 목록), 'view' = 보이기만(누르면 칠판이 받음), 'on' = 조작 중   // page = 종이틀 쪽 번호(편집 화면만)   // props의 dark: 화면이 바뀌면 다시 그리게(memo가 props를 비교)
   const T = itemTransform(it), fill = it.fill ? cssColor(it.fill) : 'none'
   if (lmode === 'only' && it.type !== 'sarrow' && it.type !== 'arrow') return null
@@ -443,7 +455,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
     case 'web': {   // 웹 카드 — 위 띠(제목·주소·새 탭 단추) + 칸 안 페이지(들어가는 사이트, 편집·발표 화면만) 또는 대표 그림
       const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'wc-' + (it._id || idx), ob = openBtnRect(it), ic = it.icon ? 16 : 0, tx = x + 10 + (ic && ic + 6), yl = noFs && isYoutube(it) ? 104 : 0, tw = w - ob.w - 26 - (ic && ic + 6) - yl   // yl = 발표의 「⤢ 크게 보기」 자리
       const live = (web === 'on' || web === 'view') && it.frameable && bh > 4   // 'sleep' = 많이 줄여 봄 → 페이지 끔(그림·이름만)
-      const zm = !isYoutube(it) && it.zoom > 0 && it.zoom < 1 ? it.zoom : isYoutube(it) && fsScale > 1 ? 1 / fsScale : 1   // 칸 안 페이지 배율 — 큰 판에 띄우고 통째로 줄임.
+      const zm = webZoom(it, fsScale)   // 칸 안 페이지 배율 — 큰 판에 띄우고 통째로 줄임.
       // 발표의 유튜브 = 화면에 보이는 크기의 판에 띄우고 줄임(작은 판을 확대하면 유튜브 단추가 몇 배로 커 보였음 — 2026-10-20 사용자)
       const info = () => { const s = Math.min(36, bh - 16), lw = w - s - 34, lines = wrap2(it.desc || siteOf(it.url), 12, lw)   // 막힌 사이트·그림 없음 = 아이콘 + 설명 두 줄
         return <>{it.icon ? <image href={it.icon} x={x + 12} y={y + H + (bh - s) / 2} width={s} height={s} />
@@ -456,10 +468,8 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
           {!ytBig && <><rect x={x} y={y} width={w} height={h} fill="#ffffff" />
           <rect x={x} y={y} width={w} height={H} fill="#f4f4f5" /></>}
           {bh > 0 && (live
-            ? <foreignObject x={x} y={y + H} width={w} height={bh}>
-                <iframe data-webid={it._id} src={frameSrc(it, noFs)} title={it.title || it.url} allow="autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
-                  sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-presentation" style={{ border: 0, width: `${100 / zm}%`, height: `${100 / zm}%`, transform: zm < 1 ? `scale(${zm})` : undefined, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} />
-              </foreignObject>   // sandbox = 칠판 화면을 통째로 다른 주소로 넘기지 못하게(일부 사이트의 「틀 벗어나기」)
+            ? <foreignObject x={x} y={y + H} width={w} height={bh}>{webFrame(it, web, noFs, fsScale)}</foreignObject>   // sandbox = 칠판 화면을 통째로 다른 주소로 넘기지 못하게(일부 사이트의 「틀 벗어나기」)
+            : web === 'shell' ? <rect x={x} y={y + H} width={w} height={bh} fill="#ffffff" />   // 몸통은 휴대폰 위층이 그림
             : it.thumb ? <image href={it.thumb} x={x} y={y + H} width={w} height={bh} preserveAspectRatio="xMidYMid slice" />
             : !it.embed && bh >= 30 ? <><rect x={x} y={y + H} width={w} height={bh} fill="#ffffff" />{info()}</>
             : <><rect x={x} y={y + H} width={w} height={bh} fill="#e4e4e7" />
@@ -490,13 +500,8 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
           <rect x={x} y={y} width={w} height={h} fill="#ffffff" />
           <rect x={x} y={y} width={w} height={H} fill="#f5f3ff" />
           {bh > 0 && (live
-            ? <foreignObject x={x} y={y + H} width={w} height={bh}>
-                {lv
-                  ? <iframe data-docid={it._id} data-liveid={it._id} srcDoc={liveSrc(it.html)} title={it.title || '인터랙티브 HTML'} sandbox="allow-scripts" csp={LIVE_CSP} scrolling="no"
-                      style={{ border: 0, width: LIVE_W, height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} />
-                  : <iframe data-docid={it._id} srcDoc={it.html} title={it.title || '정리 문서'} sandbox="" scrolling="no"
-                      style={{ border: 0, width: 794, height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: 'none' }} />}
-              </foreignObject>
+            ? <foreignObject x={x} y={y + H} width={w} height={bh}>{docFrame(it, bh, web)}</foreignObject>
+            : web === 'shell' ? <rect x={x} y={y + H} width={w} height={bh} fill="#ffffff" />   // 몸통은 휴대폰 위층이 그림
             : <><rect x={x} y={y + H} width={w} height={bh} fill="#fafafa" />
               <text x={x + w / 2} y={y + H + bh / 2} textAnchor="middle" dominantBaseline="central" fontSize={Math.min(16, bh / 6)} fontFamily={APP_FONT} fill="#8a8f98">{lv ? (fits ? '▶ 인터랙티브 HTML — 칠판에서 두 번 눌러 움직여 보세요' : '▶ 인터랙티브 HTML — 너무 커서 못 띄워요') : '📄 정리 문서 — ↗로 크게 보기·인쇄'}</text></>)}
         </g>

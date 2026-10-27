@@ -1724,3 +1724,4 @@
 - ⚠ 서버에 파일을 통째로 PUT하는 저장(웹 대화 기록 등)은 같은 칠판을 연 두 창이 서로 덮는다 — 읽은 판 번호(base)와 함께 보내고 서버가 어긋나면 합칠 것(`collab.merge_chatlog`, 2026-10-26 점검). 칠판 문서는 이미 도형 단위 patch.
 - ⚠ 웹 단축키에 `Ctrl+Alt+글자`를 쓰지 말 것 — 윈도·다른 프로그램 전역 단축키(Copilot `Ctrl+Alt+C` 등)가 브라우저보다 먼저 가로채 페이지가 못 막는다. 왼손 `Alt+글자`(자리 `e.code`)로(2026-10-26 실검증).
 - ⚠ 아이폰 Safari(WebKit)는 SVG `foreignObject` 안 iframe·HTML에 바깥 `<g>` 확대(transform)를 제대로 안 먹여 확대하면 카드 밖으로 쏟아진다 — 크롬 에뮬레이션 시험으론 안 잡힘. 휴대폰은 카드 속 페이지를 안 띄움(2026-10-27).
+- 아이폰 Safari 같은 버그는 이 PC Playwright WebKit(`%LOCALAPPDATA%/ms-playwright/webkit-2336/Playwright.exe`를 `webkit.launch({ executablePath })`, 시험 실행기 밖 node 스크립트 — 설정의 `channel: 'chrome'`이 webkit에도 붙어 실행기 안에선 못 띄움)로 재현할 수 있다(2026-10-27).

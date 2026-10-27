@@ -3,7 +3,7 @@
 // 화면 = 칠판 × z + (x, y). 손잡이·선 굵기는 화면 px 고정(÷ z).
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, legendLayout, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, memoLinkAt, rr, isDeepPaper, deepPaper } from './render.jsx'
+import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, legendLayout, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, memoLinkAt, rr, isDeepPaper, deepPaper, docFrame, webFrame } from './render.jsx'
 import { DOC_NAME, boardMembership, drawOrder, itemBounds } from './doc.js'
 import { docText } from './find.jsx'
 import { keyHeaders } from './kairosKey.js'
@@ -32,7 +32,7 @@ import { FormatBar } from './formatbar.jsx'
 import { arrowKindOf, swapArrowKind } from './arrowkind.js'
 import { shapeWH, symbolPath } from './symbols.js'
 import { cssColor } from '../ecadFormat.js'
-import { colEdges, colFracs, frameTag, frameTagFs, rowEdges } from './geom.js'
+import { colEdges, colFracs, frameTag, frameTagFs, itemTransform, rowEdges } from './geom.js'
 import { orderedFrames, setFrameOrder } from './edit.js'
 import { Presenter } from './present.jsx'
 import { layersOf, layerIdOf } from './layers.jsx'
@@ -41,8 +41,8 @@ import { buildHtml } from './htmlshare.js'
 import { ContextMenu } from './ctxmenu.jsx'
 import { pdfGoPage, pdfLayout, pdfPageAt, pdfScroll, pdfSelectedText } from './pdfcard.jsx'
 import { answerTable, freeSpot, nearSpot, sourceLine } from '../chatFormat.js'
-import { LIVE_H, LIVE_W, bigPage, liveFits } from './livecard.js'
-import { WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
+import { LIVE_H, LIVE_W, bigPage, isLive, liveFits } from './livecard.js'
+import { DOC_SLEEP_PX, WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { isLegendLine, legendEntries, restyleLegendRow, syncLegends } from './legend.js'
 import { HANDLE_MIN_Z, LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
@@ -2275,6 +2275,16 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       {tp && !dots.some(hit) && <circle cx={tp.x} cy={tp.y} r={r} fill={BLUE} stroke="#fff" strokeWidth={1.5 / z} />}</g>
   })()
 
+  // 카드(웹·PDF·정리 문서) 칸 안 — 'on' 조작 · 'view' 페이지 띄움 · 'sleep' 그림·이름만(멀리서) · 'shell' 몸통 비움(휴대폰 위층이 그림)
+  // 정리 문서(스크립트 없음)는 가벼워 멀리서도 띄움(DOC_SLEEP_PX — 2026-10-27 사용자: 줄이면 안 보임, 작게라도 보이게), 웹 페이지·움직이는 카드는 무거워 WEB_SLEEP_PX
+  const cardMode = it => { if (it.type !== 'web' && it.type !== 'pdf' && it.type !== 'doc') return undefined
+    const px = it.rect[2] * (it.scale || 1) * cam.z, far = px < (it.type === 'doc' && !isLive(it) ? DOC_SLEEP_PX : WEB_SLEEP_PX)
+    if (phone) return it.type === 'pdf' || far || (it.type === 'web' && !it.frameable) ? 'sleep' : 'shell'   // 휴대폰 = 페이지는 위층(아이폰 Safari — SVG 안 iframe이 확대하면 밖으로 쏟아짐), PDF는 첫 쪽 그림
+    return webOn === it._id ? 'on' : far ? 'sleep' : 'view' }
+  // 휴대폰 위층 — 칠판 위 HTML 판에 카드 속 페이지만, 칠판과 같은 배율로(CSS transform은 아이폰도 맞게 그림). 화면 밖 카드는 안 그림. 누르기는 칠판이 받음(톡 = 새 탭)
+  const phoneCards = phone ? order.filter(([it]) => cardMode(it) === 'shell' && (b => b.x < (size.w - cam.x) / cam.z && b.x + b.w > -cam.x / cam.z && b.y < (size.h - cam.y) / cam.z && b.y + b.h > -cam.y / cam.z)(sceneBox(it, textBox))).map(([it]) => it) : []
+  const cssT = t => t.replace(/translate\(([-\d.e]+),([-\d.e]+)\)/g, 'translate($1px,$2px)').replace(/rotate\(([-\d.e]+)\)/g, 'rotate($1deg)')   // itemTransform(SVG 글) → CSS
+
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
       <svg ref={svg} width={size.w} height={size.h} style={{ display: 'block', cursor, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }} data-testid="board"
@@ -2284,7 +2294,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           {visible.map(([it0, i]) => [asTable(it0), i]).map(([it, i]) => (it._id === editingId && it.label?.align === 'left' && editing?.kind === 'label' ? <Item key={it._id} it={{ ...it, label: { ...it.label, text: '' } }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />
             : it._id === editingId && it.type === 'memo' ? <Item key={it._id} it={{ ...it, lines: [] }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />   // 고치는 메모 = 바탕만(흐린 글자가 투명한 채움 사이로 잔상처럼 비쳤음 — 2026-10-18 사용자)
             : it._id === editingId ? <g key={it._id} opacity={0.15}><Item it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" /></g>
-            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={phone && (it.type === 'web' || it.type === 'pdf' || it.type === 'doc') ? 'sleep' : it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'pdf' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'doc' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
+            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={cardMode(it)} />))}
           {/* 화살표 라벨은 모든 선·도형 위에(다른 화살표가 지나가도 안 덮임 — 2026-10-18 사용자 지적) */}
           {visible.map(([it, i]) => (isArrow(it) && (it.labels?.length || it.label) && it._id !== editingId ? <Item key={'lb' + it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="only" /> : null))}
           {pend.map(q => <BoardSkeleton key={'pend' + q.id} q={q} z={z} />)}   {/* 오래 걸리는 일 = 놓일 자리에 회색 틀(skeleton.jsx — 회의록·PDF·글 읽기·베끼기·Deep Mode) */}
@@ -2363,6 +2373,12 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
               {shut && <circle data-testid="poly-close" cx={overlay.poly[0].x} cy={overlay.poly[0].y} r={5 / z} fill={BLUE} stroke="#fff" strokeWidth={1.5 / z} />}</> })()}
         </g>
       </svg>
+      {phoneCards.length > 0 && <div data-testid="phone-cards" style={{ position: 'absolute', left: 0, top: 0, width: size.w, height: size.h, overflow: 'hidden', pointerEvents: 'none' }}>
+        <div style={{ position: 'absolute', left: 0, top: 0, transformOrigin: '0 0', transform: `translate(${cam.x}px,${cam.y}px) scale(${cam.z})` }}>
+          {phoneCards.map(it => { const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H
+            return <div key={it._id} style={{ position: 'absolute', left: 0, top: 0, transformOrigin: '0 0', transform: cssT(itemTransform(it)) }}>
+              <div style={{ position: 'absolute', left: x, top: y + H, width: w, height: bh, overflow: 'hidden', background: '#fff', borderRadius: '0 0 6px 6px' }}>{it.type === 'doc' ? docFrame(it, bh, 'view') : webFrame(it, 'view')}</div></div> })}
+        </div></div>}
       {lineMenu && <ContextMenu at={lineMenu} onClose={() => setLineMenu(null)} entries={lineMenuEntries(lineMenu)} />}
       {menu && <ContextMenu at={menu} onClose={() => setMenu(null)} entries={(() => {
         const m = R.current.model, ids = R.current.sel, has = ids.length > 0, selIt = m.items.filter(it => ids.includes(it._id)), act = f => () => { setMenu(null); f() }

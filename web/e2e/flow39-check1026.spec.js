@@ -113,3 +113,14 @@ test('내 심볼 칸 — 제목 줄 누르면 접힘(새로고침해도 그대�
   await page.getByTestId('pal-sec').filter({ hasText: '방송·기술' }).getByText('방송·기술').click()
   await expect(page.getByTestId('pal-sec').filter({ hasText: '방송·기술' }).getByRole('button', { name: '카메라' })).toBeVisible()
 })
+
+test('정리 문서 카드 — 많이 줄여도 속 페이지가 작게 보임(전엔 제목만)', async ({ page }) => {
+  await openBoard(page, boardName('docfar'))
+  await page.evaluate(() => window.__mb.ed.dropFiles([new File(['<h1>보고서</h1>'], '보고서.html', { type: 'text/html' })]))
+  await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'doc').length).toBe(1)
+  const d = (await liveDoc(page)).items.find(it => it.type === 'doc')
+  await setCam(page, { x: 600 - d.pos[0] * 0.2, y: 300 - d.pos[1] * 0.2, z: 0.2 })        // 카드 폭 397 × 0.2 ≈ 80px
+  await expect(page.getByTestId('board').locator('iframe[data-docid]')).toHaveCount(1)
+  await setCam(page, { x: 600 - d.pos[0] * 0.05, y: 300 - d.pos[1] * 0.05, z: 0.05 })      // 20px = 그때만 끔
+  await expect(page.getByTestId('board').locator('iframe[data-docid]')).toHaveCount(0)
+})
