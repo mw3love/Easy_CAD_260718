@@ -8,7 +8,7 @@ import { DOC_NAME, boardMembership, drawOrder, itemBounds } from './doc.js'
 import { docText } from './find.jsx'
 import { keyHeaders } from './kairosKey.js'
 import { startMic } from './mic.js'
-import { APP_FONT, paperWH, PT, TEXT_MARGIN, urlSpans, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
+import { APP_FONT, paperWH, PT, TEXT_MARGIN, urlSpans, cutPolyline, headSize, headTriangle, labelAnchor, labelInset, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
 import { CHART_MIN, isChart } from './chart.js'
@@ -1538,7 +1538,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (ed.kind === 'text') {
       const o = scr(toScene(it, { x: 0, y: 0 }))
       return { left: o.x, top: o.y, px: (it.font || 12) * PT * (it.scale || 1), zoom: cam.z, family: it.family ? 'board' : 'app', weight: it.weight ?? (it.bold ? 700 : 400),
-        color: col(it.color), bg, rotation: it.rotation || 0, origin: scr(toScene(it, { x: it.origin?.[0] || 0, y: it.origin?.[1] || 0 })), text: it.text, runs: it.runs }
+        color: col(it.color), bg, rotation: it.rotation || 0, origin: scr(toScene(it, { x: it.origin?.[0] || 0, y: it.origin?.[1] || 0 })), text: it.text, runs: it.runs, align: it.ha }
     }
     if (ed.kind === 'alabel') {
       const ls = labelsOf(it), lt = ed.i < ls.length ? it : withLabels(it, [...ls, newArrowLabel(it)])   // 라벨 없는 화살표를 고르고 치기 = 아직 없는 가운데 라벨 자리
@@ -1550,10 +1550,11 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const [x, y, w] = it.rect, o = scr(toScene(it, { x: x + LABEL_PAD, y: y + LABEL_PAD })), s = it.scale || 1
       return { left: o.x, top: o.y, width: (w - 2 * LABEL_PAD) * s * cam.z, px: (L.font || 16) * PT * s, zoom: cam.z, family: L.family ? 'board' : 'app', weight: 400, color: ink(L.color || it.pen || '#ff1f1f1f', ob || !!it.fill), bg: 'transparent', flat: true, align: 'left',   // 채운 상자 안 글 = 화면 밝기와 상관없이 제 색(그릴 때와 같게)
         onChange: it.fit_text ? (t => liveLabel(it._id, t)) : undefined,   // 고치는 모습 = 결과(2026-10-18 사용자: 끝낼 때 한 번에 늘어나면 예측이 어려움)
-        rotation: it.rotation || 0, origin: scr(toScene(it, { x: it.origin?.[0] || 0, y: it.origin?.[1] || 0 })), text: L.text || '', runs: L.runs }
+        rotation: it.rotation || 0, origin: scr(toScene(it, { x: it.origin?.[0] || 0, y: it.origin?.[1] || 0 })), text: L.text || '', runs: L.runs, align: L.ha }
     }
-    const a = scr(toScene(it, labelAnchor(it.type, it.kind, it.rect)))
-    return { center: a, px: (L.font || 16) * PT * (it.scale || 1), zoom: cam.z, family: L.family ? 'board' : 'app', weight: 400, color: col(L.color || it.pen), bg, align: 'center', text: L.text || '', runs: L.runs }
+    const a0 = labelAnchor(it.type, it.kind, it.rect, it), side = L.ha === 'left' || L.ha === 'right' ? L.ha : null, inner = it.rect[2] * labelInset(it.type, it.kind)   // 글 정렬 = 고치는 칸도 같은 쪽에 붙음(고치는 모습 = 결과)
+    const a = scr(toScene(it, side ? { x: a0.x + (side === 'left' ? -inner / 2 : inner / 2), y: a0.y } : a0))
+    return { center: a, side, px: (L.font || 16) * PT * (it.scale || 1), zoom: cam.z, family: L.family ? 'board' : 'app', weight: 400, color: col(L.color || it.pen), bg, align: L.ha || 'center', text: L.text || '', runs: L.runs }
   }
 
   // ── 글쇠 ──

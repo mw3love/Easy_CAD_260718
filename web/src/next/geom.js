@@ -195,7 +195,11 @@ export function labelInset(type, kind) {
   return 0.78
 }
 // 도형 안 라벨 기준점(`_label_anchor` — 원기둥·문서·삼각형만 광학 보정)
-export function labelAnchor(type, kind, r) {
+export function labelAnchor(type, kind, r, it) {   // it = 뒤집힌 심볼(`flip_h`·`flip_v`)이면 글 자리도 상자 가운데 기준으로 뒤집음(2026-10-27 밤)
+  const a = labelAnchor0(type, kind, r), [x, y, w, h] = r
+  return it?.flip_h || it?.flip_v ? { x: it.flip_h ? 2 * x + w - a.x : a.x, y: it.flip_v ? 2 * y + h - a.y : a.y } : a
+}
+function labelAnchor0(type, kind, r) {
   const [x, y, w, h] = r, c = { x: x + w / 2, y: y + h / 2 }
   if (type !== 'symbol') return c
   if (kind === 'database') return { x: c.x, y: c.y + Math.min(h * 0.18, w * 0.5) * 0.7 }

@@ -204,22 +204,23 @@ export function memoLinkAt(it, q) {
 
 // 글 그리기 — (left, top) = 문서 상자 왼쪽 위(여백 포함). color = 기본 글 색
 export const LINK = '#2f80ed'   // 메모 속 주소 색(밝은 메모 바탕 위)
-function TextLines({ lay, left, top, color, halo, band = true }) {   // band = 코드 줄 바탕(메모 코드 블록은 덩어리째 따로 칠함)   // halo = 글자 둘레를 칠할 바탕색(화살표 라벨 — 다른 선이 지나가도 읽히게)
+function TextLines({ lay, left, top, color, halo, band = true, ha }) {   // ha = 줄 맞춤('center'·'right' — 글 정렬, 2026-10-27 밤 · 없으면 왼쪽), 기준 폭 = 줄바꿈 폭 또는 가장 긴 줄   // band = 코드 줄 바탕(메모 코드 블록은 덩어리째 따로 칠함)   // halo = 글자 둘레를 칠할 바탕색(화살표 라벨 — 다른 선이 지나가도 읽히게)
   const { px, m, family, weight } = lay
   const out = []
   lay.lines.forEach((ln, i) => {
     const base = top + TEXT_MARGIN + m.ascent * px + i * m.lineSpacing * px
+    const W = lay.maxW || lay.w, lx = left + TEXT_MARGIN + (ha === 'right' ? W - ln.w : ha === 'center' ? (W - ln.w) / 2 : 0)
     if (ln.code && band) out.push(<rect key={`c${i}`} x={left + TEXT_MARGIN - 4} y={base - m.ascent * px} width={(lay.maxW || lay.w) + 8} height={m.lineSpacing * px} fill={CODE_BAND} />)
-    if (!ln.code) for (const p of ln.parts) if (p.mono && !p.bg) out.push(<rect key={`m${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base - m.ascent * px} width={p.w} height={m.lineSpacing * px} fill={CODE_BAND} />)   // 글 속 짧은 코드
-    for (const p of ln.parts) if (p.link) out.push(<rect key={`u${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base + px * 0.12} width={p.w} height={Math.max(0.6, px * 0.06)} fill={LINK} />)   // 주소 밑줄
+    if (!ln.code) for (const p of ln.parts) if (p.mono && !p.bg) out.push(<rect key={`m${i}-${p.x}`} x={lx + p.x} y={base - m.ascent * px} width={p.w} height={m.lineSpacing * px} fill={CODE_BAND} />)   // 글 속 짧은 코드
+    for (const p of ln.parts) if (p.link) out.push(<rect key={`u${i}-${p.x}`} x={lx + p.x} y={base + px * 0.12} width={p.w} height={Math.max(0.6, px * 0.06)} fill={LINK} />)   // 주소 밑줄
     const decoLines = []   // 밑줄·취소선(2026-10-19) — 글자 위에 그려야 해서 글 다음에 넣음. 선 = 얇은 네모(PDF·PNG도 같게)
     for (const p of ln.parts) if (p.deco && !p.link) { const c = p.color ? cssColor(p.color) : color, th = Math.max(0.6, px * 0.06)
-      if (p.deco.includes('u')) decoLines.push(<rect key={`du${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base + px * 0.12} width={p.w} height={th} fill={c} />)
-      if (p.deco.includes('s')) decoLines.push(<rect key={`ds${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base - px * 0.32} width={p.w} height={th} fill={c} />) }
-    for (const p of ln.parts) if (p.bg) out.push(<rect key={`b${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base - m.ascent * px} width={p.w} height={m.lineSpacing * px} fill={bgCss(p.bg)} />)
+      if (p.deco.includes('u')) decoLines.push(<rect key={`du${i}-${p.x}`} x={lx + p.x} y={base + px * 0.12} width={p.w} height={th} fill={c} />)
+      if (p.deco.includes('s')) decoLines.push(<rect key={`ds${i}-${p.x}`} x={lx + p.x} y={base - px * 0.32} width={p.w} height={th} fill={c} />) }
+    for (const p of ln.parts) if (p.bg) out.push(<rect key={`b${i}-${p.x}`} x={lx + p.x} y={base - m.ascent * px} width={p.w} height={m.lineSpacing * px} fill={bgCss(p.bg)} />)
     out.push(<text key={`t${i}`} y={base} fontSize={px} fontFamily={family === 'board' ? BOARD_FONT : APP_FONT} fontWeight={weight} fill={color} style={{ whiteSpace: 'pre' }}
       {...(halo ? { stroke: halo, strokeWidth: px * 0.14, strokeLinejoin: 'round', paintOrder: 'stroke' } : {})}>   {/* 얇게 — 두꺼우면 자기 선 끝도 숫자 모양대로 곡선으로 파였음(2026-10-18) */}
-      {ln.parts.map((p, j) => <tspan key={j} x={left + TEXT_MARGIN + p.x} fill={p.link ? LINK : p.color ? cssColor(p.color) : undefined} fontWeight={p.mono ? 400 : p.bold ? Math.max(700, weight) : undefined} fontFamily={p.mono ? MONO_FONT : undefined} fontStyle={p.deco?.includes('i') ? 'italic' : undefined}>{p.text}</tspan>)}
+      {ln.parts.map((p, j) => <tspan key={j} x={lx + p.x} fill={p.link ? LINK : p.color ? cssColor(p.color) : undefined} fontWeight={p.mono ? 400 : p.bold ? Math.max(700, weight) : undefined} fontFamily={p.mono ? MONO_FONT : undefined} fontStyle={p.deco?.includes('i') ? 'italic' : undefined}>{p.text}</tspan>)}
     </text>, ...decoLines)
   })
   return out
@@ -275,12 +276,13 @@ export function labelShownPt(it) {
 function CenterLabel({ it, onBoard }) {
   const L = it.label; if (!L?.text) return null
   const [x, y, w] = it.rect, family = L.family ? 'board' : 'app'
-  if (L.align === 'left') return <TextLines lay={leftLabelLayout(it)} left={x + LABEL_PAD} top={y + LABEL_PAD} color={ink(L.color, onBoard || !!it.fill)} />   // 왼쪽 위·줄바꿈(줄이지 않음)
+  if (L.align === 'left') return <TextLines lay={leftLabelLayout(it)} left={x + LABEL_PAD} top={y + LABEL_PAD} color={ink(L.color, onBoard || !!it.fill)} ha={L.ha} />   // 왼쪽 위·줄바꿈(줄이지 않음)
   const inner = Math.max(1, w * labelInset(it.type, it.kind))
   let pt = Math.max(5, Math.round(L.font || 16)), lay = layoutText(L.text, L.runs, pt * PT, family)
   while (pt > 5 && lay.w + 2 * TEXT_MARGIN > inner) { pt -= 1; lay = layoutText(L.text, L.runs, pt * PT, family) }
-  const a = labelAnchor(it.type, it.kind, it.rect), box = centeredBox(lay, a)
-  return <TextLines lay={lay} left={box.left} top={box.top} color={ink(L.color, onBoard || !!it.fill)} />   // 채운 도형 안 글은 도형 바탕을 따름(흰 글 그대로)
+  const a = labelAnchor(it.type, it.kind, it.rect, it), box = centeredBox(lay, a)
+  const left = L.ha === 'left' ? a.x - inner / 2 : L.ha === 'right' ? a.x + inner / 2 - box.w : box.left   // 글 정렬(`label.ha`, 2026-10-27 밤) — 왼·오른쪽 = 도형 안 여백 끝에 붙음, 없으면 가운데(전과 같음)
+  return <TextLines lay={lay} left={left} top={box.top} color={ink(L.color, onBoard || !!it.fill)} ha={L.ha || 'center'} />   // 가운데 = 줄마다 가운데(고치는 칸과 같게 — 전엔 덩어리만 가운데·줄은 왼쪽)   // 채운 도형 안 글은 도형 바탕을 따름(흰 글 그대로)
 }
 
 // 화살표 라벨(경로 위 t + 수직 off, 가운데) — 반환 { el, gap }
@@ -291,7 +293,7 @@ function arrowLabels(it, at, onBoard) {
     const { p, n } = at(L.t ?? 0.5), off = L.off || 0
     const box = centeredBox(lay, { x: p.x + n.x * off, y: p.y + n.y * off })
     const gap = off ? null : { x: box.left - 2, y: box.inkTop - 7, w: box.w + 4, h: box.inkBot - box.inkTop + 14 }   // 옆으로 뺀 라벨은 선을 안 비움
-    return { el: <TextLines key={'l' + i} lay={lay} left={box.left} top={box.top} color={ink(L.color, onBoard)} halo={onBoard ? null : 'var(--mb-board, #ffffff)'} />, gap }
+    return { el: <TextLines key={'l' + i} lay={lay} left={box.left} top={box.top} color={ink(L.color, onBoard)} halo={onBoard ? null : 'var(--mb-board, #ffffff)'} ha="center" />, gap }
   })
 }
 // 화살표 라벨 자리(화살표 안 좌표) — 편집 화면이 누르기·끌기·글 편집에 씀. → [{ i, left, top, w, h, a(앵커), n(왼쪽 법선) }]
@@ -397,7 +399,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
       if (L?.text) {   // 선 라벨: 가운데 '위쪽'(문서 상자 아래가 중점보다 4 위)
         const lay = layoutText(L.text, L.runs, (L.font || 16) * PT, L.family ? 'board' : 'app')
         const a = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 }
-        label = <TextLines lay={lay} left={a.x - lay.w / 2 - TEXT_MARGIN} top={a.y - 4 - (lay.h + 2 * TEXT_MARGIN)} color={ink(L.color, onBoard)} />
+        label = <TextLines lay={lay} left={a.x - lay.w / 2 - TEXT_MARGIN} top={a.y - 4 - (lay.h + 2 * TEXT_MARGIN)} color={ink(L.color, onBoard)} ha="center" />
       }
       return <g transform={T}><line x1={x1} y1={y1} x2={x2} y2={y2} {...strokeProps(it, onBoard)} />{label}</g>
     }
@@ -406,7 +408,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
       const lay = layoutText(it.text, it.runs, (it.font || 12) * PT, family, weight)
       return <g transform={T}>
         {it.bg && <rect x={0} y={0} width={lay.w + 2 * TEXT_MARGIN} height={lay.h + 2 * TEXT_MARGIN} fill={bgCss(it.bg)} />}
-        <TextLines lay={lay} left={0} top={0} color={ink(it.color, onBoard)} />
+        <TextLines lay={lay} left={0} top={0} color={ink(it.color, onBoard)} ha={it.ha} />
       </g>
     }
     case 'image': {

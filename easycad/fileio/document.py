@@ -356,9 +356,9 @@ def item_to_dict(it) -> dict | None:
         d["cuts"] = [[edge_i, t0, t1] for edge_i, t0, t1 in it._cuts]
     # [웹 칠판 2026-10-18] 웹만 아는 칸은 받은 그대로 돌려 쓴다(`dict_to_item` 참조) — 데스크톱이 열었다 저장해도 웹 카드·표 꾸밈이 안 망가지게
     for k, v in (getattr(it, "_web_extra", None) or {}).items():
-        if k == "label.align":
+        if k in ("label.align", "label.ha"):   # label.ha = 웹 글 정렬(왼·오른쪽, 2026-10-27 밤 — 데스크톱은 보존만)
             if "label" in d:
-                d["label"]["align"] = v
+                d["label"][k[6:]] = v
         elif k not in d:
             d[k] = v
     raw = getattr(it, "_web_raw", None)
@@ -375,7 +375,7 @@ _DESK_KEYS = ("type", "pos", "scale", "rotation", "z", "origin", "locked", "grou
 _WEB_ONLY_KEYS_ALL =("fit_text", "chat_at", "legend", "legend_key", "uid", "deep_of", "deep_sec", "sym_name", "flip_h", "flip_v")   # flip_h·flip_v = 웹 그림·심볼 진짜 뒤집기(2026-10-27 밤 — 데스크톱은 보존만, 그리기는 데스크톱 작업실 때), sym_name = 웹 내 심볼·아이콘 묶음 이름(속성 카드 제목, 2026-10-27), legend·legend_key = 웹 범례 표시(다시 모을 때 이름 지키기), uid = 웹 공동작업 도형 이름표(2026-10-18), deep_of·deep_sec = 딥모드 판 물건 표시(§8 항목66 3-1 — 웹 「디자인」 다시 짓기)
 
 
-_WEB_ONLY_KEYS ={"table": ("font", "color", "pen", "cell_styles", "cell_runs", "row_heights", "chart", "table_wh", "chart_theme"), "image": ("alt",)}  # row_heights = 행 높이 비율(웹 2026-10-18, 데스크톱은 같은 높이로 그림), chart·table_wh = 그래프 모양·표일 때 크기(§8 항목66 1단계 — 데스크톱도 그래프로 그림 `core_chart`, chart_theme = 색 순서 — 딥모드 디자인)
+_WEB_ONLY_KEYS ={"text": ("ha",), "table": ("font", "color", "pen", "cell_styles", "cell_runs", "row_heights", "chart", "table_wh", "chart_theme"), "image": ("alt",)}  # row_heights = 행 높이 비율(웹 2026-10-18, 데스크톱은 같은 높이로 그림), chart·table_wh = 그래프 모양·표일 때 크기(§8 항목66 1단계 — 데스크톱도 그래프로 그림 `core_chart`, chart_theme = 색 순서 — 딥모드 디자인)
 
 
 def dict_to_item(d: dict):
@@ -468,8 +468,9 @@ def dict_to_item(d: dict):
     # [웹 칠판 2026-10-18] 웹 칠판만 아는 칸(AI 카드 `fit_text`·`chat_at`·라벨 `align`, 표 `font`·`color`·`pen`) — 데스크톱은 아직 그리지 않지만
     # 저장할 때 그대로 돌려 쓴다(`item_to_dict` 끝). 알려진 칸만 골라 담는다 — 아무 칸이나 되살리면 데스크톱에서 지운 라벨 등이 되살아남.
     extra = {k: d[k] for k in _WEB_ONLY_KEYS.get(t, ()) + _WEB_ONLY_KEYS_ALL if k in d}
-    if (d.get("label") or {}).get("align"):
-        extra["label.align"] = d["label"]["align"]
+    for lk in ("align", "ha"):
+        if (d.get("label") or {}).get(lk):
+            extra["label." + lk] = d["label"][lk]
     if extra and t not in _WEB_TYPES:   # 웹 종류는 원래 칸을 통째로 들고 있음(`_WebItem._web_raw`)
         it._web_extra = extra
     for pd in d.get("ports", []):

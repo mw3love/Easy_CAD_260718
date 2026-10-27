@@ -198,6 +198,9 @@ function AutoToggle({ on, onClick }) {
     style={btn(on, { padding: '0 6px', fontSize: 11, flex: 'none', whiteSpace: 'nowrap', ...(on ? {} : { background: C.seg }) })}>자동</button>   // 줄바꿈 금지 — 폭이 모자라 「자/동」 두 줄로 꺾였음(2026-10-23)
 }
 // 여러 개 중 하나(켜진 것만 코랄)
+// 글 정렬 아이콘 — 줄 넷의 끝을 왼·가운데·오른쪽에 맞춤
+const alignIcon = xs => <svg width="16" height="14" viewBox="0 0 16 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">{[[2, 14], [4.5, 10], [7, 14], [9.5, 8]].map(([y, w], i) => <line key={i} x1={xs(w)} y1={y + 0.5} x2={xs(w) + w} y2={y + 0.5} />)}</svg>
+const ALIGN_ICON = { left: alignIcon(() => 1), center: alignIcon(w => (16 - w) / 2), right: alignIcon(w => 15 - w) }
 function Seg({ items, value, onPick }) {
   return <div style={{ display: 'flex', gap: 2, background: C.seg, borderRadius: 8, padding: 2, flex: 1 }}>
     {items.map(([k, icon, name]) => <button key={k} title={name} aria-pressed={value === k} onClick={() => onPick(k)} style={btn(value === k, { flex: 1 })}>{icon}</button>)}
@@ -294,6 +297,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
   const swapGrp = !swapOne && items.length >= 2 && items[0].group_id && items.every(it => it.group_id === items[0].group_id && !isArrow(it)) ? items.map(it => it._id) : null
   const rotItems = items.filter(it => ROTATABLE.has(it.type))
   const hlItems = items.filter(hlHost)
+  const haItems = items.filter(it => (it.type === 'text' ? !!it.text?.trim() : ['rect', 'ellipse', 'symbol', 'polygon'].includes(it.type) && !!it.label?.text?.trim()))   // 글 정렬 — 독립 글·도형 안 글(선·화살표 글은 선 가운데라 뺌, 2026-10-27 밤)
   useEdTick(liveEd)   // 고치는 중 = 편집기 커서·고른 글자가 바뀔 때마다 켜짐 상태 다시
   const edLive = liveEd && !liveEd.isDestroyed ? liveEd : null
   const fmtSt = edLive ? edState(edLive) : Object.fromEntries(['bold', 'italic', 'underline', 'strike', 'code', 'hl'].map(k => [k, hlItems.length > 0 && hlItems.every(it => fmtOn(hlHost(it), k))]))
@@ -315,6 +319,9 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
         return <AutoToggle on={on} onClick={() => set(it => (it.type !== 'table' ? null : on ? stepTableCells(it, 0) : clearTableFont(it)), on ? '글자 크기 고정' : '글자 크기 자동')} /> })()}</Row>
     <Row label="색"><ColorChip id="text" pop={pop} setPop={setPop} keepEdit={!!edLive} value={edLive ? edState(edLive).color || tColor : tColor} title="글자 색"
       onPick={(c, drag) => (edLive ? edRun(edLive, ch => ch.setColor(c), true) : set(it => patchTexts(it, () => ({ color: c })), '글자 색', drag ? 'tcolor' : null))} /></Row>
+    {haItems.length > 0 && <Row label="정렬"><Seg value={one(haItems.map(it => (it.type === 'text' ? it.ha || 'left' : it.label?.ha || 'center')))}
+      onPick={v => { const ids = new Set(haItems.map(it => it._id)); set(it => (!ids.has(it._id) ? null : it.type === 'text' ? { ha: v === 'left' ? undefined : v } : { label: { ...it.label, ha: v === 'center' ? undefined : v } }), '글 정렬') }}
+      items={[['left', ALIGN_ICON.left, '왼쪽 맞춤'], ['center', ALIGN_ICON.center, '가운데 맞춤'], ['right', ALIGN_ICON.right, '오른쪽 맞춤']]} /></Row>}
     {(hlItems.length > 0 || edLive) && <div data-testid="props-fmt" style={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'space-between', background: C.seg, borderRadius: 8, padding: 2 }}><FmtButtons prefix="pfmt" w={20} st={fmtSt} act={fmtAct} /></div>}
   </>
 

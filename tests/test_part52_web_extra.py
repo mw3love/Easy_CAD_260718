@@ -162,3 +162,11 @@ def test_web_flip_survives_desktop_save():
     d = dict(_BASE, type="symbol", kind="delay", rect=[0.0, 0.0, 120.0, 60.0], pen="#ff000000", width=1.0, fill=None, style=1, flip_h=True, flip_v=True)
     out = _roundtrip(d)
     assert out["flip_h"] is True and out["flip_v"] is True
+
+
+def test_web_text_align_survives_desktop_save():
+    # 2026-10-27 밤 웹 글 정렬 — 도형 안 글(label.ha)·독립 글(ha), 데스크톱은 그리진 않지만 저장을 거쳐도 남아야 함
+    d = dict(_BASE, type="rect", rect=[0.0, 0.0, 120.0, 60.0], pen="#ff000000", width=1.0, fill=None, style=1, label={"text": "송신소", "font": 16, "ha": "right"})
+    assert _roundtrip(d)["label"]["ha"] == "right"
+    t = dict(_BASE, type="text", text="첫 줄\n둘째 줄", font=12, color="#ff111111", ha="center")
+    assert _roundtrip(t)["ha"] == "center"
