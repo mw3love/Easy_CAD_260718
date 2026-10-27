@@ -36,6 +36,8 @@ function useSize(ref) {
 // 좁은 창(NARROW_W 미만 — 브라우저 옆에 띄워 쓸 때, 2026-10-19 사용자 선택)은 아이콘만(이름은 툴팁) — 지침 「자리가 모자랄 때만 아이콘만」
 const NARROW_W = 1440, Narrow = createContext(false)
 const PHONE_W = 700   // 휴대폰(2026-10-27) = 보기·묻기·회의만 — 위 막대는 이름만, 아래 큰 버튼 셋, 왼쪽 판 없음, 대화창은 화면 전체, 손가락 = 이동·확대
+// 휴대폰 = 손가락 기기 + 좁은 화면(2026-10-27 저녁 사용자 — 폭만 보면 PC 창을 반으로 나눴을 때도 고치기가 막혔음. 「브라우저 옆에 띄워 두고 쓴다」가 목표)
+const isPhone = () => window.innerWidth < PHONE_W && !!window.matchMedia?.('(pointer: coarse)').matches
 // special = KAIROS(2026-10-23 사용자: 다른 버튼과 다른 특별한 버튼 — 오른쪽 구석, 코랄로 채움. 열림은 한 단계 진하게)
 const SPECIAL_BG = on => (on ? '#c4613f' : '#da7756')
 // 「도구 유지」 자물쇠 — 데스크톱에 없는 웹 버튼이라 icons.json(데스크톱에서 뽑음) 대신 여기, 같은 선 굵기 1.6(2026-10-27)
@@ -327,13 +329,13 @@ function App({ team }) {   // team = 팀 서버(§8 항목67)에서 내 팀 이�
   const setDockTab = v => { setDockTabS(v); try { localStorage.setItem('mb-dock', v) } catch { /* 기억 못 해도 그만 */ } }
   const [dockW, setDockWS] = useState(() => { try { return Math.max(DOCK_W, Math.min(DOCK_MAX, +localStorage.getItem('mb-dock-w') || DOCK_W)) } catch { return DOCK_W } })   // 왼쪽 판 폭 — 이 브라우저에 기억
   const setDockW = v => { setDockWS(v); try { localStorage.setItem('mb-dock-w', String(v)) } catch { /* 기억 못 해도 그만 */ } }
-  const [chatOpen, setChatOpen] = useState(() => { if (window.innerWidth < PHONE_W) return false; try { return localStorage.getItem('mb-chat-open') !== '0' } catch { return true } }), [selKey, setSelKey] = useState('')   // 대화창 열림은 이 브라우저에 기억(기본 열림 — 화면 원칙: 작업공간 + AI 대화창), 휴대폰은 칠판부터(대화창이 화면 전체라)
+  const [chatOpen, setChatOpen] = useState(() => { if (isPhone()) return false; try { return localStorage.getItem('mb-chat-open') !== '0' } catch { return true } }), [selKey, setSelKey] = useState('')   // 대화창 열림은 이 브라우저에 기억(기본 열림 — 화면 원칙: 작업공간 + AI 대화창), 휴대폰은 칠판부터(대화창이 화면 전체라)
   useEffect(() => { try { localStorage.setItem('mb-chat-open', chatOpen ? '1' : '0') } catch { /* 기억 못 해도 그만 */ } }, [chatOpen])
   const [chatW, setChatWS] = useState(() => { try { return chatClamp(+localStorage.getItem('mb-chat-w') || CHAT_W) } catch { return CHAT_W } })   // 대화창 폭 — 이 브라우저에 기억(왼쪽 판 `mb-dock-w`와 같게)
   const setChatW = v => { setChatWS(v); try { localStorage.setItem('mb-chat-w', String(v)) } catch { /* 기억 못 해도 그만 */ } }
   const [narrow, setNarrow] = useState(() => window.innerWidth < NARROW_W)   // 좁은 창 = 위 막대 아이콘만 + 대화창은 칠판 위에 뜸
-  const [phone, setPhone] = useState(() => window.innerWidth < PHONE_W), phoneRef = useRef(phone); phoneRef.current = phone
-  useEffect(() => { const on = () => { setNarrow(window.innerWidth < NARROW_W); setPhone(window.innerWidth < PHONE_W) }; window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
+  const [phone, setPhone] = useState(isPhone), phoneRef = useRef(phone); phoneRef.current = phone
+  useEffect(() => { const on = () => { setNarrow(window.innerWidth < NARROW_W); setPhone(isPhone()) }; window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
   // 휴대폰 = 브라우저가 화면 전체를 그림처럼 키우지 않게(2026-10-27 사용자: 확대하면 뭉개짐 — 칠판 밖(위·아래 막대·대화창)을 벌리면 브라우저 확대가 됐음, 아이폰 Safari는 칠판의 touch-action도 무시)
   // 확대는 칠판 두 손가락(Editor)만 — 글자를 다시 그려 또렷함
   useEffect(() => { if (!phone) return; const meta = document.querySelector('meta[name=viewport]'), old = meta?.content
@@ -495,7 +497,7 @@ function App({ team }) {   // team = 팀 서버(§8 항목67)에서 내 팀 이�
         {server && <span data-testid="people-count" title={crowd.map(p => p.name).join(', ')} style={{ fontSize: 13, color: C.muted, whiteSpace: 'nowrap' }}>👥 {crowd.length}</span>}
         <button onClick={toggleDark} title="밝게 / 어둡게" style={{ all: 'unset', cursor: 'pointer', fontSize: 18, padding: '2px 4px' }}>{dark ? '☀️' : '🌙'}</button></div>}
       <Narrow.Provider value={narrow}>
-      <div style={{ display: phone ? 'none' : 'flex', alignItems: 'center', gap: narrow ? 4 : 8, padding: '4px 8px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>
+      <div style={{ display: phone ? 'none' : 'flex', flexWrap: narrow ? 'wrap' : 'nowrap', rowGap: 4, alignItems: 'center', gap: narrow ? 4 : 8, padding: '4px 8px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>   {/* 좁은 PC 창(반 화면)은 두 줄로 — 한 줄이면 칠판 이름·공유·KAIROS가 잘렸음(2026-10-27 저녁) */}
         {/* 칠판 이름 = 맨 왼쪽(2026-10-27 사용자 — Figma·Miro처럼 파일 이름은 왼쪽 위), 누르면 왼쪽 판 「칠판」 칸(새 칠판·최근 칠판·파일) */}
         <button data-testid="board-title" onClick={() => setDockTab(dockTab === 'board' ? '' : 'board')} title={server ? `칠판 「${DOC_NAME}」 — 누르면 새 칠판·최근 칠판·파일` : '새 칠판·최근 칠판·파일'}
           style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: narrow ? 110 : 180, padding: '4px 8px', borderRadius: 6, font: "700 14px 'Pretendard', sans-serif", color: C.ink, background: dockTab === 'board' ? 'rgba(218,119,86,.22)' : 'transparent' }}

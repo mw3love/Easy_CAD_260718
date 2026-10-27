@@ -68,11 +68,17 @@ test('창을 닫으면 접속자 이름이 바로 빠짐', async ({ browser }) =
   await ca.close(); await cb.close()
 })
 
+test('좁은 PC 창은 PC 화면 그대로 — 휴대폰 화면은 손가락 기기만(10-27 저녁 사용자)', async ({ page }) => {
+  await page.setViewportSize({ width: 600, height: 900 })
+  await openBoard(page, boardName('narrowpc'))
+  await expect(page.getByTestId('phone-bar')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '되돌리기' })).toBeVisible()                                    // 위 막대(고치기 도구)가 있음
+})
+
 test('「나감」 신호가 안 와도 5초쯤이면 빠짐 · 이름이 같아도 사람 수대로(10-27 — 시크릿 창 닫기 15초, 셋인데 「👥 1」)', async ({ browser }) => {
   const name = boardName('crowd')
-  const cs = await Promise.all([0, 1, 2].map(() => browser.newContext()))
+  const cs = await Promise.all([{}, {}, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }].map(o => browser.newContext(o)))   // 셋째 = 휴대폰 최소판 「👥 N」
   const [a, b, c] = await Promise.all(cs.map(x => x.newPage()))
-  await c.setViewportSize({ width: 600, height: 900 })                                                    // 휴대폰 최소판 = 「👥 N」
   for (const p of [a, b, c]) await openBoard(p, name, { who: '이름 없음' })
   await expect(a.getByTestId('people')).toHaveAttribute('aria-label', '접속자 3명', { timeout: 4000 })
   await expect(c.getByTestId('people-count')).toHaveText('👥 3')
