@@ -56,3 +56,17 @@ test('휴대폰 — 큰 버튼 셋 · 손가락 이동·확대 · 고치기 없�
   expect(await page.evaluate(() => window.__mb.ed.getSel())).toEqual([])                 // 고른 표시·속성 카드 없음
   await page.screenshot({ path: 'test-results/phone-board.png' })
 })
+
+test('휴대폰 — 정리 문서·웹 카드는 속 페이지를 안 띄움(아이폰에서 확대하면 카드 밖으로 쏟아졌음), 톡 누르면 새 탭', async ({ page }) => {
+  await openBoard(page, boardName('phonecard'))
+  await page.evaluate(() => window.__mb.ed.dropFiles([new File(['<h1>보고서</h1><p>본문</p>'], '보고서.html', { type: 'text/html' })]))
+  await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'doc').length).toBe(1)
+  await page.getByTestId('phone-bar').getByRole('button', { name: '다 보기' }).click()
+  await expect(page.getByTestId('board').locator('iframe')).toHaveCount(0)               // 칠판 안 iframe 없음
+  const b = await page.getByTestId('board').boundingBox(), cx = b.x + b.width / 2, cy = b.y + b.height / 2
+  const pop = page.waitForEvent('popup')
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: cx, y: cy, id: 0 }] })
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  const p2 = await pop; await p2.waitForLoadState(); await expect(p2.locator('body')).toContainText('보고서')
+})

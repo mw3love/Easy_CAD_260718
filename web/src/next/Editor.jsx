@@ -264,11 +264,20 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const z = Math.min(ZMAX, Math.max(ZMIN, s.cam.z * Math.hypot(a.x - b.x, a.y - b.y) / s.d0)), qx = (s.m0.x - s.cam.x) / s.cam.z, qy = (s.m0.y - s.cam.y) / s.cam.z
       setCam({ z, x: m.x - qx * z, y: m.y - qy * z }) }   // 처음 두 손가락 가운데 있던 칠판 자리가 손가락 가운데를 따라감
     else if (s.kind === 'pan') setCam({ ...s.cam, x: s.cam.x + e.clientX - s.sx, y: s.cam.y + e.clientY - s.sy }) }
-  const touchEnd = e => { touches.current.delete(e.pointerId); touchStart() }
+  // 휴대폰 카드(웹·정리 문서·PDF) = 속 페이지를 칠판에 안 띄움 — 아이폰 Safari는 SVG 안 iframe에 칠판 배율을 안 먹여 확대하면 카드 밖으로 크게 쏟아졌음(2026-10-27 사용자 실기기).
+  // 대신 손가락으로 톡 = 새 탭(정리 문서 = 크게 보기 페이지)
+  const tapFrom = useRef(null)
+  const cardAt = p => { for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'web' && it.type !== 'doc' && it.type !== 'pdf') continue
+    const q = toLocal(it, p), [x, y, w, h] = it.rect; if (q.x >= x && q.x <= x + w && q.y >= y && q.y <= y + h) return it } return null }
+  const touchEnd = e => { const t0 = tapFrom.current, tap = touches.current.size === 1 && t0 && t0.id === e.pointerId && !t0.multi && Math.hypot(e.clientX - t0.x, e.clientY - t0.y) < 8 && Date.now() - t0.t < 500
+    touches.current.delete(e.pointerId); touchStart(); if (!touches.current.size) tapFrom.current = null
+    if (!tap) return; const it = cardAt(toSceneP(e)); if (!it) return
+    if (it.type === 'doc') openDoc(it); else if (it.url) window.open(it.url, '_blank', 'noopener') }
 
   // ── 포인터 ──
   function onPointerDown(e) {
-    if (phone) { if (e.button === 0) { svg.current.setPointerCapture(e.pointerId); touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY }); touchStart() } return }
+    if (phone) { if (e.button === 0) { svg.current.setPointerCapture(e.pointerId); touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY }); touchStart()
+      if (touches.current.size === 1) tapFrom.current = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now() }; else if (tapFrom.current) tapFrom.current.multi = true } return }
     if (readOnly) { svg.current.setPointerCapture(e.pointerId); st.current = { ...st.current, kind: 'pan', right: false, sx: e.clientX, sy: e.clientY, cam: R.current.cam }; setCursor('grabbing'); return }   // 보기 전용 = 끌면 화면 이동
     if (R.current.editing && e.button === 0) return   // 고치는 중에도 휠·오른쪽 끌기 = 화면 이동(입력은 그대로 — 2026-10-18 사용자)
     if (R.current.webOn && !(e.button === 2 && pdfBodyAt(toSceneP(e))?._id === R.current.webOn)) setWebOn(null)   // 웹 카드 조작 중 바깥을 누름 = 끝(칸 안 누르기는 페이지가 받아 여기 안 옴). 넘겨 보는 PDF 안 우클릭 = 안쪽 메뉴(끝내지 않음)
@@ -2275,7 +2284,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           {visible.map(([it0, i]) => [asTable(it0), i]).map(([it, i]) => (it._id === editingId && it.label?.align === 'left' && editing?.kind === 'label' ? <Item key={it._id} it={{ ...it, label: { ...it.label, text: '' } }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />
             : it._id === editingId && it.type === 'memo' ? <Item key={it._id} it={{ ...it, lines: [] }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />   // 고치는 메모 = 바탕만(흐린 글자가 투명한 채움 사이로 잔상처럼 비쳤음 — 2026-10-18 사용자)
             : it._id === editingId ? <g key={it._id} opacity={0.15}><Item it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" /></g>
-            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'pdf' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'doc' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
+            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={phone && (it.type === 'web' || it.type === 'pdf' || it.type === 'doc') ? 'sleep' : it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'pdf' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'doc' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
           {/* 화살표 라벨은 모든 선·도형 위에(다른 화살표가 지나가도 안 덮임 — 2026-10-18 사용자 지적) */}
           {visible.map(([it, i]) => (isArrow(it) && (it.labels?.length || it.label) && it._id !== editingId ? <Item key={'lb' + it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="only" /> : null))}
           {pend.map(q => <BoardSkeleton key={'pend' + q.id} q={q} z={z} />)}   {/* 오래 걸리는 일 = 놓일 자리에 회색 틀(skeleton.jsx — 회의록·PDF·글 읽기·베끼기·Deep Mode) */}
