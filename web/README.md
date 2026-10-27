@@ -37,7 +37,7 @@ python web/server.py
 cd web
 npm run dev          # http://localhost:5190 — 저장은 python web/server.py(5191)로 넘김, 서버가 없으면 이 브라우저에만
 npm test             # 순수 함수 시험
-npm run e2e          # 화면 자동 시험 — 빌드 후 깔린 크롬으로 매일 쓰는 흐름(e2e/flow1~40, 162개)을 돌림, 약 5분
+npm run e2e          # 화면 자동 시험 — 빌드 후 깔린 크롬으로 매일 쓰는 흐름(e2e/flow1~40, 164개)을 돌림, 약 5분
 ```
 
 화면 시험(2026-10-19 다잡기)은 시험용 서버를 따로 띄운다 — 문 5291·데이터 `web/.e2e-data`(시험 전에 비움, git 밖). 켜 둔 진짜 서버(5191)·칠판과 섞이지 않는다.
