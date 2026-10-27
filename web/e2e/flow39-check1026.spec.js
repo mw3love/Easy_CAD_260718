@@ -97,3 +97,18 @@ test('도구 유지(Q·「유지」) — 켜면 그린 뒤에도 그 도구, 도
   await pickShape(page, '사각형'); await dragScene(page, { x: 400, y: 0 }, { x: 500, y: 60 }); await dragScene(page, { x: 600, y: 0 }, { x: 700, y: 60 })
   expect(await count('rect')).toBe(3)                                                        // 둘째 끌기는 고르기
 })
+
+test('내 심볼 칸 — 제목 줄 누르면 접힘(새로고침해도 그대로) · 심볼에 마우스를 올리면 크게 보기', async ({ page }) => {
+  await openBoard(page, boardName('palfold'))
+  const sec = page.getByTestId('pal-sec').filter({ hasText: '방송·기술' })
+  await expect(sec.getByRole('button', { name: '카메라' })).toBeVisible()
+  await sec.getByRole('button', { name: '카메라' }).hover()
+  await expect(page.getByTestId('sym-peek')).toContainText('카메라')
+  await page.screenshot({ path: 'test-results/sym-peek.png' })
+  await page.mouse.move(800, 600); await expect(page.getByTestId('sym-peek')).toBeHidden()
+  await sec.getByText('방송·기술').click()
+  await expect(sec).toHaveAttribute('data-shut', 'true'); await expect(sec.getByRole('button', { name: '카메라' })).toHaveCount(0)
+  await page.reload(); await expect(page.getByTestId('pal-sec').filter({ hasText: '방송·기술' })).toHaveAttribute('data-shut', 'true')
+  await page.getByTestId('pal-sec').filter({ hasText: '방송·기술' }).getByText('방송·기술').click()
+  await expect(page.getByTestId('pal-sec').filter({ hasText: '방송·기술' }).getByRole('button', { name: '카메라' })).toBeVisible()
+})
