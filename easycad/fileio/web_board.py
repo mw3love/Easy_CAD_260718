@@ -76,6 +76,8 @@ class WebBoardClient:
         st, d = self._req("GET", "/api/doc/" + urllib.parse.quote(name))
         if st == 404:
             raise WebBoardError(f"「{name}」 칠판이 서버에 없어요.")
+        if st == 400 and NAME_RE.match(name or ""):   # 이름은 맞는데 거절 = 다른 팀 칠판(§8 항목67 팀별 칠판)
+            raise WebBoardError(f"「{name}」은 다른 팀 칠판이라 이 비밀번호로는 열 수 없어요.")
         if st != 200 or not isinstance(d, dict):
             raise WebBoardError(f"「{name}」 칠판을 받지 못했어요(응답 {st}).")
         return d
@@ -88,6 +90,8 @@ class WebBoardClient:
         st, d = self._req("PUT", "/api/doc/" + urllib.parse.quote(name), doc)
         if st == 401:
             raise WebBoardError("편집 권한이 없어요 — 팀 비밀번호를 확인해 주세요.")
+        if st == 400:   # 이름은 위에서 확인 — 다른 팀이 쓰는 이름(§8 항목67)
+            raise WebBoardError(f"「{name}」은 다른 팀이 쓰는 이름이에요 — 다른 이름으로 올려 주세요.")
         if st != 200:
             raise WebBoardError(f"올리지 못했어요(응답 {st}).")
         return int((d or {}).get("rev") or 0)

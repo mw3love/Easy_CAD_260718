@@ -5,11 +5,16 @@
 - 부분 저장(patch) = { base, upsert: [uid 꼴 도형], delete: [uid], meta: {layers 등 items 밖 칸} } → 도형 단위로 덮어씀(나중 것이 이김),
   서로 다른 도형을 고치면 둘 다 남는다. 고칠 때마다 판 번호 `rev` +1 — 브라우저는 「rev 다음 것 있나」로 받아 온다.
 - 공용 비밀번호(사람별 계정 아님) → 편집 열쇠(쿠키), 게시 링크(로그인 없이 보기·발표만), 접속자 이름.
+- 팀별 칠판(§8 항목67, 2026-10-27): `teams.json` — 팀마다 비밀번호·KAIROS 키·칠판(`Teams`).
 """
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import secrets
+import sys
+import threading
 import time
 
 BIND_KEYS = ("bind1", "bind2")
@@ -171,3 +176,141 @@ def merge_chatlog(old: dict | None, new: dict) -> tuple[dict, int]:
         have |= keys
     new["past"] = past
     return new, moved
+
+
+# ── 팀별 칠판(§8 항목67, 2026-10-27) — 데이터 폴더 `teams.json` 한 파일. 없으면 지금과 똑같이(공용 비밀번호 하나) ──
+# 파일 = [{"name": "A팀", "password": "…", "key": "KAIROS 키(없으면 서버 키)", "boards": ["칠판", …]}]. 팀 = 비밀번호 하나 + 키 하나 + 칠판 여러 개.
+# 팀 열쇠로는 그 팀 `boards`와 「아직 아무도 안 쓴 이름」만 — 처음 저장하면 그 팀 `boards`에 더함. 팀 없는 옛 칠판은 관리자(`edit_password.txt`)만.
+# 칠판 이름은 서버 전체에서 하나(게시·초대·접속자 표가 이름으로 찾음). ⚠ 윈도 파일 이름은 대소문자를 안 가려 이름 비교는 casefold
+# (「Main」을 새 이름으로 받으면 관리자 칠판 main.ecad를 덮어씀).
+TEAM_NAME_MAX = 30
+
+
+def team_key(team: dict) -> str:
+    """팀 열쇠(쿠키) — 이름 + 비밀번호에서. 관리자 열쇠(`edit_key(비밀번호)`)와 섞이지 않게 앞말을 붙임."""
+    return edit_key("team|%s|%s" % (team["name"], team["password"]))
+
+
+def _same(a: str, b: str) -> bool:
+    """같은 글인가(걸린 시간으로 안 새게) — 한글 비밀번호도(`compare_digest`는 글이면 ASCII만 받음)"""
+    return secrets.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
+def board_files_exist(data_dir: str, name: str) -> bool:
+    """이 이름의 칠판 파일(`<이름>.ecad`·`.chat.json`·`.img/`·`.pdf/` …)이 하나라도 있나 — 있으면 「아직 아무도 안 쓴 이름」이 아님."""
+    head = name.casefold() + "."
+    try:
+        return any(fn.casefold().startswith(head) for fn in os.listdir(data_dir))
+    except OSError:
+        return False
+
+
+class Teams:
+    """`teams.json` — 고칠 때마다 다시 읽음(서버를 안 꺼도 팀을 더하게). 깨진 파일이면 팀 로그인은 막고(`broken`) 잠금은 유지 —
+    파일이 깨졌다고 「비밀번호 없음 = 누구나」로 열리면 안 됨(Funnel = 인터넷 전체)."""
+    _cache: dict = {}
+    _cache_lock = threading.Lock()
+
+    @classmethod
+    def at(cls, data_dir: str) -> "Teams":
+        path = os.path.join(data_dir, "teams.json")
+        with cls._cache_lock:
+            t = cls._cache.get(path)
+            if t is None:
+                t = cls._cache[path] = cls(path)
+        t._reload()
+        return t
+
+    def __init__(self, path: str):
+        self.path, self.lock = path, threading.Lock()
+        self._sig, self.teams, self.exists, self.broken = None, [], False, False
+
+    def _reload(self):
+        try:
+            st = os.stat(self.path)
+        except OSError:
+            self._sig, self.teams, self.exists, self.broken = None, [], False, False
+            return
+        sig = (st.st_mtime_ns, st.st_size)
+        if sig == self._sig:
+            return
+        with self.lock:
+            self._sig, self.exists = sig, True
+            try:
+                with open(self.path, encoding="utf-8-sig") as f:
+                    raw = json.load(f)
+            except (OSError, ValueError) as e:
+                sys.stderr.write("[팀] teams.json을 못 읽어요 — 팀 로그인 막힘(관리자만): %s\n" % e)
+                self.teams, self.broken = [], True
+                return
+            self.teams, self.broken = self._clean(raw), False
+
+    @staticmethod
+    def _clean(raw) -> list:
+        """맞는 칸만 — 이름(1~30자, `|` 없음)·비밀번호 필수, 같은 이름·같은 비밀번호·남의 칠판은 앞 팀이 가짐(알림)"""
+        out, names, pws, owned = [], set(), set(), set()
+        for i, t in enumerate(raw if isinstance(raw, list) else []):
+            name = str(t.get("name") or "").strip() if isinstance(t, dict) else ""
+            pw = str(t.get("password") or "") if isinstance(t, dict) else ""
+            if not name or len(name) > TEAM_NAME_MAX or "|" in name or not pw:
+                sys.stderr.write("[팀] %d번째 팀은 이름·비밀번호가 없어 뺐어요\n" % (i + 1))
+                continue
+            if name.casefold() in names or pw in pws:
+                sys.stderr.write("[팀] 「%s」 — 이름이나 비밀번호가 앞 팀과 같아 뺐어요\n" % name)
+                continue
+            key = str(t.get("key") or "").strip()
+            boards = []
+            for b in t.get("boards") or []:
+                if isinstance(b, str) and b and b.casefold() not in owned:
+                    owned.add(b.casefold())
+                    boards.append(b)
+                elif isinstance(b, str) and b:
+                    sys.stderr.write("[팀] 칠판 「%s」은 앞 팀 것이라 「%s」에서 뺐어요\n" % (b, name))
+            names.add(name.casefold())
+            pws.add(pw)
+            out.append({"name": name, "password": pw, "key": key, "boards": boards})
+        return out
+
+    def by_password(self, pw: str) -> dict | None:
+        return next((t for t in self.teams if _same(t["password"], pw)), None) if pw else None
+
+    def by_cookie(self, cookie: str) -> dict | None:
+        return next((t for t in self.teams if _same(team_key(t), cookie)), None) if cookie else None
+
+    def owner(self, board: str) -> dict | None:
+        b = board.casefold()
+        return next((t for t in self.teams if any(x.casefold() == b for x in t["boards"])), None)
+
+    def allows(self, team: dict, board: str, data_dir: str, claim: bool = False) -> bool:
+        """팀이 이 칠판을 써도 되나 — 그 팀 것이면 예, 남의 팀 것·팀 없는 옛 칠판(파일 있음)이면 아니오, 새 이름이면 예(claim이면 그 팀에 등록)."""
+        o = self.owner(board)
+        if o is not None:
+            return o["name"] == team["name"]
+        if board_files_exist(data_dir, board):
+            return False
+        return self.claim(team, board) if claim else True
+
+    def claim(self, team: dict, board: str) -> bool:
+        """새 칠판을 그 팀 `boards`에 더해 파일에 씀(사람이 적어 둔 다른 칸은 그대로). 그사이 다른 팀이 가졌으면 False."""
+        with self.lock:
+            try:
+                with open(self.path, encoding="utf-8-sig") as f:
+                    raw = json.load(f)
+            except (OSError, ValueError):
+                return False
+            for t in raw if isinstance(raw, list) else []:
+                if isinstance(t, dict) and any(isinstance(x, str) and x.casefold() == board.casefold() for x in t.get("boards") or []):
+                    return str(t.get("name") or "").strip() == team["name"]
+            hit = next((t for t in raw if isinstance(t, dict) and str(t.get("name") or "").strip() == team["name"]), None)
+            if hit is None:
+                return False
+            hit["boards"] = [*(hit.get("boards") or []), board]
+            body = json.dumps(raw, ensure_ascii=False, indent=2).encode("utf-8")
+            tmp = self.path + ".tmp"
+            with open(tmp, "wb") as f:
+                f.write(body)
+            os.replace(tmp, self.path)
+            self._sig = None   # 다음에 다시 읽음
+        self._reload()
+        sys.stderr.write("[팀] 새 칠판 「%s」 → %s\n" % (board, team["name"]))
+        return True

@@ -15,6 +15,8 @@
   열쇠가 없으면 편집·대화·웹 카드 길목은 401(비밀번호를 안 정하면 누구나 — 내 PC 개발). 부분 저장 POST `/api/patch/<이름>`(도형 단위, 판 번호 rev),
   받아 오기 GET `/api/since/<이름>?rev=N`(바뀐 게 없으면 204), 접속자 POST `/api/presence/<이름>`, 게시 POST `/api/publish/<이름>` {on, renew} →
   로그인 없이 보기만 GET `/api/pub/<토큰>`(데이터 폴더 `publish.json`). 계산은 `web/collab.py`.
+- 팀별 칠판(§8 항목67, 2026-10-27): 데이터 폴더 `teams.json`이 있으면 팀 비밀번호 → 그 팀 열쇠 = 그 팀 칠판만·그 팀 KAIROS 키
+  (공용 비밀번호는 관리자 = 모든 칠판). 막는 곳 = 칠판 이름을 읽는 한 길 `_name()`, 없으면 지금과 똑같음.
 ⚠ 사내망 `http`라 비밀번호·열쇠가 암호화 없이 오간다 — 회사 보안 확인 전엔 내 PC에서만(`--host 127.0.0.1`).
 
 실행: python web/server.py [--host 0.0.0.0] [--port 5191] [--data 폴더]
@@ -73,10 +75,9 @@ class Handler(SimpleHTTPRequestHandler):
         m = re.match(r"^/api/(chatlog|doc|meetdraft)/([^/?#]+)$", self.path)
         if not m:
             return None
-        from urllib.parse import unquote
-        name = unquote(m.group(2))
+        name = self._name(m.group(2))   # 팀 검사도 여기서(§8 항목67)
         ext = {"chatlog": ".chat.json", "doc": ".ecad", "meetdraft": ".meet.json"}[m.group(1)]
-        return os.path.join(self.data_dir, name + ext) if NAME_RE.match(name) else ""
+        return os.path.join(self.data_dir, name + ext) if name else ""
 
     def _json(self, code: int, obj):
         obj = model_pick.mark(obj)   # 답의 "model"이 은퇴·없어져 갈아탄 이름이면 실제로 부른 이름 + "swap"(대화창 「대신」, 2026-10-26)
@@ -84,9 +85,12 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _key(self) -> str:
         """KAIROS 키 — 브라우저가 「🔑 내 키」로 보낸 머리말 `X-Kairos-Key`가 있으면 그것(2026-10-20 사용자 — 사람마다 자기 크레딧),
-        없으면 이 서버 PC 키. 받은 키는 이 요청에만 쓰고 파일·로그에 남기지 않는다."""
+        없으면 팀 키(`teams.json`, §8 항목67 — 팀마다 크레딧), 그것도 없으면 이 서버 PC 키. 받은 키는 이 요청에만 쓰고 파일·로그에 남기지 않는다."""
         mine = (self.headers.get("X-Kairos-Key") or "").strip()
-        return mine if re.fullmatch(r"[!-~]{8,300}", mine) else gw.resolve_api_key()
+        if re.fullmatch(r"[!-~]{8,300}", mine):
+            return mine
+        team = (self._team() or {}).get("key") or ""
+        return team if re.fullmatch(r"[!-~]{8,300}", team) else gw.resolve_api_key()
 
     def _models(self):
         key = self._key()
@@ -548,6 +552,8 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _find_api(self, name: str):
         """POST /api/find/<이름> {q, k?} → {"results": [{uid, type, kind, text, score}]} — 칠판 Ctrl+F 「뜻으로 찾기」."""
+        if not name:   # 나쁜 이름·다른 팀 칠판(§8 항목67)
+            return self._send(400, b'{"error":"bad name"}')
         req = self._body(64 * 1024) or {}
         q = str(req.get("q") or "").strip()[:500]
         if not q:
@@ -581,8 +587,26 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ── 공동작업 1단계(§8 항목61 ⓕ, 2026-10-18) — 공용 비밀번호·부분 저장·게시·접속자(계산은 `collab.py`) ──
     def _authed(self) -> bool:
-        """편집 열쇠(쿠키)가 맞나 — 비밀번호를 안 정했으면(내 PC 개발) 누구나."""
-        return not self.password or collab.cookie_value(self.headers.get("Cookie")) == collab.edit_key(self.password)
+        """편집 열쇠(쿠키)가 맞나 — 관리자(공용 비밀번호) 또는 팀(§8 항목67). 비밀번호도 팀도 없으면(내 PC 개발) 누구나."""
+        if not self._locked():
+            return True
+        c = collab.cookie_value(self.headers.get("Cookie"))
+        return bool(self.password and c == collab.edit_key(self.password)) or self._team() is not None
+
+    def _teams(self) -> collab.Teams:
+        return collab.Teams.at(self.data_dir)
+
+    def _locked(self) -> bool:
+        """들어올 때 비밀번호가 필요한 서버인가 — 공용 비밀번호가 있거나 `teams.json`이 있으면(깨졌어도 — 열리면 안 됨)"""
+        return bool(self.password) or self._teams().exists
+
+    def _team(self) -> dict | None:
+        """이 요청의 팀(쿠키가 팀 열쇠면) — 관리자·로그인 전·팀 없는 서버는 None(= 칠판 이름을 가리지 않음)"""
+        t = self._teams()
+        return t.by_cookie(collab.cookie_value(self.headers.get("Cookie"))) if t.teams else None
+
+    def _set_key(self, key: str):
+        return self._send(200, b'{"ok":true}', headers={"Set-Cookie": f"mb_key={key}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000"})
 
     def _body(self, limit: int = MAX_BYTES):
         n = int(self.headers.get("Content-Length") or 0)
@@ -593,10 +617,18 @@ class Handler(SimpleHTTPRequestHandler):
         except ValueError:
             return None
 
-    def _name(self, raw: str) -> str:
+    def _name(self, raw: str, team: bool = True) -> str:
+        """주소·본문의 칠판 이름 → 쓸 이름, 나쁘면 "". 팀 열쇠면 그 팀이 못 쓰는 칠판도 ""(§8 항목67 — 뒤는 모두 「나쁜 이름」으로 거절).
+        고치는 요청(POST·PUT — 접속 신호·찾기 빼고)이 새 이름을 쓰면 그 팀 칠판으로 등록. team=False = 로그인 전 길(초대 링크)."""
         from urllib.parse import unquote
         name = unquote(raw)
-        return name if NAME_RE.match(name) else ""
+        if not NAME_RE.match(name):
+            return ""
+        t = self._team() if team else None
+        if t is None:
+            return name
+        claim = self.command in ("POST", "PUT") and not self.path.startswith(("/api/presence/", "/api/find/"))
+        return name if self._teams().allows(t, name, self.data_dir, claim=claim) else ""
 
     def _doc_path(self, name: str) -> str:
         return os.path.join(self.data_dir, name + ".ecad")
@@ -661,8 +693,16 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path, q = self._route()
-        if path == "/api/session":   # 비밀번호가 필요한가·이미 들어왔나
-            return self._json(200, {"auth": bool(self.password), "ok": self._authed()})
+        if path == "/api/session":   # 비밀번호가 필요한가·이미 들어왔나 (+ 팀 서버면 내 팀·이 칠판을 써도 되나·우리 팀 첫 칠판 — §8 항목67)
+            out = {"auth": self._locked(), "ok": self._authed()}
+            if out["ok"] and self._teams().exists:
+                t = self._team()
+                out["team"] = t["name"] if t else None
+                if q.get("board"):
+                    out["board_ok"] = bool(self._name(q["board"][0]))
+                if t:
+                    out["home"] = next(iter(t["boards"]), "") or (t["name"] if self._name(t["name"]) else "")
+            return self._json(200, out)
         m = re.match(r"^/api/pub/([\w\-]{8,64})$", path)
         if m:   # 게시 링크 — 로그인 없이 보기만
             board = next((b for b, t in self._publish_map().items() if t == m.group(1)), None)
@@ -676,8 +716,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._send(204)
             return self._json(200, dict(doc, board=board))
         m = re.match(r"^/api/pdf/([^/]+)/(\d+_[0-9a-f]{6})(?:/(page|clip|text|lines)/(\d+))?$", path)
-        if m and not self._authed() and self._name(m.group(1)) in self._publish_map():   # 게시한 칠판의 PDF = 로그인 없이 보기(게시 링크에서 쪽 그림이 401이었음, 2026-10-22)
-            return self._pdf_get(self._name(m.group(1)), m.group(2), m.group(3), int(m.group(4) or 0), q)
+        if m and not self._authed() and self._name(m.group(1), team=False) in self._publish_map():   # 게시한 칠판의 PDF = 로그인 없이 보기(게시 링크에서 쪽 그림이 401이었음, 2026-10-22)
+            return self._pdf_get(self._name(m.group(1), team=False), m.group(2), m.group(3), int(m.group(4) or 0), q)
         if path.startswith("/api/") and not self._authed():
             return self._send(401, b'{"error":"login"}')
         if path == "/api/models":
@@ -695,7 +735,7 @@ class Handler(SimpleHTTPRequestHandler):
             out = []
             for fn in os.listdir(self.data_dir) if os.path.isdir(self.data_dir) else []:
                 name = fn[:-5] if fn.endswith(".ecad") else ""
-                if not NAME_RE.match(name):   # `<이름>.prev.ecad`(되돌림용 앞 판) 등은 뺌
+                if not NAME_RE.match(name) or not self._name(name):   # `<이름>.prev.ecad`(되돌림용 앞 판) 등은 뺌, 팀이면 그 팀 칠판만(§8 항목67)
                     continue
                 p = os.path.join(self.data_dir, fn)
                 try:
@@ -733,7 +773,7 @@ class Handler(SimpleHTTPRequestHandler):
             if not name:
                 return self._send(400, b'{"error":"bad name"}')
             if m.group(1) in ("publish", "invite"):
-                return self._json(200, {"token": self._publish_map(m.group(1)).get(name), "password": bool(self.password)})
+                return self._json(200, {"token": self._publish_map(m.group(1)).get(name), "password": self._locked()})
             if m.group(1) == "since":
                 self._wait_rev(name, int((q.get("rev") or ["0"])[0]), q)
             doc = self._doc_load(name)
@@ -763,24 +803,31 @@ class Handler(SimpleHTTPRequestHandler):
         path, _ = self._route()
         if path == "/api/login":
             req = self._body(64 * 1024) or {}
-            if not self.password:
+            if not self._locked():
                 return self._json(200, {"ok": True})
-            if req.get("password") != self.password:
-                time.sleep(0.5)   # 마구 넣어 보기 늦추기
-                return self._send(403, b'{"error":"password"}')
-            key = collab.edit_key(self.password)
-            return self._send(200, b'{"ok":true}', headers={"Set-Cookie": f"mb_key={key}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000"})
+            pw = str(req.get("password") or "")
+            if self.password and secrets.compare_digest(pw.encode("utf-8"), self.password.encode("utf-8")):   # 관리자 = 모든 칠판
+                return self._set_key(collab.edit_key(self.password))
+            team = self._teams().by_password(pw)   # 팀 비밀번호 = 그 팀 열쇠(§8 항목67)
+            if team:
+                return self._set_key(collab.team_key(team))
+            time.sleep(0.5)   # 마구 넣어 보기 늦추기
+            return self._send(403, b'{"error":"password"}')
         if path == "/api/join":   # 편집 초대 링크로 들어옴 — 맞으면 편집 열쇠 쿠키(비밀번호 없이)
             req = self._body(64 * 1024) or {}
-            board = self._name(str(req.get("board") or ""))
+            board = self._name(str(req.get("board") or ""), team=False)   # 다른 팀 열쇠를 든 채 눌러도 그 칠판으로(팀 검사 없이)
             tok = self._publish_map("invite").get(board) if board else None
-            if not tok or not secrets.compare_digest(str(req.get("token") or ""), tok):
+            if not tok or not collab._same(str(req.get("token") or ""), tok):
                 time.sleep(0.5)
                 return self._send(403, b'{"error":"invite"}')
-            if not self.password:
+            if not self._locked():
                 return self._json(200, {"ok": True})
-            key = collab.edit_key(self.password)
-            return self._send(200, b'{"ok":true}', headers={"Set-Cookie": f"mb_key={key}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000"})
+            owner = self._teams().owner(board)
+            if owner:   # 팀 칠판 초대 = 그 팀 열쇠(그 팀 다른 칠판도 열림 — 노션 초대와 같게 받아들임, §8 항목67)
+                return self._set_key(collab.team_key(owner))
+            if not self.password:   # 팀 없는 칠판인데 관리자 비밀번호도 없음 — 줄 열쇠가 없음
+                return self._send(403, b'{"error":"invite"}')
+            return self._set_key(collab.edit_key(self.password))
         if not self._authed():
             return self._send(401, b'{"error":"login"}')
         if path == "/api/chat":
@@ -1040,6 +1087,10 @@ def main(argv=None):
         print("web/dist가 없습니다 — 먼저 `cd web && npm run build` (API만 씁니다)")
     print(f"Magic Board 칠판: http://{'localhost' if a.host in ('0.0.0.0', '127.0.0.1') else a.host}:{a.port}  · 저장 폴더: {a.data}")
     print("편집: " + ("공용 비밀번호 필요" if Handler.password else "누구나(비밀번호 없음 — --password 또는 edit_password.txt로 정함)"))
+    teams = collab.Teams.at(a.data)
+    if teams.exists:   # 팀별 칠판(§8 항목67)
+        print("팀: " + (", ".join(f"{t['name']}(칠판 {len(t['boards'])}개{', 키 따로' if t['key'] else ''})" for t in teams.teams) or "없음 — teams.json을 확인해 주세요")
+              + (" · 관리자 = 공용 비밀번호" if Handler.password else " · 관리자 없음"))
     threading.Thread(target=_route_check_weekly, args=(a.data,), daemon=True).start()
     if gw.resolve_api_key():   # 모델 목록을 먼저 받아 둠 — 은퇴한 모델을 첫 요청부터 대신할 것으로(`model_pick` ①) + 「모델 설정」 그림 값(무료 견적), 2026-10-26
         def warm(key=gw.resolve_api_key(), base=gw.resolve_base_url()):

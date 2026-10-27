@@ -139,11 +139,13 @@ const ago = s => { const d = Date.now() / 1000 - s; return d < 60 ? '방금' : d
 // 2026-10-27 사용자 점검: 이름 칸이 맨 위에 늘 있어 찾기 칸으로 보였음·보통은 「만들기」 먼저 → 「＋ 새 칠판」을 누르면 그 자리에 이름 칸(이름 = 칠판 주소라 건너뛸 수 없음).
 // 샘플 열기는 개발 시험용이라 뺌(서버 없을 때 위 막대에만), 「저장」은 위 막대·Ctrl+S와 겹쳐 뺌(서버는 저절로 저장) — 아래는 파일 열기·내려받기만
 function BoardForm({ onClose, docked, children }) {   // docked = 왼쪽 판 「칠판」 칸(2026-10-23 — 위 막대 팝업에서 옮김), children = 아래 파일 단추들
-  const [list, setList] = useState(null), [name, setName] = useState(''), [all, setAll] = useState(false), [making, setMaking] = useState(false)
+  const [list, setList] = useState(null), [name, setName] = useState(''), [all, setAll] = useState(false), [making, setMaking] = useState(false), [why, setWhy] = useState('')
   useEffect(() => { api.boards().then(setList) }, [])
   const goTo = n => { location.href = `${location.pathname}?board=${encodeURIComponent(n)}` }
   const clean = name.trim().replace(/[^\w\-가-힣]/g, '').slice(0, 64), taken = !!list?.some(b => b.name === clean)
-  const make = () => { if (clean) goTo(clean) }
+  const make = async () => { if (!clean) return
+    if (!taken && (await api.session(clean)).board_ok === false) { setWhy('다른 팀이 쓰는 이름이에요 — 다른 이름으로 지어 주세요'); return }   // 팀 서버(§8 항목67) — 목록엔 우리 팀 것만 보여서 겹침을 모름
+    goTo(clean) }
   const shown = (list || []).filter(b => all || !TEST_BOARD.test(b.name)), hidden = (list || []).length - shown.length
   return <div data-testid="board-form" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }} style={{ ...(docked ? { padding: '8px 10px' } : { position: 'absolute', top: 48, left: 0, zIndex: 20, width: 280, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, boxShadow: '0 4px 14px rgba(0,0,0,.18)' }), display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif", color: C.ink }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -152,11 +154,12 @@ function BoardForm({ onClose, docked, children }) {   // docked = 왼쪽 판 「
         style={{ all: 'unset', cursor: 'pointer', padding: '3px 10px', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>＋ 새 칠판</button>}
     </div>
     {making && <div style={{ display: 'flex', gap: 6 }}>
-      <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="새 칠판 이름 (예: 송신소점검)" onKeyDown={e => { if (e.key === 'Enter') make(); if (e.key === 'Escape') { e.stopPropagation(); setMaking(false); setName('') } }}
+      <input autoFocus value={name} onChange={e => { setName(e.target.value); setWhy('') }} placeholder="새 칠판 이름 (예: 송신소점검)" onKeyDown={e => { if (e.key === 'Enter') make(); if (e.key === 'Escape') { e.stopPropagation(); setMaking(false); setName('') } }}
         style={{ flex: 1, minWidth: 0, height: 26, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: 'inherit' }} />
       <button disabled={!clean} onClick={make} style={{ all: 'unset', cursor: clean ? 'pointer' : 'default', opacity: clean ? 1 : 0.5, padding: '4px 10px', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>{taken ? '열기' : '만들기'}</button>
     </div>}
     {making && clean && clean !== name.trim() && <span style={{ fontSize: 11, color: C.muted }}>이름은 「{clean}」(글자·숫자·_·- 만)</span>}
+    {making && why && <span data-testid="board-new-why" style={{ fontSize: 11, color: '#d44c47' }}>{why}</span>}
     <span style={{ color: C.muted }}>최근 칠판</span>
     <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 300, overflowY: 'auto', margin: '-4px -4px 0' }}>
       {list === null ? <span style={{ color: C.muted, padding: 4 }}>불러오는 중…</span> : !shown.length ? <span style={{ color: C.muted, padding: 4 }}>아직 없어요</span>
@@ -318,7 +321,7 @@ function ShareForm({ onClose, people = [], me = '' }) {
   </div>
 }
 
-function App() {
+function App({ team }) {   // team = 팀 서버(§8 항목67)에서 내 팀 이름(관리자 = '관리자'), 팀 없는 서버면 없음
   const [tableOpen, setTableOpen] = useState(false), [exportOpen, setExportOpen] = useState(false), [webOpen, setWebOpen] = useState(false)
   const [dockTab, setDockTabS] = useState(() => { try { const v = localStorage.getItem('mb-dock'); return v ?? (window.innerWidth < NARROW_W ? '' : 'shape') } catch { return 'shape' } })   // 왼쪽 판 열린 칸('' = 접힘) — 이 브라우저에 기억, 좁은 창은 처음엔 접힘
   const setDockTab = v => { setDockTabS(v); try { localStorage.setItem('mb-dock', v) } catch { /* 기억 못 해도 그만 */ } }
@@ -486,7 +489,7 @@ function App() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
       {phone && <div data-testid="phone-top" style={{ touchAction: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>   {/* 휴대폰 위 = 칠판 이름·사람 수·밝기만 */}
-        <span style={{ flex: 1, minWidth: 0, font: "700 15px 'Pretendard', sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{server ? `「${DOC_NAME}」` : 'Magic Board'}</span>
+        <span style={{ flex: 1, minWidth: 0, font: "700 15px 'Pretendard', sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{server ? `「${DOC_NAME}」` : 'Magic Board'}{server && team && <span style={{ marginLeft: 6, font: "600 12px 'Pretendard', sans-serif", color: C.muted }}>{team}</span>}</span>
         {server && <span title={people.join(', ')} style={{ fontSize: 13, color: C.muted, whiteSpace: 'nowrap' }}>👥 {people.length || 1}</span>}
         <button onClick={toggleDark} title="밝게 / 어둡게" style={{ all: 'unset', cursor: 'pointer', fontSize: 18, padding: '2px 4px' }}>{dark ? '☀️' : '🌙'}</button></div>}
       <Narrow.Provider value={narrow}>
@@ -496,6 +499,8 @@ function App() {
           style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: narrow ? 110 : 180, padding: '4px 8px', borderRadius: 6, font: "700 14px 'Pretendard', sans-serif", color: C.ink, background: dockTab === 'board' ? 'rgba(218,119,86,.22)' : 'transparent' }}
           onMouseEnter={e => { if (dockTab !== 'board') e.currentTarget.style.background = 'rgba(218,119,86,.12)' }} onMouseLeave={e => { e.currentTarget.style.background = dockTab === 'board' ? 'rgba(218,119,86,.22)' : 'transparent' }}>
           <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{server ? DOC_NAME : 'Magic Board'}</span><span aria-hidden style={{ fontSize: 10, color: C.muted }}>▾</span></button>
+        {server && team && <span data-testid="team-badge" title={team === '관리자' ? '관리자 — 모든 팀의 칠판이 보여요' : `「${team}」 칠판만 보여요 · KAIROS 크레딧도 ${team} 것`}
+          style={{ flexShrink: 0, marginLeft: -4, padding: '2px 8px', borderRadius: 10, background: C.group, color: C.muted, font: "600 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap' }}>{team}</span>}
         <Group>
  {/* 칠판·열기·내려받기는 왼쪽 판 「칠판」 칸으로(2026-10-23 사용자) */}
           <Btn icon="save" label="저장" onClick={server ? saveServer : saveFile} title={server ? `서버 「${DOC_NAME}」에 저장` : '.ecad로 내려받기'} />
@@ -592,18 +597,37 @@ function App() {
 // 쓰는 굵기를 모두 불러온 뒤 그림 — 400만 기다리면 굵은 글자 폭을 다른 글꼴로 재서(메모 줄 배치는 한 번 재면 그대로) 밑줄·다음 글자 자리가 어긋났음(2026-10-19)
 await Promise.all([400, 600, 700, 800].map(w => document.fonts.load(`${w} 16px 'Pretendard'`, '가A'))).catch(() => {})
 // 들어가기 전 — 비밀번호가 필요한 서버면 먼저 로그인 창(칠판 화면은 그 뒤에 만들어야 크기 재기 등이 바로 돎)
+// 팀 서버(§8 항목67)에서 다른 팀 칠판 주소로 들어옴 — 우리 팀 칠판으로 가거나 다른 팀 비밀번호로 다시
+function TeamBlocked({ ss, onLogin }) {
+  const go = n => { location.href = `${location.pathname}?board=${encodeURIComponent(n)}` }
+  return <div data-testid="team-blocked" style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
+    <div style={{ width: 320, display: 'flex', flexDirection: 'column', gap: 10, padding: 20, borderRadius: 12, border: `1px solid ${C.line}`, background: C.card, boxShadow: '0 6px 20px rgba(0,0,0,.12)' }}>
+      <div style={{ font: "700 16px 'Pretendard', sans-serif" }}>Magic Board · 「{DOC_NAME}」</div>
+      <div style={{ color: C.muted, fontSize: 12, lineHeight: 1.5 }}>이 칠판은 다른 팀 칠판이라 「{ss.team}」 비밀번호로는 열 수 없어요. 그 팀에게 초대 링크를 받거나, 그 팀 비밀번호로 들어와 주세요.</div>
+      {ss.home && <button data-testid="team-home" onClick={() => go(ss.home)} style={{ all: 'unset', cursor: 'pointer', textAlign: 'center', padding: '7px 0', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>우리 팀 칠판 「{ss.home}」으로</button>}
+      <button onClick={onLogin} style={{ all: 'unset', cursor: 'pointer', textAlign: 'center', padding: '6px 0', borderRadius: 6, color: C.ink, border: `1px solid ${C.line}` }}>다른 비밀번호로 들어가기</button>
+    </div></div>
+}
 function Gate() {
-  const [gate, setGate] = useState('check')
+  const [gate, setGate] = useState('check'), [ss, setSs] = useState({})
+  const check = async () => {   // 로그인이 필요한가 → (팀 서버면) 이 칠판을 써도 되나 — 주소에 칠판이 없으면 우리 팀 첫 칠판으로
+    const s = await api.session(); setSs(s)
+    if (s.auth && !s.ok) { setGate('login'); return }
+    if (s.team && !new URLSearchParams(location.search).get('board') && s.home) { location.replace(`${location.pathname}?board=${encodeURIComponent(s.home)}`); return }   // 기본 이름(main)을 팀이 가져가지 않게
+    if (s.team && s.board_ok === false) { setGate('blocked'); return }
+    setGate('ok')
+  }
   useEffect(() => { (async () => {
     const u = new URL(location.href), join = u.searchParams.get('join')
     if (join) {   // 편집 초대 링크 — 맞으면 비밀번호 없이 이름만(링크의 열쇠는 주소창에서 지움)
       const ok = await api.join(join); u.searchParams.delete('join'); history.replaceState(null, '', u.pathname + (u.search || ''))
-      if (ok) { let nm = ''; try { nm = localStorage.getItem('mb.name') || '' } catch { /* 없어도 그만 */ } setGate(nm ? 'ok' : 'name'); return }
+      if (ok) { let nm = ''; try { nm = localStorage.getItem('mb.name') || '' } catch { /* 없어도 그만 */ } if (nm) check(); else setGate('name'); return }
     }
-    const ss = await api.session(); setGate(ss.auth && !ss.ok ? 'login' : 'ok') })() }, [])
+    check() })() }, [])   // eslint-disable-line
   if (gate === 'check') return null
-  if (gate === 'login') return <LoginForm onDone={() => setGate('ok')} />
-  if (gate === 'name') return <LoginForm nameOnly onDone={() => setGate('ok')} />
-  return <App />
+  if (gate === 'login') return <LoginForm onDone={check} />
+  if (gate === 'name') return <LoginForm nameOnly onDone={check} />
+  if (gate === 'blocked') return <TeamBlocked ss={ss} onLogin={() => setGate('login')} />
+  return <App team={ss.team === null ? '관리자' : ss.team} />
 }
 createRoot(document.getElementById('root')).render(VIEW_TOKEN ? <Viewer token={VIEW_TOKEN} /> : <Gate />)   // ?view= = 게시 링크(보기·발표만)

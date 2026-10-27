@@ -68,7 +68,8 @@ const B = encodeURIComponent(DOC_NAME), J = { 'Content-Type': 'application/json'
 const post = (u, body) => fetch(u, { method: 'POST', headers: J, body: JSON.stringify(body) })
 export const VIEW_TOKEN = (new URLSearchParams(typeof location === 'undefined' ? '' : location.search).get('view') || '').replace(/[^\w-]/g, '').slice(0, 64)
 export const api = {
-  session: async () => { try { const r = await fetch('/api/session', { cache: 'no-store' }); return r.ok ? await r.json() : { auth: false, ok: true, none: true } } catch { return { auth: false, ok: true, none: true } } },
+  // 팀 서버(§8 항목67)면 + { team(관리자 = null), board_ok(이 칠판을 써도 되나), home(우리 팀 첫 칠판) }
+  session: async (board = DOC_NAME) => { try { const r = await fetch(`/api/session?board=${encodeURIComponent(board)}`, { cache: 'no-store' }); return r.ok ? await r.json() : { auth: false, ok: true, none: true } } catch { return { auth: false, ok: true, none: true } } },
   login: async password => (await post('/api/login', { password })).ok,
   patch: async body => { const r = await post(`/api/patch/${B}`, body); return r.ok ? (await r.json()).rev : null },
   since: async (rev, wait = 0) => { const r = await fetch(`/api/since/${B}?rev=${rev}${wait ? `&wait=${wait}` : ''}`, { cache: 'no-store' }); return r.status === 200 ? parseDoc(await r.text()) : null },   // wait = 바뀔 때까지 서버가 기다림(롱 폴링)
