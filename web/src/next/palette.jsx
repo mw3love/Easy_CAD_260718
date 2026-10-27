@@ -59,8 +59,8 @@ function useSectionFold() {
   const toggle = id => setShut(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); try { localStorage.setItem(FOLD_KEY, JSON.stringify([...n])) } catch { /* 기억 못 해도 그만 */ } return n })
   return [shut, toggle]
 }
-function Section({ title, color, count, children, shut, onToggle, onMenu }) {   // onMenu(e) = 제목 줄 ⋯(이 브라우저 폴더)
-  return <div data-testid="pal-sec" data-shut={shut || undefined} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+function Section({ title, color, count, children, shut, onToggle, onMenu, folder, lit }) {   // folder = 끌어 놓기 받는 이 브라우저 폴더 이름, lit = 그 위로 끌고 있음   // onMenu(e) = 제목 줄 ⋯(이 브라우저 폴더)
+  return <div data-testid="pal-sec" data-shut={shut || undefined} data-symfolder={folder} style={{ display: 'flex', flexDirection: 'column', gap: 2, borderRadius: 6, ...(lit ? { outline: `2px solid ${C.on}`, outlineOffset: 1 } : {}) }}>
     <div onClick={onToggle} title={onToggle ? (shut ? '누르면 펼치기' : '누르면 접기') : undefined} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 6px', borderRadius: 5, cursor: onToggle ? 'pointer' : 'default', background: color ? `color-mix(in srgb, ${color} 35%, transparent)` : 'transparent', font: "600 12px 'Pretendard', sans-serif" }}>
       {onToggle && <span aria-hidden style={{ width: 8, fontSize: 9, color: C.muted }}>{shut ? '▸' : '▾'}</span>}
       <span style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</span>
@@ -79,6 +79,8 @@ export function Palette({ lib, tool, onDown, onClick, dark, docked, mine, say })
   const root = useRef(null)
   const peekAt = e => r => { clearTimeout(peekT.current); if (!r) { setPeekS(null); return } peekT.current = setTimeout(() => setPeekS({ e, r, x: root.current?.getBoundingClientRect().right ?? r.right }), 300) }   // x = 판 오른쪽 밖(판 안 칸을 가리지 않게)
   useEffect(() => () => clearTimeout(peekT.current), [])
+  const [drop, setDrop] = useState(null)   // 칠판에서 끄는 도형이 이 칸 위 = { folder }(Editor `mb-symdrag`)
+  useEffect(() => { const on = e => setDrop(e.detail); window.addEventListener('mb-symdrag', on); return () => window.removeEventListener('mb-symdrag', on) }, [])
   // 이 브라우저 심볼 관리 — pop = { x, y, menu: [[이름, 할 일]] } 또는 { x, y, ask: { label, value, ok(글) } }(이름 묻기 — 브라우저 확인 창은 안 씀)
   const [pop, setPop] = useState(null), file = useRef(null)
   const near = (x, y) => ({ x: Math.min(x, window.innerWidth - 220), y })
@@ -98,8 +100,10 @@ export function Palette({ lib, tool, onDown, onClick, dark, docked, mine, say })
     if (key.startsWith('customsym:')) { const e = syms.find(s => 'customsym:' + s.id === key); return e && <Cell key={key} k={key} name={e.name} icon={thumb(e)} on={tool === key} onDown={onDown} onClick={onClick} onPeek={peekAt(e)} onMenu={mine && isMine(e.folder) ? symMenu(e) : undefined} /> }
     const name = basicName[key] || SYMBOLS[key.replace(/^sym:/, '')]?.name; return name && <Cell key={key} k={key} name={name} icon={shapeIcon(key)} on={tool === key} onDown={onDown} onClick={onClick} />
   }
-  return <div ref={root} data-folded={folded || undefined} onPointerDown={e => e.stopPropagation()} style={{ pointerEvents: 'auto', width: 192, boxSizing: 'border-box', minHeight: 0, flex: '0 1 auto', overflowY: 'auto',
-    background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 8px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', color: C.ink, display: 'flex', flexDirection: 'column', gap: 8, userSelect: 'none', ...(docked ? { ...DOCKED, flex: '1 1 auto' } : {}) }}>
+  return <div ref={root} data-folded={folded || undefined} data-symdrop={mine ? '' : undefined} onPointerDown={e => e.stopPropagation()} style={{ pointerEvents: 'auto', width: 192, boxSizing: 'border-box', minHeight: 0, flex: '0 1 auto', overflowY: 'auto',
+    background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 8px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', color: C.ink, display: 'flex', flexDirection: 'column', gap: 8, userSelect: 'none', ...(docked ? { ...DOCKED, flex: '1 1 auto' } : {}), ...(drop ? { boxShadow: `inset 0 0 0 2px ${C.on}` } : {}) }}>   {/* 끄는 도형이 위 = 코랄 테두리 */}
+    {drop && (r => <div data-testid="symdrop-hint" style={{ position: 'fixed', left: r.left, top: r.top, width: r.width, boxSizing: 'border-box', zIndex: 45, pointerEvents: 'none', padding: '8px 10px', background: C.on, color: '#fff', font: "600 12px 'Pretendard', sans-serif" }}>
+      {drop.folder ? `여기 놓으면 「${drop.folder}」에 추가` : '여기 놓으면 내 심볼에 추가'}</div>)(root.current.getBoundingClientRect())}   {/* 칸 위에 떠 있음 — 흐름에 끼우면 내용이 밀려 놓을 자리가 어긋났음 */}
     <div style={{ display: 'flex', alignItems: 'center' }}><span style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1 }}>도형·심볼</span>{!docked && <FoldBtn folded={folded} onClick={toggleFold} />}</div>
     <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') setQ('') }} placeholder="도형·심볼 검색 (이름·초성)"
       title="이름 일부나 초성(예: ㅇㅌ)으로 찾기 — Esc로 지우기" style={{ boxSizing: 'border-box', width: '100%', height: 30, border: `1px solid ${C.line}`, borderRadius: 7, background: 'transparent', color: C.ink, font: "400 12px 'Pretendard', sans-serif", padding: '0 8px' }} />
@@ -109,21 +113,22 @@ export function Palette({ lib, tool, onDown, onClick, dark, docked, mine, say })
     {fav.length > 0 && <Section title={<><span style={{ color: C.on }}>★</span> 즐겨찾기</>} count={fav.length} shut={shut.has('★')} onToggle={() => toggle('★')}>{fav.map(cellOf)}</Section>}
     <Section title="기본 도형" color={lib?.section_colors?.basic || BASIC_BLUE} count={BASIC.length} shut={shut.has('□')} onToggle={() => toggle('□')}>{BASIC.map(([k]) => cellOf(k))}</Section>
     {folders.filter(f => !isMine(f)).map(f => { const list = syms.filter(s => s.folder === f); return <Section key={f} title={f} color={lib?.folder_colors?.[f] || FOLDER_GRAY} count={list.length} shut={shut.has('f:' + f)} onToggle={() => toggle('f:' + f)}>{list.map(s => cellOf('customsym:' + s.id))}</Section> })}
-    {mine && <div data-testid="mine" style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: `1px solid ${C.line}`, paddingTop: 8 }}>
+    {mine && <div data-testid="mine" style={{ display: 'flex', flexDirection: 'column', gap: 6, ...(folders.some(f => !isMine(f)) ? { borderTop: `1px solid ${C.line}`, paddingTop: 8 } : {}) }}>   {/* 예시를 복사한 뒤엔 서버 폴더가 없어 구분선도 없음 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-        <span title="이 브라우저에만 저장돼요 — 다른 PC·브라우저로 옮기려면 「파일로 저장」 → 「파일 불러오기」" style={{ flex: 1, whiteSpace: 'nowrap', font: "700 12px 'Pretendard', sans-serif" }}>내 심볼 <span style={{ fontWeight: 400, color: C.muted }}>· 이 브라우저</span></span>
+        <span title="이 브라우저에 저장돼요 — 다른 PC·브라우저로 옮기려면 ⋯ 「파일로 저장」 → 「파일 불러오기」" style={{ flex: 1, whiteSpace: 'nowrap', font: "700 13px 'Pretendard', sans-serif" }}>내 심볼</span>
         {[['＋ 폴더', '새 폴더 만들기', e => setPop({ ...below(e), ask: { label: '새 폴더 이름', value: '', ok: v => mine.api.addFolder(v) } })],
-          ['파일 불러오기', '내 심볼 파일(.json) 불러오기 — 데스크톱 symbol_library.json도 돼요', () => file.current.click()],
-          ['파일로 저장', '내 심볼을 파일로 — 다른 PC·브라우저에서 「파일 불러오기」', download]].map(([l, t, f]) => { const off = l === '파일로 저장' && !mine.mine.symbols.length
-          return <button key={l} title={t} onClick={f} disabled={off} style={{ all: 'unset', cursor: off ? 'default' : 'pointer', padding: '1px 5px', borderRadius: 4, border: `1px solid ${C.line}`, font: "500 10px 'Pretendard', sans-serif", opacity: off ? 0.4 : 1 }}>{l}</button> })}
+          ['⋯', '파일로 저장 · 파일 불러오기 · 예시 다시 넣기', e => setPop({ ...below(e), menu: [
+            ...(mine.mine.symbols.length ? [['파일로 저장', download]] : []), ['파일 불러오기', () => file.current.click()],
+            ['예시 다시 넣기', () => { const n = mine.api.reseed(); say?.(n ? `예시 심볼 ${n}개를 다시 넣었어요` : '빠진 예시가 없어요') }]] })]].map(([l, t, f]) =>
+          <button key={l} data-testid={l === '⋯' ? 'mine-more' : undefined} title={t} onClick={f} style={{ all: 'unset', cursor: 'pointer', padding: '1px 6px', borderRadius: 4, border: `1px solid ${C.line}`, font: "500 11px 'Pretendard', sans-serif" }}>{l}</button>)}
       </div>
-      {folders.filter(isMine).map(f => { const list = syms.filter(s => s.folder === f); return <Section key={f} title={folderTitle(f)} color={FOLDER_GRAY} count={list.length} shut={shut.has('f:' + f)} onToggle={() => toggle('f:' + f)} onMenu={folderMenu(f)}>{list.map(s => cellOf('customsym:' + s.id))}</Section> })}
+      {folders.filter(isMine).map(f => { const list = syms.filter(s => s.folder === f); return <Section key={f} title={folderTitle(f)} color={FOLDER_GRAY} count={list.length} shut={shut.has('f:' + f)} onToggle={() => toggle('f:' + f)} onMenu={folderMenu(f)} folder={folderTitle(f)} lit={drop?.folder === folderTitle(f)}>{list.map(s => cellOf('customsym:' + s.id))}</Section> })}
       {!mine.mine.symbols.length && <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.5 }}>칠판에서 도형·아이콘을 고르고 우클릭 「내 심볼에 추가」</div>}
       <input ref={file} type="file" accept=".json,application/json" hidden onChange={async e => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return
         const n = mine.api.importText(await f.text()); say?.(n >= 0 ? `내 심볼 ${n}개를 가져왔어요` : n === -2 ? '이 브라우저 저장 공간이 모자라요' : '내 심볼 파일로 읽지 못했어요') }} />
     </div>}
     </>}
-    {!lib && <div style={{ fontSize: 11, color: C.muted }}>함께 쓰는 심볼은 저장 서버를 켜면 보여요</div>}
+    {!lib && !mine && <div style={{ fontSize: 11, color: C.muted }}>내 심볼은 저장 서버를 켜면 보여요</div>}
     {pop && <div data-testid="mine-pop" onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} style={{ position: 'fixed', left: pop.x, top: Math.min(pop.y, window.innerHeight - 90), zIndex: 45, minWidth: 150, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 4, boxShadow: '0 6px 20px rgba(0,0,0,.16)', display: 'flex', flexDirection: 'column', gap: 2 }}>
       {pop.menu ? pop.menu.map(([l, f]) => <button key={l} onClick={() => { setPop(null); f() }} style={{ all: 'unset', cursor: 'pointer', padding: '5px 8px', borderRadius: 5, font: "500 12px 'Pretendard', sans-serif", color: C.ink }}
         onMouseEnter={e => { e.currentTarget.style.background = 'rgba(218,119,86,.12)' }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>{l}</button>)

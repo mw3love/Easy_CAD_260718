@@ -59,7 +59,7 @@ test('내 심볼(이 브라우저) — 우클릭 추가 → 판에 보임 → �
   const dlg = page.getByTestId('symadd'); await expect(dlg).toBeVisible()
   await dlg.getByPlaceholder('예: 송신탑').fill('동그라미'); await dlg.getByRole('button', { name: '추가' }).click()
   const mine = page.getByTestId('mine'); await expect(mine.getByRole('button', { name: '동그라미' })).toBeVisible()   // 폴더 없으면 「내 심볼」
-  await expect(mine).toContainText('내 심볼')
+  await expect(mine).toContainText('내 심볼'); await expect(mine.getByRole('button', { name: '카메라' })).toBeVisible()   // 서버 예시도 내 심볼로 복사돼 있음
   const n0 = (await liveDoc(page)).items.length
   await mine.getByRole('button', { name: '동그라미' }).click(); await clickScene(page, 400, 300)
   await expect.poll(async () => (await liveDoc(page)).items.length).toBe(n0 + 1)
@@ -68,10 +68,60 @@ test('내 심볼(이 브라우저) — 우클릭 추가 → 판에 보임 → �
   await page.getByTestId('mine-pop').getByRole('button', { name: '이름 바꾸기' }).click()
   await page.getByTestId('mine-pop').locator('input').fill('원 심볼'); await page.getByTestId('mine-pop').locator('input').press('Enter')
   await expect(page.getByTestId('mine').getByRole('button', { name: '원 심볼' })).toBeVisible()
-  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('mine').getByRole('button', { name: '파일로 저장' }).click()])
+  await page.getByTestId('mine-more').click()
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('mine-pop').getByRole('button', { name: '파일로 저장' }).click()])
   const path = await dl.path()
-  await page.getByTestId('folder-menu').click(); await page.getByTestId('mine-pop').getByRole('button', { name: /지우기/ }).click()
+  await page.getByTestId('pal-sec').filter({ has: page.getByRole('button', { name: '원 심볼' }) }).getByTestId('folder-menu').click(); await page.getByTestId('mine-pop').getByRole('button', { name: /지우기/ }).click()
   await expect(page.getByTestId('mine').getByRole('button', { name: '원 심볼' })).toHaveCount(0)
   await page.getByTestId('mine').locator('input[type=file]').setInputFiles(path)
   await expect(page.getByTestId('mine').getByRole('button', { name: '원 심볼' })).toBeVisible()
+  await expect(page.getByTestId('mine').getByRole('button', { name: '카메라' })).toHaveCount(1)   // 있던 예시는 두 벌 안 됨
+})
+
+test('화살표를 고르고 바로 치면 글 — 라벨 없으면 가운데에 새 라벨, 있으면 첫 라벨을 새로 씀 · 치다 지우면 그대로', async ({ page }) => {
+  await openBoard(page, boardName('arrowtype')); await setCam(page)
+  await page.keyboard.press('2'); await dragScene(page, { x: 0, y: 0 }, { x: 300, y: 0 }); await page.keyboard.press('Escape')
+  const labels = async () => { const a = (await liveDoc(page)).items.find(it => it.type === 'sarrow' || it.type === 'arrow'); return (a.labels || (a.label ? [a.label] : [])).map(L => [L.text, L.t ?? 0.5]) }
+  await clickScene(page, 700, 500); await clickScene(page, 150, 0)
+  await page.keyboard.type('승인'); await clickScene(page, 700, 500)
+  await expect.poll(labels).toEqual([['승인', 0.5]])
+  await clickScene(page, 60, 0); await page.keyboard.type('ok'); await clickScene(page, 700, 500)
+  await expect.poll(labels).toEqual([['ok', 0.5]])                                          // 첫 라벨을 새로 씀
+  await page.keyboard.press('2'); await dragScene(page, { x: 0, y: 200 }, { x: 300, y: 200 }); await page.keyboard.press('Escape')
+  await clickScene(page, 700, 500); await clickScene(page, 150, 200)
+  const n = (await liveDoc(page)).items.length
+  await page.keyboard.type('x'); await page.keyboard.press('Backspace'); await clickScene(page, 700, 500)
+  const b = (await liveDoc(page)).items.filter(it => it.type === 'sarrow' || it.type === 'arrow')[1]
+  expect(b.labels || b.label || null).toBeFalsy(); expect((await liveDoc(page)).items.length).toBe(n)   // 치다 지움 = 라벨 안 생김
+})
+
+test('예시 폴더도 지울 수 있음 — 지우면 새로 고쳐도 안 생김 · ⋯ 「예시 다시 넣기」로 돌아옴', async ({ page }) => {
+  await openBoard(page, boardName('seed'))
+  const mine = page.getByTestId('mine'), sec = name => page.getByTestId('pal-sec').filter({ hasText: name })
+  await expect(mine.getByRole('button', { name: '카메라' })).toBeVisible()
+  await sec('방송').getByTestId('folder-menu').click(); await page.getByTestId('mine-pop').getByRole('button', { name: /지우기/ }).click()
+  await expect(mine.getByRole('button', { name: '카메라' })).toHaveCount(0)
+  await page.reload(); await expect(page.getByTestId('mine').getByRole('button', { name: '사람' })).toBeVisible()
+  await expect(page.getByTestId('mine').getByRole('button', { name: '카메라' })).toHaveCount(0)        // 다시 안 생김
+  await page.getByTestId('mine-more').click(); await page.getByTestId('mine-pop').getByRole('button', { name: '예시 다시 넣기' }).click()
+  await expect(page.getByTestId('mine').getByRole('button', { name: '카메라' })).toHaveCount(1)
+  await expect(page.getByTestId('mine').getByRole('button', { name: '사람' })).toHaveCount(1)          // 남아 있던 예시는 두 벌 안 됨
+})
+
+test('도형을 끌어 도형 칸(폴더 위)에 놓기 = 그 폴더로 추가 창 · 도형은 제자리 · 칸이 밝아짐', async ({ page }) => {
+  await openBoard(page, boardName('symdrag')); await setCam(page)
+  await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 150, y: 100 }); await page.keyboard.press('Escape')
+  const pos0 = (await liveDoc(page)).items.find(it => it.type === 'rect').pos
+  await clickScene(page, 75, 50)
+  const a = await toPage(page, 75, 50), sec = page.getByTestId('pal-sec').filter({ hasText: '업무' }), t = await sec.boundingBox()
+  await page.mouse.move(a.x, a.y); await page.mouse.down()
+  for (let i = 1; i <= 12; i++) await page.mouse.move(a.x + (t.x + 60 - a.x) * i / 12, a.y + (t.y + 40 - a.y) * i / 12)
+  await expect(page.getByTestId('symdrop-hint')).toContainText('업무')
+  await page.mouse.up()
+  await expect(page.getByTestId('symdrop-hint')).toHaveCount(0)
+  const dlg = page.getByTestId('symadd'); await expect(dlg).toBeVisible()
+  await expect(dlg.locator('select')).toHaveValue('업무')
+  expect((await liveDoc(page)).items.find(it => it.type === 'rect').pos).toEqual(pos0)     // 제자리
+  await dlg.getByPlaceholder('예: 송신탑').fill('끌어 넣은 상자'); await dlg.getByRole('button', { name: '추가' }).click()
+  await expect(sec.getByRole('button', { name: '끌어 넣은 상자' })).toBeVisible()
 })

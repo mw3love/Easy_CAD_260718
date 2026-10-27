@@ -2,7 +2,9 @@
 // 세 층(10-27 결정): 기본 도형(앱) · 함께 쓰는 심볼(서버 `symbol_library.json`, 읽기만 — 데스크톱이 고침) · 내 심볼 = 이 브라우저 저장 + 파일 내보내기·가져오기
 // (Excalidraw 라이브러리처럼 로그인 없이 — 로그인이 생기면 그때 계정으로 옮김). 파일 모양 = 데스크톱 `symbol_library.json`과 같아 데스크톱 파일도 가져올 수 있음.
 // 칠판·속성 카드·도형 바꾸기는 서버 심볼과 합친 한 목록(`mergeLib`)을 그대로 씀 — 이 브라우저 폴더는 이름 앞에 `MINE`을 붙여 서버 폴더와 안 섞임.
-import { useState } from 'react'
+// 같은 날 사용자: 서버의 방송·기술·업무 폴더는 처음 쓰는 사람에게 칸을 알려 주는 「예시」일 뿐 → 처음 열 때 이 브라우저로 한 번 복사(`seeded`)하고
+// 그 뒤엔 내 심볼만 보임(기본 도형만 고정, 예시도 지우기·이름 바꾸기 됨). 지운 예시는 다시 안 생김 — 「예시 다시 넣기」로만. 복사본은 같은 id라 즐겨찾기가 그대로 이어짐.
+import { useEffect, useState } from 'react'
 
 const KEY = 'mb-mysym'
 export const MINE = 'browser:'
@@ -16,9 +18,9 @@ function load() {
 const newSymId = () => 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
 
 // [mine, api] — api의 함수들은 성공하면 true(저장 공간이 모자라면 false — 그림이 든 심볼은 클 수 있음)
-export function useMySymbols() {
+export function useMySymbols(server) {   // server = 서버 심볼 파일(예시) — 처음 한 번 복사
   const [mine, setMine] = useState(load)
-  const put = d => { try { localStorage.setItem(KEY, JSON.stringify(d)) } catch { return false } setMine(d); return true }
+  const put = d => { d = { ...d, seeded: d.seeded ?? mine.seeded }; try { localStorage.setItem(KEY, JSON.stringify(d)) } catch { return false } setMine(d); return true }   // seeded = 예시를 복사했나(고칠 때마다 이어 감 — 빠지면 지운 예시가 되살아남)
   const uniq = (name, taken) => { let n = name, i = 2; while (taken.includes(n)) n = `${name} ${i++}`; return n }
   const api = {
     addFolder: name => { const n = name.trim(); if (!n) return false; return mine.folders.includes(n) ? true : put({ ...mine, folders: [...mine.folders, n] }) },
@@ -28,6 +30,10 @@ export function useMySymbols() {
     // items = .ecad 아이템들(`toEcad` 모양), folder = 이 브라우저 폴더 이름(없으면 만듦)
     addSymbol: (name, folder, items) => { const f = folder.trim() || '내 심볼'
       return put({ folders: mine.folders.includes(f) ? mine.folders : [...mine.folders, f], symbols: [...mine.symbols, { id: newSymId(), name: name.trim() || '심볼', folder: f, thumb: '', items }] }) },
+    // 예시 다시 넣기 = 서버 예시 중 지금 없는 것만(같은 id) 더함 → 더한 수
+    reseed: () => { if (!server) return 0; const have = new Set(mine.symbols.map(x => x.id)), add = (server.symbols || []).filter(x => !have.has(x.id))
+      const folders = [...mine.folders]; for (const x of add) if (!folders.includes(x.folder)) folders.push(x.folder)
+      return add.length && put({ ...mine, folders, symbols: [...mine.symbols, ...add.map(x => ({ ...x }))] }) ? add.length : 0 },
     renameSymbol: (id, name) => { const n = name.trim(); return !!n && put({ ...mine, symbols: mine.symbols.map(s => (s.id === id ? { ...s, name: n } : s)) }) },
     delSymbol: id => put({ ...mine, symbols: mine.symbols.filter(s => s.id !== id) }),
     // 파일로 — 데스크톱 `symbol_library.json`과 같은 모양
@@ -36,17 +42,26 @@ export function useMySymbols() {
     importText: text => {
       let d; try { d = JSON.parse(text) } catch { return -1 }
       if (!d || !Array.isArray(d.symbols)) return -1
-      const syms = d.symbols.filter(s => s && Array.isArray(s.items) && s.items.length).map(s => ({ id: newSymId(), name: String(s.name || '심볼'), folder: String(s.folder || '가져온 심볼'), thumb: '', items: s.items }))
+      const same = x => `${x.folder}
+${x.name}
+${JSON.stringify(x.items)}`, have = new Set(mine.symbols.map(same))   // 이미 있는 것(같은 폴더·이름·모양)은 건너뜀 — 예시가 두 벌 되지 않게
+      const syms = d.symbols.filter(s => s && Array.isArray(s.items) && s.items.length).map(s => ({ id: newSymId(), name: String(s.name || '심볼'), folder: String(s.folder || '가져온 심볼'), thumb: '', items: s.items })).filter(x => !have.has(same(x)))
       const folders = [...mine.folders]; for (const f of [...(Array.isArray(d.folders) ? d.folders : []), ...syms.map(s => s.folder)]) if (typeof f === 'string' && f && !folders.includes(f) && syms.some(s => s.folder === f)) folders.push(f)
       return put({ folders, symbols: [...mine.symbols, ...syms] }) ? syms.length : -2
     },
   }
+  useEffect(() => {   // 처음 한 번 — 서버 예시를 이 브라우저 앞쪽에 복사
+    if (!server || mine.seeded) return
+    const ex = (server.symbols || []).filter(x => !mine.symbols.some(y => y.id === x.id)).map(x => ({ ...x }))
+    put({ folders: [...(server.folders || []).filter(f => !mine.folders.includes(f)), ...mine.folders], symbols: [...ex, ...mine.symbols], seeded: true })
+  }, [server])   // eslint-disable-line react-hooks/exhaustive-deps
   return [mine, api]
 }
 
 // 서버 심볼 + 이 브라우저 심볼 = 칠판·속성 카드가 쓰는 한 목록(이 브라우저 폴더는 맨 뒤)
+// 예시를 복사한 뒤(`seeded`)엔 서버 폴더를 안 보임(즐겨찾기·칸 색만 서버 것)
 export function mergeLib(server, mine) {
-  if (!mine.folders.length && !mine.symbols.length) return server
-  const s = server || { folders: [], symbols: [], favorites: [] }
-  return { ...s, folders: [...(s.folders || []), ...mine.folders.map(f => MINE + f)], symbols: [...(s.symbols || []), ...mine.symbols.map(x => ({ ...x, folder: MINE + x.folder }))] }
+  if (!mine.seeded && !mine.folders.length && !mine.symbols.length) return server
+  const s = server || { folders: [], symbols: [], favorites: [] }, keep = !mine.seeded
+  return { ...s, folders: [...(keep ? s.folders || [] : []), ...mine.folders.map(f => MINE + f)], symbols: [...(keep ? s.symbols || [] : []), ...mine.symbols.map(x => ({ ...x, folder: MINE + x.folder }))] }
 }

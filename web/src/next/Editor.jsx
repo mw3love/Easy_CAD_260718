@@ -84,6 +84,7 @@ const sceneRectOf = it => { const b = sceneBox(it, textBox); return { l: b.x, t:
 const topZ = items => Math.max(0, ...items.map(it => it.z ?? 0))
 // 화살표 라벨 — 옛 파일의 단수 label은 고칠 때 labels 하나로(데스크톱도 저장할 땐 labels만)
 const isArrow = it => it?.type === 'sarrow' || it?.type === 'arrow'
+const newArrowLabel = it => ({ text: '', color: it.color || INK, font: 16, bg: null, t: 0.5, off: 0 })   // 화살표 가운데 새 라벨(두 번 누르기와 같은 모양)
 const labelsOf = it => (it.labels ? it.labels.map(L => ({ ...L })) : it.label ? [{ t: 0.5, off: 0, ...it.label }] : [])
 const withLabels = (it, labels) => { const o = { ...it, labels }; delete o.label; return o }
 // 화살표 안 점 → 길 위 t·옆 거리(직각 = 꺾은선 길이 비율, 곡선 = 매개변수 — 데스크톱 `_project_to_path`·`_project_to_curve`)
@@ -383,6 +384,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       let dx = p.x - s.start.x, dy = p.y - s.start.y
       if (!s.moved && Math.hypot(dx, dy) * z < 3) return
       s.moved = true
+      if (onAddSymbol) symDragTick(e, s)
       if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0 }   // 축 고정(데스크톱 Shift+끌기)
       const movedIds = new Set(s.ids)
       const box = unionBox(s.orig.filter(it => s.sel.includes(it._id)).map(it => sceneBox(it, textBox)))
@@ -527,6 +529,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (s.kind === 'tline') { if (live) commit(live, [s.id], s.axis === 'c' ? '열 너비' : '행 높이'); return }
     if (s.kind === 'move') {
       setOverlay(o => ({ ...o, guides: null }))
+      if (s.symOver !== undefined) { const d = symDropAt(e); window.dispatchEvent(new CustomEvent('mb-symdrag', { detail: null })); if (d && s.moved) { setLive(null); addToMySymbols(d.folder); return } }   // 도형 칸에 놓음 = 제자리 + 추가 창
       if (!s.moved && s.cellPick) { const { id, r, c, extend } = s.cellPick; setCellSel(cs => (extend && cs?.id === id ? { ...cs, r1: r, c1: c } : { id, r0: r, c0: c, r1: r, c1: c })) }
       if (!s.moved && s.webPick) webActivate(s.webPick)
       else if (!s.moved && s.pdfTap && R.current.webOn !== s.pdfTap._id) setStatus(s.pdfTap.type === 'doc' ? '인터랙티브 HTML — 두 번 누르면 움직여 보기' : 'PDF — 두 번 누르면 넘겨 보기(휠로 쪽 넘김)')
@@ -1258,10 +1261,13 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     commit([...m.items, it], [it._id], '프레임으로 감싸기'); setStatus(`프레임 ${it.no} — 내보내기 하면 이 틀이 한 쪽이 돼요`)
   }
   // 고른 것 → 「내 심볼」(이 브라우저, `mysym.js`) — .ecad 모양으로 넘기고 이름·폴더는 main이 물음. 잠금·레이어·묶음 표시는 빼고(놓을 때 새로 묶음), 연결된 화살표 짝은 고른 것끼리만
-  function addToMySymbols() {
+  // 끌어서 도형 칸에 놓기(2026-10-27 사용자 — 우클릭 말고도) — 칸(`data-symdrop`) 위면 칸이 밝아지고(이벤트 `mb-symdrag`), 놓으면 도형은 제자리 + 추가 창(폴더 위면 그 폴더)
+  const symDropAt = e => { const el = document.elementFromPoint(e.clientX, e.clientY); return el?.closest?.('[data-symdrop]') ? { folder: el.closest('[data-symfolder]')?.dataset.symfolder || '' } : null }
+  function symDragTick(e, s) { const d = symDropAt(e), k = d ? 'f:' + d.folder : ''; if (k === s.symOver) return; s.symOver = k; window.dispatchEvent(new CustomEvent('mb-symdrag', { detail: d })) }
+  function addToMySymbols(folder = '') {
     const m = R.current.model, ids = new Set(withContents(R.current.sel)), its = m.items.filter(it => ids.has(it._id) && it.type !== 'titleblock' && it.type !== 'frame'); if (!its.length) return
     const items = toEcad({ items: its }).items.map(({ uid, locked, layer_id, group_id, ...o }) => o)   // eslint-disable-line no-unused-vars
-    onAddSymbol(items, frameAutoName(its).replace(/^(도형|아이콘|묶음)$/, ''))
+    onAddSymbol(items, frameAutoName(its).replace(/^(도형|아이콘|묶음)$/, ''), folder)
   }
   // 감쌀 때 기본 이름(2026-10-27 사용자: 「프레임 N」보다 안에 든 것으로 — 알아보기 쉽게, 이름은 나중에 바꿔도 됨).
   // 하나면 「종류 · 제목」(제목 없으면 종류만), 여럿이면 「종류 N개」·「가장 많은 종류 외 N」. 묶음 = 하나, 선·도형만인 묶음 = 아이콘(SVG는 표시 칸이 없어 모양으로 짐작), 화살표는 셈에서 뺌
@@ -1493,9 +1499,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const m = R.current.model, it = m.items.find(x => x._id === ed.id); if (!it) return
     let next
     if (ed.kind === 'alabel') {
-      const labels = labelsOf(it)
+      const labels = labelsOf(it), fresh = ed.i >= labels.length
+      if (fresh && !text.trim()) return   // 바로 치다 지움 = 그대로
       if (!text.trim()) labels.splice(ed.i, 1)
-      else { labels[ed.i] = { ...labels[ed.i], text, runs: runs.length ? runs : undefined }; if (!labels[ed.i].runs) delete labels[ed.i].runs }
+      else { labels[ed.i] = { ...(labels[ed.i] || newArrowLabel(it)), text, runs: runs.length ? runs : undefined }; if (!labels[ed.i].runs) delete labels[ed.i].runs }
       commit(m.items.map(x => (x._id === it._id ? withLabels(it, labels) : x)), [it._id], text.trim() ? '라벨 고침' : '빈 라벨 지움'); return
     }
     if (ed.kind === 'text') {
@@ -1514,6 +1521,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function armTarget() {
     const ids = R.current.sel; if (readOnly || R.current.editing || cellSel || R.current.tool !== 'select' || ids.length !== 1) return null
     const it = R.current.model.items.find(x => x._id === ids[0]); if (!it || it.locked || R.current.others?.some(o => o.edit === it._id)) return null   // 남이 고치는 중이면 두 번 누르기(부드러운 잠금)로만
+    if (isArrow(it)) return { id: it._id, kind: 'alabel', i: 0, armed: true }   // 화살표 = 첫 라벨을 새로 씀, 없으면 가운데에 새 라벨(2026-10-27 사용자 — 도형처럼 바로 치기)
     const kind = it.type === 'text' ? 'text' : ['rect', 'ellipse', 'symbol'].includes(it.type) || (it.type === 'polygon' && it.closed) ? 'label' : it.type === 'memo' && !R.current.lineSel ? 'memo' : null   // 메모 = 치면 끝에 이어 씀(있는 글을 지우지 않음 — 도형 글은 새로 씀)
     return kind && { id: it._id, kind, armed: true }
   }
@@ -1526,7 +1534,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         color: col(it.color), bg, rotation: it.rotation || 0, origin: scr(toScene(it, { x: it.origin?.[0] || 0, y: it.origin?.[1] || 0 })), text: it.text, runs: it.runs }
     }
     if (ed.kind === 'alabel') {
-      const b = arrowLabelBoxes(it)[ed.i], L = labelsOf(it)[ed.i]; if (!b || !L) return null
+      const ls = labelsOf(it), lt = ed.i < ls.length ? it : withLabels(it, [...ls, newArrowLabel(it)])   // 라벨 없는 화살표를 고르고 치기 = 아직 없는 가운데 라벨 자리
+      const b = arrowLabelBoxes(lt)[ed.i], L = labelsOf(lt)[ed.i]; if (!b || !L) return null
       return { center: scr(toScene(it, b.a)), px: (L.font || 16) * PT * (it.scale || 1), zoom: cam.z, family: L.family ? 'board' : 'app', weight: 400, color: col(L.color || it.color), bg, align: 'center', text: L.text || '', runs: L.runs }
     }
     const L = it.label || {}
@@ -1596,9 +1605,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       }
       const ta = armTarget()   // 도형 하나 고른 채 — 글자를 치면 바로 그 글로 새로 씀(도구 숫자·Shift+H/V보다 먼저), Enter·F2 = 있는 글 이어 고치기
       if (ta && !mod && !e.altKey) {
-        if (k === 'Enter' || k === 'F2') return act(() => setEditing({ id: ta.id, kind: ta.kind }))
+        if (k === 'Enter' || k === 'F2') return act(() => setEditing({ id: ta.id, kind: ta.kind, ...(ta.i != null ? { i: ta.i } : {}) }))   // i = 화살표 라벨 번호
         if (k.length === 1 || k === 'Process' || e.keyCode === 229) {   // 기본 동작은 막지 않음 — 대기 편집기가 이 글쇠를 받음, 여기선 보이게만
-          const ne = { id: ta.id, kind: ta.kind, ...(ta.kind === 'memo' ? {} : { fresh: true }) }; R.current.editing = ne; flushSync(() => setEditing(ne)); return }
+          const ne = { id: ta.id, kind: ta.kind, ...(ta.i != null ? { i: ta.i } : {}), ...(ta.kind === 'memo' ? {} : { fresh: true }) }; R.current.editing = ne; flushSync(() => setEditing(ne)); return }
       }
       if (!mod && !e.shiftKey && e.code === 'KeyZ') return act(() => {
         const c = R.current.cam, zb = zBack.current; zBack.current = null
@@ -2451,7 +2460,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           if (selIt.some(it => it.group_id)) out.push(['그룹 해제', 'Ctrl+Shift+G', act(() => commit(ungroupItems(m.items, ids), ids, '묶음 풂'))])
           out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
           if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push('-', ['프레임으로 감싸기', 'Alt+G', act(wrapFrame)])
-          if (onAddSymbol && !card && selIt.every(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push(['내 심볼에 추가…', '', act(addToMySymbols)])   // 2026-10-27 사용자 — KAIROS 아이콘 등을 심볼 칸에(이 브라우저)
+          if (onAddSymbol && !card && selIt.every(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push(['내 심볼에 추가…', '', act(() => addToMySymbols())])   // 2026-10-27 사용자 — KAIROS 아이콘 등을 심볼 칸에(이 브라우저)
           if (selIt.some(it => isLegendLine(it))) out.push(['범례 넣기', '', act(insertLegend)])   // 선·화살표를 고르고 우클릭(2026-10-27 실검증 — 「표」 창 안에만 있으면 못 찾음, 표 창 단추도 그대로)
           out.push('-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
           if (onAsk) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])   // 「정리해 줘」 ① — 고른 것이 재료
@@ -2486,7 +2495,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           onArm: () => { const ne = { id: it._id, kind: 'memo' }; R.current.editing = ne; setEditing(ne) } }} onDone={finishMemo} /> })(editing ? (editing.kind === 'memo' ? editing : null) : armTarget()?.kind === 'memo' ? armTarget() : null)}
       {(ed => { if (!ed) return null; const s = editSpec(ed); if (!s) return null   // armed = 도형만 고른 대기(보이지 않음) — 고치기와 같은 key라 같은 편집기가 그대로 이어 받음
         return <TextEditor key={ed.id} spec={{ ...s, onReady: setLiveEd, at: ed.at, onPan: startPan, onWheel: wheelZoom, armed: !!ed.armed, fresh: !!ed.fresh,
-          onArm: () => { const ne = { id: ed.id, kind: ed.kind, fresh: true }; R.current.editing = ne; setEditing(ne) } }} onDone={finishEdit} /> })(editing ? (editing.kind !== 'cell' && editing.kind !== 'memo' ? editing : null) : (t => (t?.kind === 'memo' ? null : t))(armTarget()))}   {/* 메모 대기는 위 MemoEditor가 받음(둘이 같이 뜨면 이 편집기가 첫 글자를 가로챘음) */}
+          onArm: () => { const ne = { id: ed.id, kind: ed.kind, ...(ed.i != null ? { i: ed.i } : {}), fresh: true }; R.current.editing = ne; setEditing(ne) } }} onDone={finishEdit} /> })(editing ? (editing.kind !== 'cell' && editing.kind !== 'memo' ? editing : null) : (t => (t?.kind === 'memo' ? null : t))(armTarget()))}   {/* 메모 대기는 위 MemoEditor가 받음(둘이 같이 뜨면 이 편집기가 첫 글자를 가로챘음) */}
       {editing && liveEd && <FormatBar ed={liveEd} />}   {/* 드래그 꾸미기 막대(2026-10-19 — 옛 오른쪽 위 「글자」 카드 대신) */}
       {selItems.length > 0 && <Props deep={deepProps()} liveEd={editing && !editing.armed && editing.kind !== 'memo' ? liveEd : null} align={selItems.length >= 2 ? { n: alignTargets().length, align: alignSel, dist: a => distributeSel(a) } : null} items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} dark={dark} onLegend={legendEdit} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}
         onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}

@@ -100,7 +100,7 @@ const SampleSelect = ({ onPick }) => <select data-testid="sample-select" onChang
 
 // 「내 심볼에 추가」 창(2026-10-27 사용자 — KAIROS 아이콘 등을 심볼 칸에): 이름 + 이 브라우저 폴더(있는 것 고르기 또는 새 이름). 저장은 `mysym.js`
 function SymAddForm({ init, folders, onOk, onClose }) {
-  const NEW = '\u0000new', [name, setName] = useState(init.name || ''), [pick, setPick] = useState(folders[folders.length - 1] ?? NEW), [fresh, setFresh] = useState(folders.length ? '' : '내 심볼')
+  const NEW = '\u0000new', [name, setName] = useState(init.name || ''), [pick, setPick] = useState(folders.includes(init.folder) ? init.folder : folders[folders.length - 1] ?? NEW)   // init.folder = 끌어 놓은 폴더, [fresh, setFresh] = useState(folders.length ? '' : '내 심볼')
   const folder = pick === NEW ? fresh.trim() : pick, ok = !!name.trim() && !!folder
   const go = () => { if (ok) onOk(name.trim(), folder) }
   const inp = { height: 30, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: "400 13px 'Pretendard', sans-serif" }
@@ -432,7 +432,7 @@ function App() {
   const lastTable = useRef([3, 3, true])   // 위 막대에서 표를 끌면 = 마지막에 넣은 행·열(처음은 3×3)
   const [webAt, setWebAt] = useState(null)   // 위 막대에서 「웹」을 끌어 놓은 자리 — 주소 칸이 뜨고 그 자리에 넣음
   const toolDown = (e, k) => paletteDown(e, k, kind => ed.current?.startToolDrag(kind, { table: lastTable.current, onWeb: p => { setWebAt(p); setWebOpen(true) } }))   // 클릭 = 지금처럼, 끌기 = 놓은 자리에 기본형
-  const libServer = useLibrary(), [mySyms, myApi] = useMySymbols(), lib = useMemo(() => mergeLib(libServer, mySyms), [libServer, mySyms])   // 함께 쓰는 심볼(서버) + 내 심볼(이 브라우저, 2026-10-27)
+  const libServer = useLibrary(), [mySyms, myApi] = useMySymbols(libServer), lib = useMemo(() => mergeLib(libServer, mySyms), [libServer, mySyms])   // 내 심볼(이 브라우저, 2026-10-27 — 서버 심볼은 처음 한 번 예시로 복사)
   const [symAdd, setSymAdd] = useState(null)   // 「내 심볼에 추가」 창 = { items, name }   // 「내 심볼」(서버 `/api/symbols`)
   const paletteDown = (e, t, start = k => ed.current?.startPaletteDrag(k)) => {
     if (e.button !== 0) return
@@ -561,7 +561,7 @@ function App() {
           if (fs.length) return ed.current?.dropFiles(fs, e)
           const u = (e.dataTransfer?.getData('text/uri-list') || '').split(/\r?\n/).find(x => x && !x.startsWith('#')); if (u) ed.current?.dropUrl(u, e.dataTransfer.getData('text/x-mb-caption') || '', e) }}
         style={{ flex: 1, position: 'relative', overflow: 'hidden', '--mb-right-inset': narrow && chatOpen ? `${chatW + 12}px` : '0px' }}>
-        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} phone={phone} keepTool={keepTool} onKeepTool={toggleKeep} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onAddSymbol={(items, name) => setSymAdd({ items, name })} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onAsk={(text, kind) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind }) }} />
+        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} phone={phone} keepTool={keepTool} onKeepTool={toggleKeep} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onAddSymbol={(items, name, folder) => setSymAdd({ items, name, folder })} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onAsk={(text, kind) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind }) }} />
         {helpOpen && <HelpCard onClose={() => setHelpOpen(false)} />}
         {symAdd && <SymAddForm init={symAdd} folders={mySyms.folders} onClose={() => setSymAdd(null)} onOk={(name, folder) => {
           const ok = myApi.addSymbol(name, folder, symAdd.items); setSymAdd(null)
