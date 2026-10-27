@@ -16,7 +16,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "web"))
 import collab  # noqa: E402
 
-TEAMS = [{"name": "A팀", "password": "에이1234", "key": "key-of-team-A-0001", "boards": ["A회의"]},
+TEAMS = [{"name": "A팀", "password": "에이1234", "key": "key-of-team-A-0001", "base": "https://other.example/v1/gateway", "boards": ["A회의"]},
          {"name": "B팀", "password": "비2345", "boards": ["B회의"]}]
 DOC = {"format": "easycad-doc", "version": 1, "items": [{"uid": "u1", "type": "rect", "rect": [0, 0, 10, 10]}]}
 
@@ -126,13 +126,16 @@ def test_new_board_goes_to_the_team_that_saves_first(srv):
 def test_team_key_is_used_for_kairos(srv, monkeypatch):
     base, _, s = srv
     seen = []
-    monkeypatch.setattr(s.gw, "get_credit_balance", lambda key, base_url: (seen.append(key), (10.0, 100.0))[1])
+    monkeypatch.setattr(s.gw, "get_credit_balance", lambda key, base_url: (seen.append((key, base_url)), (10.0, 100.0))[1])
     monkeypatch.setattr(s.gw, "resolve_api_key", lambda: "server-key-0000")
+    monkeypatch.setattr(s.gw, "resolve_base_url", lambda: "https://server.example")
     a, b, admin = _login(base, "에이1234"), _login(base, "비2345"), _login(base, "관리자0000")
     for c in (a, b, admin):
         assert _req(base + "/api/credits", cookie=c)[1] == {"remaining": 10.0, "quota": 100.0}
     _req(base + "/api/credits", cookie=a, headers={"X-Kairos-Key": "my-own-key-0000"})   # 「🔑 내 키」가 먼저
-    assert seen == ["key-of-team-A-0001", "server-key-0000", "server-key-0000", "my-own-key-0000"]
+    # 팀 키는 그 팀 주소로(다른 계정 키 — jbnu는 주소가 달라 서버 주소로 보내면 401, 2026-10-27 실측), 「내 키」는 서버 주소
+    assert seen == [("key-of-team-A-0001", "https://other.example/v1/gateway"), ("server-key-0000", "https://server.example"),
+                    ("server-key-0000", "https://server.example"), ("my-own-key-0000", "https://server.example")]
 
 
 def test_invite_link_gives_that_boards_team_and_publish_still_works(srv):

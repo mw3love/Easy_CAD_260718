@@ -179,7 +179,7 @@ def merge_chatlog(old: dict | None, new: dict) -> tuple[dict, int]:
 
 
 # ── 팀별 칠판(§8 항목67, 2026-10-27) — 데이터 폴더 `teams.json` 한 파일. 없으면 지금과 똑같이(공용 비밀번호 하나) ──
-# 파일 = [{"name": "A팀", "password": "…", "key": "KAIROS 키(없으면 서버 키)", "boards": ["칠판", …]}]. 팀 = 비밀번호 하나 + 키 하나 + 칠판 여러 개.
+# 파일 = [{"name": "A팀", "password": "…", "key": "KAIROS 키(없으면 서버 키)", "base": "그 키의 게이트웨이 주소(다른 계정일 때만)", "boards": ["칠판", …]}]. 팀 = 비밀번호 하나 + 키 하나 + 칠판 여러 개.
 # 팀 열쇠로는 그 팀 `boards`와 「아직 아무도 안 쓴 이름」만 — 처음 저장하면 그 팀 `boards`에 더함. 팀 없는 옛 칠판은 관리자(`edit_password.txt`)만.
 # 칠판 이름은 서버 전체에서 하나(게시·초대·접속자 표가 이름으로 찾음). ⚠ 윈도 파일 이름은 대소문자를 안 가려 이름 비교는 casefold
 # (「Main」을 새 이름으로 받으면 관리자 칠판 main.ecad를 덮어씀).
@@ -259,6 +259,10 @@ class Teams:
                 sys.stderr.write("[팀] 「%s」 — 이름이나 비밀번호가 앞 팀과 같아 뺐어요\n" % name)
                 continue
             key = str(t.get("key") or "").strip()
+            base = str(t.get("base") or "").strip().rstrip("/")   # 키가 다른 계정이면 그 계정 게이트웨이 주소(없으면 서버 주소)
+            if base and not base.startswith(("https://", "http://")):
+                sys.stderr.write("[팀] 「%s」 base는 http(s) 주소만 — 뺐어요\n" % name)
+                base = ""
             boards = []
             for b in t.get("boards") or []:
                 if isinstance(b, str) and b and b.casefold() not in owned:
@@ -268,7 +272,7 @@ class Teams:
                     sys.stderr.write("[팀] 칠판 「%s」은 앞 팀 것이라 「%s」에서 뺐어요\n" % (b, name))
             names.add(name.casefold())
             pws.add(pw)
-            out.append({"name": name, "password": pw, "key": key, "boards": boards})
+            out.append({"name": name, "password": pw, "key": key, "base": base, "boards": boards})
         return out
 
     def by_password(self, pw: str) -> dict | None:

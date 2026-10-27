@@ -92,6 +92,13 @@ class Handler(SimpleHTTPRequestHandler):
         team = (self._team() or {}).get("key") or ""
         return team if re.fullmatch(r"[!-~]{8,300}", team) else gw.resolve_api_key()
 
+    def _base(self) -> str:
+        """게이트웨이 주소 — 팀 키를 쓰는 요청이고 팀에 `base`가 있으면 그 주소(다른 계정 키는 주소도 다름 — jbnu = factchat-cloud, 2026-10-27 실측 401), 아니면 서버 주소."""
+        if re.fullmatch(r"[!-~]{8,300}", (self.headers.get("X-Kairos-Key") or "").strip()):
+            return gw.resolve_base_url()
+        t = self._team() or {}
+        return t["base"] if t.get("base") and re.fullmatch(r"[!-~]{8,300}", t.get("key") or "") else gw.resolve_base_url()
+
     def _models(self):
         key = self._key()
         if not key:
@@ -101,7 +108,7 @@ class Handler(SimpleHTTPRequestHandler):
         hit = _MODELS.get(kid)
         if hit is None or time.time() - hit[0] > 600:   # 10분마다 새로(새 모델이 올라와도 서버를 안 껐다 켜게)
             try:
-                hit = _MODELS[kid] = (time.time(), board_chat.models(key, gw.resolve_base_url()))
+                hit = _MODELS[kid] = (time.time(), board_chat.models(key, self._base()))
             except Exception as e:   # 목록을 못 받아도 대화는 기본 모델로 된다
                 return self._json(200, {"default": gw.FALLBACK_DEFAULT_MODEL, "featured": {}, "error": str(e)})
         # 일마다 정해 둔 모델 — 대화창 「생각 중」 줄이 고른 모델이 아니라 실제로 일하는 모델을 보이게(2026-10-20 사용자: 정돈인데 gpt로 보였음)
@@ -166,7 +173,7 @@ class Handler(SimpleHTTPRequestHandler):
                 kind = "image"   # 그림 뒤·그림을 고른 채 「날짜도 넣어 줘」 = 그 그림 고치기(판단 모델은 앞 대화·고른 그림을 안 봄)
             if not kind:   # 길 고르기 = 판단 모델 jev + 낱말 규칙 바닥(`easycad/ai/route.py`, 2026-10-20 사용자 선택)
                 prefs = req.get("ask_pref") if isinstance(req.get("ask_pref"), dict) else {}
-                kind, how, choices = route.decide(key, str(last.get("content", "")), bool(ctx or last.get("context")), prefs=prefs, base_url=gw.resolve_base_url())
+                kind, how, choices = route.decide(key, str(last.get("content", "")), bool(ctx or last.get("context")), prefs=prefs, base_url=self._base())
                 sys.stderr.write("[길] %s (%s)%s\n" % (kind, how, " — 되묻기 " + "|".join(choices) if choices else ""))
                 if choices:   # 애매하고 비싼 갈림길 — 만들기 전에 버튼으로 물음(§8 항목64). 누르면 대화창이 그 길 이름표로 다시 보냄
                     return self._json(200, {"kind": "ask", "choices": choices, "default": kind, "key": "|".join(sorted(choices)),
@@ -180,7 +187,7 @@ class Handler(SimpleHTTPRequestHandler):
             found = []
             if kind in ("chat", "search", "image") and not bimgs and not fu and not req.get("infographic") and kr_tools.WORDS.search(str(last.get("content", ""))):
                 try:
-                    found = kr_tools.gather(key, str(last.get("content", "")), base_url=gw.resolve_base_url())
+                    found = kr_tools.gather(key, str(last.get("content", "")), base_url=self._base())
                     sys.stderr.write("[도구] %s\n" % (", ".join(f"{f['tool']} {f['args']}" for f in found) or "안 씀"))
                 except Exception as e:
                     sys.stderr.write("[도구 실패] %s\n" % e)
@@ -207,12 +214,12 @@ class Handler(SimpleHTTPRequestHandler):
                     prompt, note = board_image.followup_prompt(fu, prompt), "앞 그림의 요청·정보를 이어서 고친 점만 반영해 새로 그렸어요(조금 달라질 수 있어요).\n\n"
                 elif found:   # 날씨·공휴일·통계 그림 = 공공 데이터로(웹 검색보다 숫자가 정확, 0크레딧)
                     facts = board_chat.chat(key, [{"role": "user", "content": prompt + "\n(이 그림에 넣을 사실만 세 줄로)"}], model=gw.FALLBACK_DEFAULT_MODEL, kind="chat",
-                                            data=kr_tools.context_text(found), base_url=gw.resolve_base_url())
+                                            data=kr_tools.context_text(found), base_url=self._base())
                     facts.update(model=", ".join(s["title"] for s in kr_tools.sources(found)), sources=kr_tools.sources(found), head=kr_tools.TOOL_HEAD)
                     prompt += "\n\n[그림에 반영할 최신 정보 — 여기와 다른 숫자·날짜는 넣지 마]\n" + re.sub(r"\[\d+\]", "", facts["content"])[:1500]
                 elif not req.get("infographic") and board_chat._SEARCH_WORDS.search(prompt):   # 「내일 날씨를 고흐 느낌으로 그려줘」 = 웹 검색 → 그리기(2026-10-20 사용자 — 대화창 all in one)
                     try:
-                        facts = board_chat.chat(key, [{"role": "user", "content": prompt + "\n(이 그림에 넣을 사실만 세 줄로)"}], model=gw.FALLBACK_DEFAULT_MODEL, kind="search", base_url=gw.resolve_base_url())
+                        facts = board_chat.chat(key, [{"role": "user", "content": prompt + "\n(이 그림에 넣을 사실만 세 줄로)"}], model=gw.FALLBACK_DEFAULT_MODEL, kind="search", base_url=self._base())
                         prompt += "\n\n[그림에 반영할 최신 정보 — 여기와 다른 숫자·날짜는 넣지 마]\n" + re.sub(r"\[\d+\]", "", facts["content"])[:1500]
                     except Exception as e:   # 못 찾아도 그림은 그린다
                         sys.stderr.write("[그림 앞 검색 실패] %s\n" % e)
@@ -229,11 +236,11 @@ class Handler(SimpleHTTPRequestHandler):
                 refs = self._find(self._name(str(req.get("board") or "")), str(last.get("content", "")), key)
             if found and kind in ("chat", "search"):   # 공공 데이터 답 = 고른 대화 모델 + 그 자료, 출처는 그 기관
                 out = board_chat.chat(key, msgs, model=req.get("model") or gw.FALLBACK_DEFAULT_MODEL, context=ctx, kind="chat",
-                                      data=kr_tools.context_text(found), base_url=gw.resolve_base_url())
+                                      data=kr_tools.context_text(found), base_url=self._base())
                 out["sources"] = kr_tools.sources(found)
             else:
                 out = board_chat.chat(key, msgs, model=req.get("model") or gw.FALLBACK_DEFAULT_MODEL,
-                                      context=ctx, kind=kind, board_refs=refs, base_url=gw.resolve_base_url())
+                                      context=ctx, kind=kind, board_refs=refs, base_url=self._base())
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         except Exception as e:   # 게이트웨이 오류는 대화창에 그대로 보여 준다(갈아타는 건 「모델 없음」일 때만, 답에 「대신」으로 — `model_pick`)
@@ -248,7 +255,7 @@ class Handler(SimpleHTTPRequestHandler):
         d = req.get("deep") if isinstance(req.get("deep"), dict) else {}
         step, topic = d.get("step"), str(d.get("topic") or "")
         brief = d.get("brief") if isinstance(d.get("brief"), dict) else {}
-        base = gw.resolve_base_url()
+        base = self._base()
         b0 = self._balance(key, base)   # 쓴 크레딧 = 잔액 차이(대화 모델 답엔 credits_charged가 없음) — 같은 키를 동시에 쓰면 섞임(대화창이 「약」)
         try:
             if step == "plan":
@@ -318,7 +325,7 @@ class Handler(SimpleHTTPRequestHandler):
         """움직이는 카드 하나 → {"kind": "live", "content", "title", "html", "model", "elapsed"} — 칠판에 붙이면 문서 카드 `live`(스크립트만 켠 칸).
         prev_html = 바로 앞 답이 움직이는 카드면 그 카드를 말대로 고침(정리 문서 `prev_html`과 같은 길)."""
         try:
-            out = self._with("live", live_card.LIVE_MODEL, lambda m: live_card.make(gw._client(key, gw.resolve_base_url(), timeout=600), ask, material, prev_html=prev_html, model=m))
+            out = self._with("live", live_card.LIVE_MODEL, lambda m: live_card.make(gw._client(key, self._base(), timeout=600), ask, material, prev_html=prev_html, model=m))
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         except Exception as e:
@@ -330,7 +337,7 @@ class Handler(SimpleHTTPRequestHandler):
     def _icon(self, ask: str, key: str, base_svg: str = "", image_url: str = ""):
         """아이콘 → {"kind": "icon", "content", "svgs": [SVG 글…], "model", "elapsed"} — 도형으로 바꾸기는 칠판(`svgin.js`), 대화 기록에 SVG 글 그대로(작음)."""
         try:
-            out = self._with("icon", board_icon.ICON_MODEL, lambda m: board_icon.make(key, ask, base_svg=base_svg, image_url=image_url, base_url=gw.resolve_base_url(), model=m))
+            out = self._with("icon", board_icon.ICON_MODEL, lambda m: board_icon.make(key, ask, base_svg=base_svg, image_url=image_url, base_url=self._base(), model=m))
         except Exception as e:
             return self._json(502, {"error": f"아이콘 만들기 실패: {gw.friendly_error(e)}"})
         sys.stderr.write("[아이콘] %s %d개 %.1f초%s\n" % (out["model"], len(out["svgs"]), out["elapsed"], " (고치기)" if base_svg else " (그림 보고)" if image_url else ""))
@@ -346,7 +353,7 @@ class Handler(SimpleHTTPRequestHandler):
         if not material.strip() and not prev_html:
             return self._json(400, {"error": "정리할 것이 없어요 — 칠판에서 메모·글을 고르고 다시 물어 주세요"})
         try:
-            out = self._with("report", board_report.REPORT_MODEL, lambda m: board_report.make(gw._client(key, gw.resolve_base_url(), timeout=600), material, ask, prev_html=prev_html, model=m))
+            out = self._with("report", board_report.REPORT_MODEL, lambda m: board_report.make(gw._client(key, self._base(), timeout=600), material, ask, prev_html=prev_html, model=m))
         except Exception as e:
             return self._json(502, {"error": f"정리 문서 실패: {gw.friendly_error(e)}"})
         sys.stderr.write("[정리 문서] %s %.1f초 %d자%s\n" % (out["model"], out["elapsed"], len(out["html"]), " 확인할 숫자 %d" % len(out["unchecked"]) if out.get("unchecked") else ""))
@@ -390,7 +397,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(400, {"error": "칠판 이름이 없어요"})
         t0 = time.time()
         try:
-            out = self._with("image", board_image.IMAGE_MODEL, lambda m: board_image.generate(key, prompt, base_url=gw.resolve_base_url(), model=m, **({"input_images": edit, "n": 1} if edit else {})))   # 고치기는 거의 같은 결과라 1장(크레딧)
+            out = self._with("image", board_image.IMAGE_MODEL, lambda m: board_image.generate(key, prompt, base_url=self._base(), model=m, **({"input_images": edit, "n": 1} if edit else {})))   # 고치기는 거의 같은 결과라 1장(크레딧)
         except Exception as e:
             return self._json(502, {"error": f"그림 만들기 실패: {gw.friendly_error(e)}"})
         urls = [{"url": self._save_img(name, data, ext)} for data, ext in out["images"]]
@@ -407,7 +414,7 @@ class Handler(SimpleHTTPRequestHandler):
             return []
         with open(self._doc_path(name), encoding="utf-8") as f:
             doc = json.load(f)
-        client = gw._client(key, gw.resolve_base_url(), timeout=60)
+        client = gw._client(key, self._base(), timeout=60)
         return board_find.find(client, doc, query, k=k, cache_path=os.path.join(self.data_dir, name + ".emb.json"))
 
     # ── 회의록(§8 항목61 ③-3) — 녹음은 길어서 뒤 일감으로: POST가 일감 번호를 바로 주고, 브라우저가 GET으로 2초마다 확인 ──
@@ -427,14 +434,14 @@ class Handler(SimpleHTTPRequestHandler):
         if not key:
             return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
         job = secrets.token_hex(6)
-        model = (q.get("model") or [""])[0] or gw.FALLBACK_DEFAULT_MODEL
+        model, base = (q.get("model") or [""])[0] or gw.FALLBACK_DEFAULT_MODEL, self._base()   # 주소는 일감 밖에서(연결을 다시 쓰면 머리말이 바뀜)
         Handler.jobs[job] = {"board": name, "status": "run", "msg": "받아쓰기 올리는 중…"}
 
         def run():
             def say(msg):
                 Handler.jobs[job]["msg"] = msg
             try:
-                res = meeting.make_minutes(key, data, fname, model=model, base_url=gw.resolve_base_url(), on_status=say)
+                res = meeting.make_minutes(key, data, fname, model=model, base_url=base, on_status=say)
                 Handler.jobs[job].update(status="done", msg="끝", result=res)
                 sys.stderr.write("[회의록] %s %.0f초 녹음 · %.1f크레딧\n" % (name, res["duration"], res["credits"]))
             except Exception as e:   # 브라우저에 그대로 보여 준다
@@ -452,13 +459,13 @@ class Handler(SimpleHTTPRequestHandler):
         if not key:
             return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
         job = secrets.token_hex(6)
-        model = (q.get("model") or [""])[0] or gw.FALLBACK_DEFAULT_MODEL
+        model, base = (q.get("model") or [""])[0] or gw.FALLBACK_DEFAULT_MODEL, self._base()
         duration = float(req.get("duration") or 0)
         Handler.jobs[job] = {"board": name, "status": "run", "msg": "요약하는 중…"}
 
         def run():
             try:
-                res = meeting.minutes_from_live(key, segs, model=model, duration=duration, base_url=gw.resolve_base_url())
+                res = meeting.minutes_from_live(key, segs, model=model, duration=duration, base_url=base)
                 Handler.jobs[job].update(status="done", msg="끝", result=res)
                 sys.stderr.write("[회의록 실시간] %s %.0f초 · %d구간\n" % (name, res["duration"], len(res["turns"])))
             except Exception as e:
@@ -479,7 +486,7 @@ class Handler(SimpleHTTPRequestHandler):
             png = base64.b64decode(raw.split(",", 1)[1] if raw.startswith("data:") else raw)
         except ValueError:
             return self._json(400, {"error": "그림을 못 읽었어요"})
-        job, base = secrets.token_hex(6), gw.resolve_base_url()
+        job, base = secrets.token_hex(6), self._base()
         Handler.jobs[job] = {"board": name, "status": "run", "msg": "구역 6곳으로 나눠 그리는 중…", "done": 0, "total": 0}
 
         def run():
@@ -727,7 +734,7 @@ class Handler(SimpleHTTPRequestHandler):
             if not key:
                 return self._json(503, {"error": "키 없음"})
             try:
-                remaining, quota = gw.get_credit_balance(key, gw.resolve_base_url())
+                remaining, quota = gw.get_credit_balance(key, self._base())
             except Exception as e:   # 못 받아도 대화는 됨 — 화면은 숫자를 안 보임
                 return self._json(502, {"error": str(e)})
             return self._json(200, {"remaining": remaining, "quota": quota})
@@ -838,7 +845,7 @@ class Handler(SimpleHTTPRequestHandler):
             if not key:
                 return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다"})
             try:
-                out = board_ocr.read(key, base64.b64decode(req.get("data") or ""), base_url=gw.resolve_base_url())
+                out = board_ocr.read(key, base64.b64decode(req.get("data") or ""), base_url=self._base())
             except Exception as e:
                 return self._json(502, {"error": f"글 읽기 실패: {gw.friendly_error(e)}"})
             sys.stderr.write("[글 읽기] %s %.1f초 %d자\n" % (out["model"], out["elapsed"], len(out["text"])))
@@ -848,7 +855,7 @@ class Handler(SimpleHTTPRequestHandler):
             if not key:
                 return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다"})
             try:
-                return self._json(200, meeting.live_token(key, base_url=gw.resolve_base_url()))
+                return self._json(200, meeting.live_token(key, base_url=self._base()))
             except Exception as e:
                 return self._json(502, {"error": str(e)})
         m = re.match(r"^/api/find/([^/]+)$", path)
