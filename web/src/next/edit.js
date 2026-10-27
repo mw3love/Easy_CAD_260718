@@ -223,6 +223,7 @@ export function zOrder(items, ids, front) {
   return items.map(it => (z.has(it._id) ? { ...it, z: z.get(it._id) } : it))
 }
 // 좌우·상하 반전(Shift+H/V) — 고른 것들 전체 상자 가운데를 축으로
+export const FLIP_BODY = new Set(['image', 'symbol'])   // 반전하면 모양까지 뒤집는 상자류(네모·원은 대칭이라 뺌)
 export function mirror(items, ids, horizontal, textBox) {
   const sel = items.filter(it => ids.includes(it._id)); if (!sel.length) return items
   const u = unionBox(sel.map(it => sceneBox(it, textBox))), c = horizontal ? u.x + u.w / 2 : u.y + u.h / 2
@@ -236,7 +237,10 @@ export function mirror(items, ids, horizontal, textBox) {
       case 'line': { const [a, b] = [P2([it.line[0], it.line[1]]), P2([it.line[2], it.line[3]])]; return { ...it, line: [...a, ...b] } }
       case 'sarrow': return { ...it, pts: it.pts.map(P2) }
       case 'arrow': return { ...it, p1: P2(it.p1), p2: P2(it.p2), ctrl1: it.ctrl1 && P2(it.ctrl1), ctrl2: it.ctrl2 && P2(it.ctrl2) }
-      default: { const s = sceneBox(it, textBox), nx = horizontal ? 2 * c - (s.x + s.w) : s.x, ny = horizontal ? s.y : 2 * c - (s.y + s.h); return { ...it, pos: [px + nx - s.x, py + ny - s.y] } }   // 상자류는 자리만(모양 대칭)
+      default: {   // 상자류 = 자리 + 회전 반대로, 그림·심볼은 모양도 뒤집음(`flip_h`·`flip_v` — 2026-10-27 밤 사용자: 하나만 골라도 진짜로), 글·메모·표는 글을 읽게 자리만
+        const s = sceneBox(it, textBox), nx = horizontal ? 2 * c - (s.x + s.w) : s.x, ny = horizontal ? s.y : 2 * c - (s.y + s.h)
+        const k = horizontal ? 'flip_h' : 'flip_v', next = { ...it, ...(it.rotation ? { rotation: (360 - it.rotation) % 360 } : {}), ...(FLIP_BODY.has(it.type) ? { [k]: !it[k] || undefined } : {}) }
+        const s2 = sceneBox(next, textBox); return { ...next, pos: [px + nx - s2.x, py + ny - s2.y] } }
     }
   })
 }

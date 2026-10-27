@@ -3,7 +3,7 @@
 // 화면 = 칠판 × z + (x, y). 손잡이·선 굵기는 화면 px 고정(÷ z).
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, legendLayout, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, memoLinkAt, rr, isDeepPaper, deepPaper, docFrame, webFrame } from './render.jsx'
+import { arrowAt, arrowLabelBoxes, flipT, cellFontPx, cellStyle, fitTable, legendLayout, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, memoLinkAt, rr, isDeepPaper, deepPaper, docFrame, webFrame } from './render.jsx'
 import { DOC_NAME, boardMembership, drawOrder, itemBounds } from './doc.js'
 import { docText } from './find.jsx'
 import { keyHeaders } from './kairosKey.js'
@@ -2278,14 +2278,14 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       return <g key={it._id} transform={transformOf(it)}>{pieces.map((pc, k) => <path key={k} d={roundedPath(pc, sarrowRadius(it))} fill="none" stroke={BLUE} strokeWidth={cw} strokeLinecap="round" strokeLinejoin="round" />)}</g>
     }
     const g = selShape(it, textBox)
-    return <g key={it._id} transform={transformOf(it)}><g transform={g.off ? `translate(${g.off[0]},${g.off[1]})` : undefined}>
+    return <g key={it._id} transform={transformOf(it)}><g transform={g.off ? `${g.pre || ''} translate(${g.off[0]},${g.off[1]})` : undefined}>
       {multi && g.closed ? selBand(it._id, g, it, z, BAND_ALPHA, BLUE)
         : <path d={g.d} fill="none" stroke={BLUE} strokeWidth={cw} strokeLinejoin="round" strokeLinecap="round" />}</g></g>
   }
   // 범위 선택 미리보기 — 걸릴 것마다 띠(데스크톱 drawForeground: 닫힌 도형은 바깥, 선은 양옆, 채움 알파 90)
   const pvColor = overlay.rubber && overlay.rubber.b.x < overlay.rubber.a.x ? RB_GREEN : RB_BLUE
   const preview = it => { const g = selShape(it, textBox)
-    return <g key={'pv' + it._id} transform={transformOf(it)}><g transform={g.off ? `translate(${g.off[0]},${g.off[1]})` : undefined}>{selBand('pv' + it._id, g, it, z, PREVIEW_ALPHA, pvColor)}</g></g> }
+    return <g key={'pv' + it._id} transform={transformOf(it)}><g transform={g.off ? `${g.pre || ''} translate(${g.off[0]},${g.off[1]})` : undefined}>{selBand('pv' + it._id, g, it, z, PREVIEW_ALPHA, pvColor)}</g></g> }
   const handles = single && !editing && !live ? handlesOf(single) : []
   // 속성 카드 — 고른 것 모두에(해당하는 것만, 데스크톱 `_edit_items`). 모서리는 직각만
   const selArrows = selItems.filter(isArrow), selArrowIds = new Set(selArrows.map(x => x._id)), selIds = new Set(selItems.map(x => x._id))
@@ -2469,7 +2469,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         if (has) {
           out.push('-', ['맨 앞으로 보내기', 'Ctrl+]', act(() => commit(zOrder(m.items, ids, true), ids, '맨 앞으로'))], ['맨 뒤로 보내기', 'Ctrl+[', act(() => commit(zOrder(m.items, ids, false), ids, '맨 뒤로'))],
             ['잠금 전환', 'Ctrl+L', act(() => commit(toggleLock(m.items, ids), ids, '잠금'))])
-          // 반전 = 모양을 뒤집는 건 선·화살표·다각형·펜뿐, 상자류는 여럿의 자리만 맞바꿈(`mirror`) — 상자 하나면 아무 일도 없어서 숨김
+          // 반전 = 모양을 뒤집는 건 선·화살표·다각형·펜·그림·심볼, 다른 상자류(네모·원·글·메모·표)는 여럿의 자리만 맞바꿈(`mirror`) — 그런 상자 하나면 아무 일도 없어서 숨김
           if (!card && (selIt.length >= 2 || selIt.some(it => FLIP_SHAPE.has(it.type)))) out.push(['좌우 반전', 'Shift+H', act(() => commit(mirror(m.items, ids, true, textBox), ids, '반전'))], ['상하 반전', 'Shift+V', act(() => commit(mirror(m.items, ids, false, textBox), ids, '반전'))])   // 글 도형을 고른 채 Shift+H/V는 글로 들어가므로 메뉴에도(2026-10-19)
           const oneGroup = selIt.every(it => it.group_id && it.group_id === selIt[0].group_id)   // 이미 한 묶음
           const frs = selIt.filter(it => it.type === 'frame'), inFrames = frs.length > 0 && (s => selIt.every(it => s.has(it._id)))(new Set(withContents(frs.map(f => f._id))))   // 프레임 + 그 안의 것 = 이미 같이 움직임
@@ -2520,7 +2520,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   )
 })
 
-const FLIP_SHAPE = new Set(['line', 'path', 'polygon', 'sarrow', 'arrow'])   // 반전하면 모양이 뒤집히는 종류(나머지는 자리만 — `mirror`)
+const FLIP_SHAPE = new Set(['line', 'path', 'polygon', 'sarrow', 'arrow', 'image', 'symbol'])   // 반전하면 모양이 뒤집히는 종류(그림·심볼 = `flip_h`·`flip_v`, 나머지는 자리만 — `mirror`)
 const NOT_SYMBOL = new Set(['titleblock', 'frame', 'memo', 'table'])         // 「내 심볼에 추가」에서 빼는 종류
 
 // ── 선택 표시 모양 — 데스크톱 `_paint_selection_highlight`: 하나 선택·화살표 = 1.6px 중심선, 여러 개 중 닫힌 도형 = 바깥 띠 ──
@@ -2554,7 +2554,7 @@ function selShape(it, textBox) {
     case 'badge': return { d: ellipseD(-17, -17, 34, 34), closed: true, box: [-17, -17, 34, 34], round: true }   // 데스크톱 `_BadgeItem._content_rect`(반지름 15 + 2)
     case 'ellipse': return { d: ellipseD(...it.rect), closed: true, box: it.rect, round: true }
     case 'rect': if (it.radius) { const [x, y, w, h] = it.rect; return { d: roundRectD(x, y, w, h, rr(it)), closed: true } } return { d: rectD(...it.rect), closed: true, box: it.rect }
-    case 'symbol': { const [x, y, w, h] = it.rect; return { d: symbolPath(it.kind, w, h).d, closed: true, off: [x, y] } }
+    case 'symbol': { const [x, y, w, h] = it.rect; return { d: symbolPath(it.kind, w, h).d, closed: true, off: [x, y], pre: flipT(it) } }   // pre = 뒤집힌 심볼(선택 테두리도 같이)
     default: { const b = it.type === 'text' ? [0, 0, textBox(it).w, textBox(it).h] : localRect(it); return { d: rectD(...b), closed: true, box: b } }
   }
 }

@@ -111,3 +111,11 @@ test('묶음 틀 = 데스크톱 `_content_rect` 합(선 두께 절반, 원은 +1
   assert.deepEqual(g.rect, [-1, -2, 143, 44])
 })
 
+
+test('뒤집힌 심볼 = 붙는 테두리도 뒤집힘(symbolPolys, 2026-10-27 밤)', async () => {
+  const { symbolPolys } = await import('../src/next/connect.js')
+  const r = [10, 20, 120, 60], a = symbolPolys('delay', r), b = symbolPolys('delay', r, { flip_h: true })
+  assert.equal(a.length, b.length)
+  a[0].forEach((p, k) => { assert.ok(Math.abs(b[0][k].x - (2 * 10 + 120 - p.x)) < 1e-9); assert.ok(Math.abs(b[0][k].y - p.y) < 1e-9) })
+  assert.deepEqual(symbolPolys('delay', r, {}), a)                                          // 안 뒤집은 것은 그대로
+})

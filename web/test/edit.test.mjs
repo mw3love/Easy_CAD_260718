@@ -93,6 +93,21 @@ test('반전 — 상자 둘의 좌우 자리가 바뀜', () => {
   assert.deepEqual(m.map(it => it.pos[0]), [300, 0])
 })
 
+test('반전 — 그림·심볼은 하나만 골라도 모양이 뒤집힘(flip_h·flip_v), 두 번이면 원래대로 · 회전은 반대로 · 네모는 자리만', () => {
+  const img = { _id: 'i', type: 'image', pos: [10, 20], rect: [0, 0, 100, 60], data: '' }
+  const once = mirror([img], ['i'], true, tb)[0]
+  assert.equal(once.flip_h, true); assert.deepEqual(once.pos, [10, 20]); assert.equal(once.flip_v, undefined)
+  assert.ok(!mirror([once], ['i'], true, tb)[0].flip_h)                                  // 두 번 = 원래대로
+  assert.equal(mirror([img], ['i'], false, tb)[0].flip_v, true)
+  const sym = { _id: 's', type: 'symbol', kind: 'delay', pos: [0, 0], rect: [0, 0, 120, 60], origin: [60, 30], rotation: 30 }
+  const ms = mirror([sym], ['s'], true, tb)[0]
+  assert.equal(ms.flip_h, true); assert.equal(ms.rotation, 330); assert.deepEqual(ms.pos.map(Math.round), [0, 0])   // 가운데 기준 회전 = 자리 그대로
+  const r1 = mirror([rect('a', 5, 5)], ['a'], true, tb)[0]
+  assert.equal(r1.flip_h, undefined); assert.deepEqual(r1.pos, [5, 5])                  // 네모는 대칭 — 뒤집을 것 없음
+  const two = mirror([img, { ...img, _id: 'j', pos: [300, 20] }], ['i', 'j'], true, tb)
+  assert.deepEqual(two.map(it => [it.pos[0], it.flip_h]), [[300, true], [10, true]])    // 여럿 = 자리 맞바꿈 + 각자 뒤집힘
+})
+
 test('보드를 옮기면 안의 것도(가운데가 보드 안)', () => {
   const items = [{ _id: 'B', type: 'board', pos: [0, 0], rect: [0, 0, 400, 300] }, rect('in', 50, 50), rect('out', 500, 50)]
   assert.deepEqual(boardContents(items, ['B'], tb), ['in'])

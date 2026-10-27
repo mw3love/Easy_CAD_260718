@@ -95,7 +95,11 @@ function parsePath(d) {
   return out
 }
 const arcPts = (cx, cy, r, a0, a1) => Array.from({ length: CURVE_STEPS + 1 }, (_, k) => { const a = a0 + ((a1 - a0) * k) / CURVE_STEPS; return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) } })
-export function symbolPolys(kind, [x, y, w, h]) {
+export function symbolPolys(kind, rect, it) {   // it = 뒤집힌 심볼(`flip_h`·`flip_v`)이면 테두리도 상자 가운데 기준으로 뒤집음(2026-10-27 밤)
+  const ps = symbolPolys0(kind, rect), [x, y, w, h] = rect, fx = !!it?.flip_h, fy = !!it?.flip_v
+  return fx || fy ? ps.map(pl => pl.map(p => ({ x: fx ? 2 * x + w - p.x : p.x, y: fy ? 2 * y + h - p.y : p.y }))) : ps
+}
+function symbolPolys0(kind, [x, y, w, h]) {
   const off = ps => ps.map(p => ({ x: p.x + x, y: p.y + y }))
   if (kind === 'terminal') { const r = Math.min(h, w) / 2, H = Math.PI / 2   // symbols.js와 같은 모양(둥근 모서리 넷)
     return [off([...arcPts(w - r, r, r, -H, 0), ...arcPts(w - r, h - r, r, 0, H), ...arcPts(r, h - r, r, H, 2 * H), ...arcPts(r, r, r, 2 * H, 3 * H), { x: w - r, y: 0 }])] }
@@ -108,7 +112,7 @@ function nearestLocal(it, rect, q) {
   const [l, t, w, h] = rect, c = { x: l + w / 2, y: t + h / 2 }
   if (it.type === 'path') { const r = polysNearest(flatten(it.elements), q, c); if (r) return r }   // 펜 궤적(`_path_nearest` — 기준 = 궤적 바탕 상자 가운데)
   if (it.type === 'ellipse') { const [p, n] = ellipseNearest(rect, q); return [p, axisForce(it, rect, p, n)] }
-  if (it.type === 'symbol') { const r = polysNearest(symbolPolys(it.kind, rect), q, c); if (r) return [r[0], axisForce(it, rect, r[0], r[1])] }
+  if (it.type === 'symbol') { const r = polysNearest(symbolPolys(it.kind, rect, it), q, c); if (r) return [r[0], axisForce(it, rect, r[0], r[1])] }
   if (it.type === 'polygon' && it.closed && it.pts?.length > 2) { const pts = it.pts.map(([x, y]) => ({ x, y })); const r = polysNearest([[...pts, pts[0]]], q, c); if (r) return r }
   const [p, n] = rectNearest(rect, q)
   return [p, it.type === 'polygon' ? n : axisForce(it, rect, p, n)]

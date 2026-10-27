@@ -31,7 +31,7 @@ test('감싼 그대로는 다시 감싸기 없음(일부만 고르면 있음) ·
   expect(await menuAt(page, 60, 40)).not.toContain('프레임으로 감싸기')
 })
 
-test('상자 하나 = 반전 없음, 선·둘 이상 = 있음 · 이미 한 묶음 = 「그룹」 없음 · 그림 = 스타일 복사 없음 · 글 없는 것 = 정리 문서 없음 · 메모 = 내 심볼 없음', async ({ page }) => {
+test('상자 하나 = 반전 없음(그림은 진짜로 뒤집힘), 선·둘 이상 = 있음 · 이미 한 묶음 = 「그룹」 없음 · 그림 = 스타일 복사 없음 · 글 없는 것 = 정리 문서 없음 · 메모 = 내 심볼 없음', async ({ page }) => {
   await openBoard(page, boardName('menuhide'))
   await load(page, [R(0, 0), { type: 'line', pos: [0, 0], line: [200, 40, 320, 40], pen: '#ff1f1f1f', width: 2 }, { type: 'image', pos: [400, 0], rect: [0, 0, 100, 80], data: PNG },
     R(0, 200, { group_id: 'g1' }), R(200, 200, { group_id: 'g1' }), R(400, 200, { label: { text: '송신소' } }),
@@ -40,6 +40,9 @@ test('상자 하나 = 반전 없음, 선·둘 이상 = 있음 · 이미 한 묶�
   expect(rect).not.toContain('좌우 반전'); expect(rect).toContain('스타일 복사'); expect(rect).not.toContain('정리 문서 만들기 (KAIROS)'); expect(rect).toContain('내 심볼에 추가…')
   expect(await menuAt(page, 260, 40)).toContain('좌우 반전')                                                       // 선 = 방향이 뒤집힘
   const img = await menuAt(page, 450, 40); expect(img).not.toContain('스타일 복사'); expect(img).toContain('정리 문서 만들기 (KAIROS)')
+  expect(img).toContain('좌우 반전')                                                                              // 그림은 하나만 골라도 진짜로 뒤집힘(2026-10-27 밤)
+  await page.locator(MENU, { hasText: '좌우 반전' }).click()
+  await expect.poll(async () => (await liveDoc(page)).items.find(it => it.type === 'image')?.flip_h).toBe(true)
   const grp = await menuAt(page, 60, 240)
   expect(grp).not.toContain('그룹'); expect(grp).toContain('그룹 해제'); expect(grp).toContain('좌우 반전')        // 묶음 둘 = 자리 맞바꿈은 뜻이 있음
   expect(await menuAt(page, 460, 240)).toContain('정리 문서 만들기 (KAIROS)')                                       // 글 있는 도형

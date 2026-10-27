@@ -155,3 +155,10 @@ def test_web_symbol_name_survives_desktop_save():
     d = dict(_BASE, type="rect", rect=[0.0, 0.0, 50.0, 30.0], pen="#ff000000", width=1.0, fill=None, style=1, group_id="g1", sym_name="마이크")
     out = _roundtrip(d)
     assert out["sym_name"] == "마이크" and out["group_id"] == "g1"
+
+
+def test_web_flip_survives_desktop_save():
+    # 2026-10-27 밤 웹 그림·심볼 진짜 뒤집기(flip_h·flip_v) — 데스크톱은 그리진 않지만 저장을 거쳐도 남아야 함
+    d = dict(_BASE, type="symbol", kind="delay", rect=[0.0, 0.0, 120.0, 60.0], pen="#ff000000", width=1.0, fill=None, style=1, flip_h=True, flip_v=True)
+    out = _roundtrip(d)
+    assert out["flip_h"] is True and out["flip_v"] is True

@@ -365,6 +365,9 @@ export function webFrame(it, web, noFs, fsScale) { const zm = webZoom(it, fsScal
   return <iframe data-webid={it._id} src={frameSrc(it, noFs)} title={it.title || it.url} allow="autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
     sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-presentation" style={{ border: 0, width: `${100 / zm}%`, height: `${100 / zm}%`, transform: zm < 1 ? `scale(${zm})` : undefined, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} /> }
 
+// 그림·심볼 진짜 뒤집기(`flip_h`·`flip_v`, edit.js `mirror` — 2026-10-27 밤) — 몸통만 상자 가운데 기준으로, 글은 그대로(읽게)
+export const flipT = it => { if (!it.flip_h && !it.flip_v) return undefined; const [x, y, w, h] = it.rect, cx = x + w / 2, cy = y + h / 2
+  return `translate(${cx},${cy}) scale(${it.flip_h ? -1 : 1},${it.flip_v ? -1 : 1}) translate(${-cx},${-cy})` }
 export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode = 'inline', page, web, noFs, ytBig, fsScale }) {   // noFs·ytBig·fsScale = 발표 화면(유튜브 전체 화면 단추 숨김 · 크게 보는 중 · 화면 배율)   // web = 웹 카드 칸 안 페이지: 없음 = 그림 카드(내보내기·장 목록), 'view' = 보이기만(누르면 칠판이 받음), 'on' = 조작 중   // page = 종이틀 쪽 번호(편집 화면만)   // props의 dark: 화면이 바뀌면 다시 그리게(memo가 props를 비교)
   const T = itemTransform(it), fill = it.fill ? cssColor(it.fill) : 'none'
   if (lmode === 'only' && it.type !== 'sarrow' && it.type !== 'arrow') return null
@@ -376,7 +379,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         ? <><rect x={x} y={y} width={w} height={h} fill={fill} stroke="none" /><path d={cutRectPath(it.rect, it.cuts)} fill="none" {...strokeProps(it, onBoard)} /></>
         : <rect x={x} y={y} width={w} height={h} rx={rr(it)} ry={rr(it)} fill={fill} {...strokeProps(it, onBoard)} />
       else if (it.type === 'ellipse') body = <ellipse cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} fill={fill} {...strokeProps(it, onBoard)} />
-      else body = <g transform={`translate(${x},${y})`}><path d={symbolPath(it.kind, w, h).d} fill={fill} {...strokeProps(it, onBoard)} /></g>
+      else body = <g transform={`${flipT(it) || ''} translate(${x},${y})`}><path d={symbolPath(it.kind, w, h).d} fill={fill} {...strokeProps(it, onBoard)} /></g>
       return <g transform={T}>{body}<Ports it={it} onBoard={onBoard} /><CenterLabel it={it} onBoard={onBoard} /></g>
     }
     case 'polygon': {
@@ -408,7 +411,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
     }
     case 'image': {
       const [x, y, w, h] = it.rect
-      return <g transform={T}><image href={'data:image/png;base64,' + it.data} x={x} y={y} width={w} height={h} preserveAspectRatio="none" /></g>
+      return <g transform={T}><image href={'data:image/png;base64,' + it.data} x={x} y={y} width={w} height={h} preserveAspectRatio="none" transform={flipT(it)} /></g>
     }
     case 'board': {
       const [x, y, w, h] = it.rect, bg = cssColor(it.bg) || '#ffffff'
