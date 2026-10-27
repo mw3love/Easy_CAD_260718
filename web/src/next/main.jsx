@@ -13,6 +13,7 @@ import { Palette, useLibrary } from './palette.jsx'
 import { useMySymbols, mergeLib } from './mysym.js'
 import { Layers, layersOf, layerIdOf } from './layers.jsx'
 import { Frames } from './frames.jsx'
+import { FloatMenu } from './ctxmenu.jsx'
 import { Minimap } from './minimap.jsx'
 import { ChatPanel, CHAT_W, chatClamp, Spinner } from './chat.jsx'
 import { HelpCard } from './help.jsx'
@@ -141,9 +142,9 @@ const ago = s => { const d = Date.now() / 1000 - s; return d < 60 ? '방금' : d
 // 2026-10-27 사용자 점검: 이름 칸이 맨 위에 늘 있어 찾기 칸으로 보였음·보통은 「만들기」 먼저 → 「＋ 새 칠판」을 누르면 그 자리에 이름 칸(이름 = 칠판 주소라 건너뛸 수 없음).
 // 샘플 열기는 개발 시험용이라 뺌(서버 없을 때 위 막대에만), 「저장」은 위 막대·Ctrl+S와 겹쳐 뺌(서버는 저절로 저장) — 아래는 파일 열기·내려받기만
 function BoardForm({ onClose, docked, children }) {   // docked = 왼쪽 판 「칠판」 칸(2026-10-23 — 위 막대 팝업에서 옮김), children = 아래 파일 단추들
-  const [list, setList] = useState(null), [name, setName] = useState(''), [all, setAll] = useState(false), [making, setMaking] = useState(false), [why, setWhy] = useState('')
+  const [list, setList] = useState(null), [name, setName] = useState(''), [all, setAll] = useState(false), [making, setMaking] = useState(false), [why, setWhy] = useState(''), [menu, setMenu] = useState(null)
   useEffect(() => { api.boards().then(setList) }, [])
-  const goTo = n => { location.href = `${location.pathname}?board=${encodeURIComponent(n)}` }
+  const boardUrl = n => `${location.pathname}?board=${encodeURIComponent(n)}`, goTo = n => { location.href = boardUrl(n) }
   const clean = name.trim().replace(/[^\w\-가-힣]/g, '').slice(0, 64), taken = !!list?.some(b => b.name === clean)
   const make = async () => { if (!clean) return
     if (!taken && (await api.session(clean)).board_ok === false) { setWhy('다른 팀이 쓰는 이름이에요 — 다른 이름으로 지어 주세요'); return }   // 팀 서버(§8 항목67) — 목록엔 우리 팀 것만 보여서 겹침을 모름
@@ -165,7 +166,7 @@ function BoardForm({ onClose, docked, children }) {   // docked = 왼쪽 판 「
     <span style={{ color: C.muted }}>최근 칠판</span>
     <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 300, overflowY: 'auto', margin: '-4px -4px 0' }}>
       {list === null ? <span style={{ color: C.muted, padding: 4 }}>불러오는 중…</span> : !shown.length ? <span style={{ color: C.muted, padding: 4 }}>아직 없어요</span>
-        : shown.map(b => <button key={b.name} data-testid="board-row" onClick={() => (b.name === DOC_NAME ? onClose() : goTo(b.name))}
+        : shown.map(b => <button key={b.name} data-testid="board-row" onClick={() => (b.name === DOC_NAME ? onClose() : goTo(b.name))} onContextMenu={e => { e.preventDefault(); setMenu({ name: b.name, x: e.clientX, y: e.clientY }) }}
           style={{ all: 'unset', cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'baseline', padding: '5px 4px', borderRadius: 6, background: b.name === DOC_NAME ? 'rgba(218,119,86,.18)' : 'transparent' }}
           onMouseEnter={e => { if (b.name !== DOC_NAME) e.currentTarget.style.background = C.group }} onMouseLeave={e => { e.currentTarget.style.background = b.name === DOC_NAME ? 'rgba(218,119,86,.18)' : 'transparent' }}>
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: b.name === DOC_NAME ? 700 : 500 }}>{b.name}</span>
@@ -173,6 +174,9 @@ function BoardForm({ onClose, docked, children }) {   // docked = 왼쪽 판 「
     </div>
     {hidden > 0 && <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: C.muted }}><input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)} />시험 칠판 {hidden}개도 보기</label>}
     {children}
+    {/* 줄 우클릭(2026-10-27 사용자 전수조사) — 이름 바꾸기·지우기는 뺌: 서버에 없고, 이름 = 주소라 바꾸면 남에게 준 링크가 끊김 */}
+    {menu && <FloatMenu at={menu} onClose={() => setMenu(null)} entries={[['새 탭에서 열기', '', () => { setMenu(null); window.open(boardUrl(menu.name), '_blank', 'noopener') }],
+      ['주소 복사', '', () => { setMenu(null); navigator.clipboard?.writeText(location.origin + boardUrl(menu.name)) }]]} />}
   </div>
 }
 
@@ -562,7 +566,8 @@ function App({ team }) {   // team = 팀 서버(§8 항목67)에서 내 팀 이�
                 <span aria-hidden style={{ width: 16, height: 16, display: 'block', color: 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ICONS[ic].replace('<svg ', '<svg width="16" height="16" ') }} />{l}</button>)}
           </div></BoardForm>,
         shape: <Palette docked lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} mine={{ mine: mySyms, api: myApi }} say={setStatus} />,
-        frame: orderedFrames(model.items).length ? <Frames docked items={model.items} sel={selKey ? selKey.split(',') : []} onReorder={ids => ed.current?.reorderFrames(ids)} onRename={(id, n) => ed.current?.renameFrame(id, n)} onGo={id => ed.current?.goFrame(id)} onPresent={id => ed.current?.startPresent(id)} dark={dark} />
+        frame: orderedFrames(model.items).length ? <Frames docked items={model.items} sel={selKey ? selKey.split(',') : []} onReorder={ids => ed.current?.reorderFrames(ids)} onRename={(id, n) => ed.current?.renameFrame(id, n)} onGo={id => ed.current?.goFrame(id)} onPresent={id => ed.current?.startPresent(id)}
+          onExport={id => { ed.current?.setSel([id]); setTimeout(() => setExportOpen(true)) /* 내보내기 창은 열 때 고른 것을 읽음 — 고른 것이 바뀐 다음에 열기 */ }} onRemove={id => ed.current?.removeFrame(id)} dark={dark} />
           : <div data-testid="frames-empty" style={{ padding: '10px 12px', color: C.muted, fontSize: 12, lineHeight: 1.6 }}><div style={{ font: "700 15px 'Pretendard', sans-serif", color: C.ink, marginBottom: 6 }}>프레임</div>아직 없어요 — 위 막대 「프레임」을 눌러 칠판에서 영역을 감싸면 여기에 쌓여요(순서 = 출력·발표 순서).</div>,
         layer: <Layers docked model={model} setModel={setModel} active={activeLayer} setActive={setActiveLayer} onChanged={onCommit} dark={dark} /> }} />}
       {/* --mb-right-inset = 뜬 대화창 폭 — 우상 속성·우하 미니맵 카드가 그만큼 왼쪽으로 비킴 */}

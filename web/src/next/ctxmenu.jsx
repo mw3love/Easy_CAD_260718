@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)' }
-const box = { position: 'absolute', zIndex: 30, minWidth: 190, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 4, boxShadow: '0 6px 18px rgba(0,0,0,.22)', font: "400 12.5px 'Pretendard', sans-serif", color: C.ink }
+const box = { position: 'absolute', zIndex: 30, pointerEvents: 'auto',minWidth: 190, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 4, boxShadow: '0 6px 18px rgba(0,0,0,.22)', font: "400 12.5px 'Pretendard', sans-serif", color: C.ink }
 const row = dis => ({ all: 'unset', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '5px 10px', borderRadius: 5, cursor: dis ? 'default' : 'pointer', opacity: dis ? 0.4 : 1 })
 const Sep = () => <div style={{ height: 1, background: C.line, margin: '4px 6px' }} />
 
@@ -44,3 +44,6 @@ export function ContextMenu({ at, entries, onClose }) {
       </div>))}
   </div>
 }
+
+// 왼쪽 판 줄(칠판·프레임)의 우클릭 메뉴 — 같은 메뉴를 화면 전체 기준으로 띄움(at = 마우스 clientX·Y, 판 밖으로 넘쳐도 안 잘림)
+export const FloatMenu = props => <div style={{ position: 'fixed', inset: 0, zIndex: 40, pointerEvents: 'none' }}><ContextMenu {...props} /></div>

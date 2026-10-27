@@ -149,7 +149,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -1247,6 +1247,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // ── 프레임(2026-10-18 사용자와 정함 — 「종이틀」을 바꿈: 종이 비율은 큰 의미 없음) — 번호 = 출력 쪽·슬라이드 순서 ──
   const nextFrameNo = items => orderedFrames(items).length + 1   // 새 프레임 = 맨 끝
   function reorderFrames(ids) { const m = R.current.model; commit(setFrameOrder(m.items, ids), R.current.sel, '프레임 순서') }
+  function removeFrame(id) { const m = R.current.model; commit(removeItems(m.items, [id]), R.current.sel.filter(s => s !== id), '프레임만 지움') }   // 틀만(안의 것은 남김) — 왼쪽 프레임 판 우클릭
   function renameFrame(id, name) { const m = R.current.model; commit(m.items.map(it => (it._id === id ? { ...it, name } : it)), R.current.sel, '프레임 이름', 'fname' + id) }   // 치는 대로 — 되돌리기는 한 칸
   function goFrame(id) {   // 그 프레임이 화면에 꽉 차게(여백 10%)
     const it = R.current.model.items.find(x => x._id === id); if (!it) return
@@ -1259,6 +1260,12 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const b = unionBox(its.map(it => sceneBox(it, textBox))), pad = 16   // 작고 일정한 여백(2026-10-18 사용자 선택 — 전엔 내용의 6%라 큰 묶음일수록 여백이 컸음)
     const it = base([b.x - pad, b.y - pad], { type: 'frame', rect: [0, 0, b.w + 2 * pad, b.h + 2 * pad], name: frameAutoName(its), no: nextFrameNo(m.items), z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })
     commit([...m.items, it], [it._id], '프레임으로 감싸기'); setStatus(`프레임 ${it.no} — 내보내기 하면 이 틀이 한 쪽이 돼요`)
+  }
+  // 감쌀 것이 이미 어떤 프레임의 안의 것과 똑같음 = 감싸면 같은 프레임이 하나 더(2026-10-27 사용자 전수조사 — 메뉴에서 숨김). 일부만 고르면 그대로(큰 장 안의 확대 장)
+  function wrapDup(items, ids) {
+    const keep = it => it.type !== 'titleblock' && it.type !== 'frame', ids2 = list => { const s = new Set(list); return items.filter(it => s.has(it._id) && keep(it)).map(it => it._id).sort().join() }
+    const want = ids2(withContents(ids))   // boardContents = _id 목록
+    return !!want && items.some(f => f.type === 'frame' && ids2(boardContents(items, [f._id], textBox)) === want)
   }
   // 고른 것 → 「내 심볼」(이 브라우저, `mysym.js`) — .ecad 모양으로 넘기고 이름·폴더는 main이 물음. 잠금·레이어·묶음 표시는 빼고(놓을 때 새로 묶음), 연결된 화살표 짝은 고른 것끼리만
   // 끌어서 도형 칸에 놓기(2026-10-27 사용자 — 우클릭 말고도) — 칸(`data-symdrop`) 위면 칸이 밝아지고(이벤트 `mb-symdrag`), 놓으면 도형은 제자리 + 추가 창(폴더 위면 그 폴더)
@@ -2427,7 +2434,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         if (lockedSel.length) { const uids = new Set(lockedSel.map(it => it._id)); out.push([`잠금 해제 (${lockedSel.length}개)`, '', act(() => commit(m.items.map(it => (uids.has(it._id) ? { ...it, locked: false } : it)), ids, '잠금 해제'))], '-') }
         if (has && lockedSel.length === selIt.length) {   // 잠긴 것만 고름 = 안 바뀌는 일만(복사·내보내기·정리 문서)
           out.push(['복사', 'Ctrl+C', act(copy)], ['잠금 전환', 'Ctrl+L', act(() => commit(toggleLock(m.items, ids), ids, '잠금'))], '-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
-          if (onAsk) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])
+          if (onAsk && (selTexts().length || selImages().length)) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])
           return out }
         const pin = menu.pdfIn && m.items.find(it => it._id === menu.pdfIn.id)
         if (pin) { const n = menu.pdfIn.page   // PDF 안쪽 = 내용 메뉴만(틀 메뉴·칠판 메뉴 안 섞음)
@@ -2440,10 +2447,16 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         else if (selIt.length === 1 && selIt[0].type === 'image' && selIt[0].data) out.push(['그림 속 글 읽기', '', act(() => ocrImage(selIt[0]._id))], ['도면으로 베끼기 (KAIROS)', '', act(() => traceImage(selIt[0]._id))], '-')   // OCR → 옆에 메모 · 베끼기 → 옆에 도형 묶음
         else if (card?.type === 'web' && card.url) out.push(['새 탭에서 열기', '', act(() => window.open(card.url, '_blank', 'noopener'))], '-')
         else if (card?.type === 'doc') out.push(['크게 보기', '', act(() => openDoc(card))], '-')
+        // 2026-10-27 사용자 전수조사(「상식적으로 이상한 것」): 하는 일이 없는 항목은 숨기고, 프레임엔 프레임에만 있는 일
+        const frame1 = selIt.length === 1 && selIt[0].type === 'frame' ? selIt[0] : null
+        if (frame1) out.push(['이 장부터 발표', '', act(() => startPresent(frame1._id))], ['이름 바꾸기', '', act(() => setTagEdit(frame1._id))], '-')
         if (has) out.push(['복사', 'Ctrl+C', act(copy)], ['잘라내기', 'Ctrl+X', act(() => { copy(); commit(removeItems(m.items, movingSet(ids)), [], '잘라냄') })],
           ['복제', 'Ctrl+D', act(dupSel)],
           ['삭제', 'Del', act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))])
-        if (!card && (ids.length === 1 || styleClip.current)) { out.push('-'); if (ids.length === 1) out.push(['스타일 복사', 'Alt+C', act(styleCopy)]); if (has && styleClip.current) out.push(['스타일 붙여넣기', 'Alt+V', act(stylePaste)]) }
+        if (frame1) out.push(['프레임만 지우기 (안의 것은 남김)', '', act(() => commit(removeItems(m.items, [frame1._id]), [], '프레임만 지움'))])   // 「삭제」는 안의 것까지
+        const canCopyStyle = ids.length === 1 && selIt[0] && Object.keys(captureStyle(selIt[0])).length > 0   // 그림·프레임 = 옮길 꾸밈이 없음(전엔 「복사됨」만 뜨고 빈 것)
+        const canPasteStyle = has && styleClip.current && selIt.some(it => styleFor(it, styleClip.current))
+        if (!card && (canCopyStyle || canPasteStyle)) { out.push('-'); if (canCopyStyle) out.push(['스타일 복사', 'Alt+C', act(styleCopy)]); if (canPasteStyle) out.push(['스타일 붙여넣기', 'Alt+V', act(stylePaste)]) }
         if (menu.cell && selIt.length === 1 && selIt[0].type === 'table') {   // 표 칸 — 행·열 넣기·지우기
           const t = selIt[0], { r, c } = menu.cell, op = (o, label) => act(() => commit(m.items.map(x => (x._id === t._id ? tableOp(t, o, r, c) : x)), ids, label))
           out.push('-', ['행 · 열', '', null, [['위에 행 넣기', op('rowAbove', '행 넣기')], ['아래에 행 넣기', op('rowBelow', '행 넣기')], ['왼쪽에 열 넣기', op('colLeft', '열 넣기')], ['오른쪽에 열 넣기', op('colRight', '열 넣기')], '-',
@@ -2456,15 +2469,18 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         if (has) {
           out.push('-', ['맨 앞으로 보내기', 'Ctrl+]', act(() => commit(zOrder(m.items, ids, true), ids, '맨 앞으로'))], ['맨 뒤로 보내기', 'Ctrl+[', act(() => commit(zOrder(m.items, ids, false), ids, '맨 뒤로'))],
             ['잠금 전환', 'Ctrl+L', act(() => commit(toggleLock(m.items, ids), ids, '잠금'))])
-          if (!card) out.push(['좌우 반전', 'Shift+H', act(() => commit(mirror(m.items, ids, true, textBox), ids, '반전'))], ['상하 반전', 'Shift+V', act(() => commit(mirror(m.items, ids, false, textBox), ids, '반전'))])   // 글 도형을 고른 채 Shift+H/V는 글로 들어가므로 메뉴에도(2026-10-19)
-          if (ids.length >= 2) out.push(['그룹', 'Ctrl+G', act(() => commit(groupItems(m.items, ids), ids, '묶음'))])
+          // 반전 = 모양을 뒤집는 건 선·화살표·다각형·펜뿐, 상자류는 여럿의 자리만 맞바꿈(`mirror`) — 상자 하나면 아무 일도 없어서 숨김
+          if (!card && (selIt.length >= 2 || selIt.some(it => FLIP_SHAPE.has(it.type)))) out.push(['좌우 반전', 'Shift+H', act(() => commit(mirror(m.items, ids, true, textBox), ids, '반전'))], ['상하 반전', 'Shift+V', act(() => commit(mirror(m.items, ids, false, textBox), ids, '반전'))])   // 글 도형을 고른 채 Shift+H/V는 글로 들어가므로 메뉴에도(2026-10-19)
+          const oneGroup = selIt.every(it => it.group_id && it.group_id === selIt[0].group_id)   // 이미 한 묶음
+          const frs = selIt.filter(it => it.type === 'frame'), inFrames = frs.length > 0 && (s => selIt.every(it => s.has(it._id)))(new Set(withContents(frs.map(f => f._id))))   // 프레임 + 그 안의 것 = 이미 같이 움직임
+          if (ids.length >= 2 && !oneGroup && !inFrames) out.push(['그룹', 'Ctrl+G', act(() => commit(groupItems(m.items, ids), ids, '묶음'))])
           if (selIt.some(it => it.group_id)) out.push(['그룹 해제', 'Ctrl+Shift+G', act(() => commit(ungroupItems(m.items, ids), ids, '묶음 풂'))])
           out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
-          if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push('-', ['프레임으로 감싸기', 'Alt+G', act(wrapFrame)])
-          if (onAddSymbol && !card && selIt.every(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push(['내 심볼에 추가…', '', act(() => addToMySymbols())])   // 2026-10-27 사용자 — KAIROS 아이콘 등을 심볼 칸에(이 브라우저)
+          if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame') && !wrapDup(m.items, ids)) out.push('-', ['프레임으로 감싸기', 'Alt+G', act(wrapFrame)])
+          if (onAddSymbol && !card && selIt.every(it => !NOT_SYMBOL.has(it.type))) out.push(['내 심볼에 추가…', '', act(() => addToMySymbols())])   // 2026-10-27 사용자 — KAIROS 아이콘 등을 심볼 칸에(이 브라우저). 메모·표는 그림 조각이 아니라 뺌(전수조사)
           if (selIt.some(it => isLegendLine(it))) out.push(['범례 넣기', '', act(insertLegend)])   // 선·화살표를 고르고 우클릭(2026-10-27 실검증 — 「표」 창 안에만 있으면 못 찾음, 표 창 단추도 그대로)
           out.push('-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
-          if (onAsk) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])   // 「정리해 줘」 ① — 고른 것이 재료
+          if (onAsk && (selTexts().length || selImages().length)) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])   // 「정리해 줘」 ① — 고른 것이 재료
         }
         // 빈 곳 = 붙여넣기만(2026-10-25 사용자: 빈 곳 메뉴는 없어도 됨 — 전체 선택은 Ctrl+A, 칠판 전체 정리 문서는 전체 선택 뒤 우클릭, 도움말은 왼쪽 「?」).
         // 우클릭한 그 자리에 붙는 것이 Ctrl+V와 다른 쓸모라 남김. 붙일 것도 없으면 메뉴를 안 띄움(항목 0개 = ContextMenu가 안 그림)
@@ -2503,6 +2519,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     </div>
   )
 })
+
+const FLIP_SHAPE = new Set(['line', 'path', 'polygon', 'sarrow', 'arrow'])   // 반전하면 모양이 뒤집히는 종류(나머지는 자리만 — `mirror`)
+const NOT_SYMBOL = new Set(['titleblock', 'frame', 'memo', 'table'])         // 「내 심볼에 추가」에서 빼는 종류
 
 // ── 선택 표시 모양 — 데스크톱 `_paint_selection_highlight`: 하나 선택·화살표 = 1.6px 중심선, 여러 개 중 닫힌 도형 = 바깥 띠 ──
 const BAND_ALPHA = 110 / 255, PREVIEW_ALPHA = 90 / 255

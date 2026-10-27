@@ -3,14 +3,15 @@
 import { useState } from 'react'
 import { DOCKED, FoldBtn, useFold } from './fold.jsx'
 import { orderedFrames } from './edit.js'
+import { FloatMenu } from './ctxmenu.jsx'
 
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', on: '#da7756' }
 const GRIP = <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" opacity=".55">{[2, 7, 12].flatMap(y => [<circle key={`a${y}`} cx="3" cy={y} r="1.2" />, <circle key={`b${y}`} cx="7" cy={y} r="1.2" />])}</svg>
 
 // items = 문서 아이템, sel = 고른 것 _id, onReorder(ids 새 순서), onRename(id, 이름), onGo(id), dark
-export function Frames({ items, sel, onReorder, onRename, onGo, onPresent, dark, docked }) {
+export function Frames({ items, sel, onReorder, onRename, onGo, onPresent, onExport, onRemove, dark, docked }) {   // onExport(id) = 이 프레임만 내보내기, onRemove(id) = 틀만 지우기(우클릭 — 2026-10-27 사용자)
   const [f0, toggleFold] = useFold('frames', true), folded = !docked && f0
-  const frames = orderedFrames(items), [hover, setHover] = useState(null), [drag, setDrag] = useState(null), [over, setOver] = useState(null), [renaming, setRenaming] = useState(null)
+  const frames = orderedFrames(items), [hover, setHover] = useState(null), [drag, setDrag] = useState(null), [over, setOver] = useState(null), [renaming, setRenaming] = useState(null), [menu, setMenu] = useState(null)
   if (!frames.length) return null
   const drop = to => {
     if (drag == null || drag === to) return
@@ -29,7 +30,7 @@ export function Frames({ items, sel, onReorder, onRename, onGo, onPresent, dark,
         onDragOver={e => { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setOver(e.clientY < r.top + r.height / 2 ? i : i + 1) }}
         onDrop={e => { e.preventDefault(); drop(over ?? i); setDrag(null); setOver(null) }}
         onMouseEnter={() => setHover(f._id)} onMouseLeave={() => setHover(h => (h === f._id ? null : h))}
-        onClick={() => onGo(f._id)} title="누르면 이 프레임으로 · 두 번 누르면 이름 고치기 · 끌어서 순서"
+        onClick={() => onGo(f._id)} onContextMenu={e => { e.preventDefault(); setMenu({ id: f._id, x: e.clientX, y: e.clientY }) }} title="누르면 이 프레임으로 · 두 번 누르면 이름 고치기 · 끌어서 순서 · 우클릭 = 메뉴"
         style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 4px', borderRadius: 4, cursor: 'pointer', font: "400 12px 'Pretendard', sans-serif",
           background: sel.includes(f._id) ? selBg : 'transparent', opacity: drag === i ? 0.4 : 1,
           boxShadow: over === i && drag !== null ? `inset 0 2px 0 ${C.on}` : over === i + 1 && i === frames.length - 1 && drag !== null ? `inset 0 -2px 0 ${C.on}` : 'none' }}>
@@ -44,5 +45,7 @@ export function Frames({ items, sel, onReorder, onRename, onGo, onPresent, dark,
           style={{ all: 'unset', cursor: 'pointer', flex: 'none', width: 20, height: 18, borderRadius: 4, background: C.on, color: '#fff', fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>▶</button>}
       </div>)}
     </div>
+    {menu && <FloatMenu at={menu} onClose={() => setMenu(null)} entries={[['이 장부터 발표', '', () => { setMenu(null); onPresent(menu.id) }], ['이름 바꾸기', '', () => { setMenu(null); setRenaming(menu.id) }],
+      ...(onExport ? [['이 프레임 내보내기…', '', () => { setMenu(null); onExport(menu.id) }]] : []), ...(onRemove ? ['-', ['프레임만 지우기 (안의 것은 남김)', '', () => { setMenu(null); onRemove(menu.id) }]] : [])]} />}
   </div>
 }
