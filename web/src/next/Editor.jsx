@@ -43,7 +43,7 @@ import { pdfGoPage, pdfLayout, pdfPageAt, pdfScroll, pdfSelectedText } from './p
 import { answerTable, freeSpot, nearSpot, sourceLine } from '../chatFormat.js'
 import { LIVE_H, LIVE_W, bigPage, liveFits } from './livecard.js'
 import { WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
-import { legendEntries, restyleLegendRow, syncLegends } from './legend.js'
+import { isLegendLine, legendEntries, restyleLegendRow, syncLegends } from './legend.js'
 import { HANDLE_MIN_Z, LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
 import { htmlPlan, looksMarkdown, textKind, tsvRows } from './clipin.js'
@@ -96,8 +96,9 @@ const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0]
 // 뜬 대화창 폭(좁은 창 — main.jsx가 칠판 칸에 `--mb-right-inset`으로 적음) — 「다 보기」·프레임으로 가기·AI 답 자리는 그만큼 오른쪽을 뺌(2026-10-19)
 export const rightInset = el => (el ? parseFloat(getComputedStyle(el).getPropertyValue('--mb-right-inset')) || 0 : 0)
 
-export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, onFit, onDark, onHelp, onAsk, onMeet, marks = [], readOnly = false }, ref) {   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
+export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, onFit, onDark, onHelp, onAsk, onMeet, marks = [], readOnly = false, phone = false, keepTool = false, onKeepTool }, ref) {   // keepTool = 「도구 유지」(그린 뒤에도 그 도구 — 2026-10-27 사용자, Excalidraw 자물쇠)   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
   const [sel, setSel] = useState([])
+  useEffect(() => { if (phone && sel.length) setSel([]) }, [phone, sel])   // 휴대폰 = 고치기 없음 — 답을 붙인 뒤 고른 표시·속성 카드가 남지 않게(2026-10-27)
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
   const [overlay, setOverlay] = useState({})      // { rubber, guides, draw, poly }
   const [editing, setEditing] = useState(null)    // 글 편집 { id, kind:'text'|'label' }
@@ -105,7 +106,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const st = useRef({}), hist = useRef({ past: [], future: [] }), clip = useRef({ items: [], seq: 0 }), svg = useRef(null)
   const items = live || model.items
   const zBack = useRef(null)   // Z 다 보기 전 자리 {before, after} — Z 한 번 더 = 되돌아감
-  const R = useRef(); R.current = { vhosts: new Map(), ...R.current, model, sel, cam, tool, items, editing, hp: overlay.hp, activeLayer, live: !!live, poly: !!overlay.poly, lpt: overlay.lpt, others }
+  const R = useRef(); R.current = { vhosts: new Map(), ...R.current, model, sel, cam, tool, items, editing, hp: overlay.hp, activeLayer, live: !!live, poly: !!overlay.poly, lpt: overlay.lpt, others, keepTool }
   // 누를 수 있는 것 = 숨긴 레이어 밖(데스크톱 setVisible(False)는 눌리지도 않음)
   const layerLocked = it => { const l = layersOf(R.current.model).find(x => x.id === layerIdOf(it)); return !!l?.locked }
   const hitPool = () => { const m = R.current.model, hid = new Set(layersOf(m).filter(l => !l.visible).map(l => l.id)); return hid.size ? m.items.filter(it => !hid.has(layerIdOf(it))) : m.items }   // vhosts = 묶음 가상 상자('g:…', hostsNear가 채움)
@@ -252,8 +253,22 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 잠긴 도형 찾기 — 안 잠긴 것이 하나도 안 걸렸을 때만(잠긴 바탕 위에 그린 것이 늘 먼저). 잠긴 레이어의 것은 빼고(레이어 카드에서 품)
   const lockedAt = p => topHit(hitPool().filter(it => it.locked && !layerLocked(it)).map(it => ({ ...it, locked: false })), p, HIT_PX / R.current.cam.z, textBox)
 
+  // 휴대폰(2026-10-27 — 보기·묻기·회의만): 한 손가락 = 화면 이동, 두 손가락 = 확대·축소, 고치기 없음. 손가락마다 자리를 들고 있다가 수가 바뀌면 다시 시작
+  const touches = useRef(new Map())
+  const touchStart = () => { const T = [...touches.current.values()], c = R.current.cam, r = svg.current.getBoundingClientRect()
+    if (T.length >= 2) { const [a, b] = T; st.current = { ...st.current, kind: 'pinch', d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, m0: { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top }, cam: c } }
+    else if (T.length === 1) st.current = { ...st.current, kind: 'pan', right: false, sx: T[0].x, sy: T[0].y, cam: c }
+    else st.current = { space: st.current.space } }
+  const touchMove = e => { touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY }); const s = st.current
+    if (s.kind === 'pinch') { const [a, b] = [...touches.current.values()], r = svg.current.getBoundingClientRect(), m = { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top }
+      const z = Math.min(ZMAX, Math.max(ZMIN, s.cam.z * Math.hypot(a.x - b.x, a.y - b.y) / s.d0)), qx = (s.m0.x - s.cam.x) / s.cam.z, qy = (s.m0.y - s.cam.y) / s.cam.z
+      setCam({ z, x: m.x - qx * z, y: m.y - qy * z }) }   // 처음 두 손가락 가운데 있던 칠판 자리가 손가락 가운데를 따라감
+    else if (s.kind === 'pan') setCam({ ...s.cam, x: s.cam.x + e.clientX - s.sx, y: s.cam.y + e.clientY - s.sy }) }
+  const touchEnd = e => { touches.current.delete(e.pointerId); touchStart() }
+
   // ── 포인터 ──
   function onPointerDown(e) {
+    if (phone) { if (e.button === 0) { svg.current.setPointerCapture(e.pointerId); touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY }); touchStart() } return }
     if (readOnly) { svg.current.setPointerCapture(e.pointerId); st.current = { ...st.current, kind: 'pan', right: false, sx: e.clientX, sy: e.clientY, cam: R.current.cam }; setCursor('grabbing'); return }   // 보기 전용 = 끌면 화면 이동
     if (R.current.editing && e.button === 0) return   // 고치는 중에도 휠·오른쪽 끌기 = 화면 이동(입력은 그대로 — 2026-10-18 사용자)
     if (R.current.webOn && !(e.button === 2 && pdfBodyAt(toSceneP(e))?._id === R.current.webOn)) setWebOn(null)   // 웹 카드 조작 중 바깥을 누름 = 끝(칸 안 누르기는 페이지가 받아 여기 안 옴). 넘겨 보는 PDF 안 우클릭 = 안쪽 메뉴(끝내지 않음)
@@ -349,6 +364,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
 
   function onPointerMove(e) {
+    if (phone) { if (touches.current.has(e.pointerId)) touchMove(e); return }
     const s = st.current, p = toSceneP(e), z = R.current.cam.z
     R.current.mouse = p   // 주소 붙여넣기 = 커서 자리에
     if (!s.kind) { hoverCursor(p); if ((R.current.poly && R.current.tool === 'polygon') || (R.current.lpt && R.current.tool === 'line')) setOverlay(o => { const last = o.lpt || o.poly?.at(-1); return { ...o, pcur: polyCloseAt(o.poly, p) ? o.poly[0] : e.shiftKey && last ? snap45(last, p) : p } }); return }   // Shift = 45° — 다각형은 마지막 점 기준(2026-10-20 사용자: 다각형만 안 먹었음)   // 클릭 배치 중 = 마지막 점에서 커서까지 따라오는 선(데스크톱 `_draw_pts[-1]`)
@@ -465,6 +481,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
 
   function onPointerUp(e) {
+    if (phone) { touchEnd(e); return }
     const s = st.current, p = toSceneP(e)
     st.current = { space: s.space }
     setCursor('default')
@@ -490,7 +507,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (!s.moved) { if (s.tool === 'arrow') return; if (s.fromQc) qcCreate(s.src, s.side); else setSel(expandGroups(R.current.model.items, [s.src])); return }
       const [src, port] = arrowStart(s)
       newArrow(src, port, connTarget(src, port, s.cur), s.cur)
-      if (s.tool === 'arrow') setTool('select')
+      if (s.tool === 'arrow') afterDraw()
       return
     }
     if (s.kind === 'aend') { setOverlay(o => ({ ...o, hp: null })); if (live) commit(live, [s.id], '화살표 끝 옮김'); return }
@@ -1320,6 +1337,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
 
   // ── 그리기 ──
+  const afterDraw = (keepSel = false) => { if (!R.current.keepTool) setTool('select'); else if (!keepSel) setSel([]) }   // 그리기 도구로 하나 그린 뒤 — 「도구 유지」면 그 도구 그대로(Esc·「선택」으로 멈춤), 고르지 않음(Excalidraw — 고른 채면 다음 글쇠 1~7이 그 도형 글로 들어감)
   function startDraw(t, p, e) {
     const m = R.current.model
     if (t === 'arrow') {   // 화살표 도구(데스크톱 「화살표」 — 종류는 속성 카드): 시작이 도형 근처면 붙고, 빈 곳이면 떠 있는 끝. 끄는 건 큐닷·포트점 잇기와 같은 길
@@ -1329,7 +1347,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       st.current = { ...st.current, kind: 'conn', tool: 'arrow', src: snap?.id ?? null, port: snap ? { p: snap.p, n: snap.n } : { p, n: null }, inside, start: p, cur: p, fromQc: false, moved: false }
       return
     }
-    if (t === 'text') { newTextAt(p); setTool('select'); return }
+    if (t === 'text') { newTextAt(p); afterDraw(true); return }   // 글 = 바로 쓰는 중이라 고른 채
     if (t === 'badge') {   // 번호표 — 누른 자리에 다음 번호(남은 가장 큰 번호 + 1 — `nextBadge`), 색 = 고른 선 색
       const n = nextBadge(m.items)
       const it = base([p.x, p.y], { type: 'badge', number: n, color: sticky.current.color === INK ? '#ffda7756' : sticky.current.color, z: topZ(m.items) + 1 })   // 선 색을 안 골랐으면 코랄(기본 잉크로 칠하면 어두운 화면에서 묻힘)
@@ -1337,7 +1355,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     }
     if (t.startsWith('customsym:')) {   // 내 심볼 도구 — 누른 자리에 원래 크기로(데스크톱 `_create_custom_symbol_at`: 왼쪽 위 = 누른 자리)
       const protos = customItems(t); if (!protos) return
-      const its = placeAt(protos, p.x, p.y); commit([...m.items, ...its], its.map(it => it._id), '심볼'); setTool('select'); return
+      const its = placeAt(protos, p.x, p.y); commit([...m.items, ...its], its.map(it => it._id), '심볼'); afterDraw(); return
     }
     if (t === 'polygon') {
       const poly = overlay.poly || []
@@ -1362,7 +1380,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (pts.length < 2) return
     const xs = pts.map(q => q.x), ys = pts.map(q => q.y), x0 = Math.min(...xs), y0 = Math.min(...ys)
     const it = base([x0, y0], { type: 'polygon', closed, rect: [0, 0, Math.max(...xs) - x0, Math.max(...ys) - y0], pts: pts.map(q => [q.x - x0, q.y - y0]), ...penOf(closed), ...(closed ? {} : { fill: null }), z: topZ(R.current.model.items) + 1 })
-    commit([...R.current.model.items, it], [it._id], '다각형'); setTool('select')
+    commit([...R.current.model.items, it], [it._id], '다각형'); afterDraw()
   }
   function finishDraw(s, p) {
     setOverlay(o => ({ ...o, draw: null }))
@@ -1372,7 +1390,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       let x0 = Math.min(s.start.x, p.x), y0 = Math.min(s.start.y, p.y), w = Math.abs(p.x - s.start.x), h = Math.abs(p.y - s.start.y)
       if (click) { w = size.w * 0.4 / z; h = w * 9 / 16; x0 = p.x - w / 2; y0 = p.y - h / 2 }
       it = base([x0, y0], { type: 'frame', rect: [0, 0, w, h], name: '', no: nextFrameNo(m.items), ...(click ? { ratio: '16:9' } : {}), z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })
-      commit([...m.items, it], [it._id], '프레임'); setTool('select'); return
+      commit([...m.items, it], [it._id], '프레임'); afterDraw(); return
     }
     if (s.tool === 'rect' || s.tool === 'ellipse' || s.tool.startsWith('sym:')) {
       let x0 = Math.min(s.start.x, p.x), y0 = Math.min(s.start.y, p.y), w = Math.abs(p.x - s.start.x), h = Math.abs(p.y - s.start.y)
@@ -1389,7 +1407,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     }
     if (!it) return
     it.z = topZ(m.items) + 1
-    commit([...m.items, it], [it._id], '그림'); setTool('select')
+    commit([...m.items, it], [it._id], '그림'); afterDraw()
   }
 
   // 남이 고치는 도형 — 바로 열지 않고 한 번 더 묻기(창 없이 알림 줄 · 5초 안에 다시 두 번 누르면 열림, 2026-10-19 사용자: 덮어쓰기 막기)
@@ -1553,6 +1571,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (!mod && !e.altKey && !e.shiftKey && e.code === 'KeyD' && !ids.length) return act(() => onDark?.())   // D = 어둡게 ⇄ 밝게(발표와 같은 글쇠, 아무것도 안 골랐을 때)
       const TOOL_KEYS = { 1: 'select', 2: 'arrow', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen', 7: 'badge' }   // 데스크톱 `SHORTCUT_DEFS` 도구 1~7
       if (!mod && !e.altKey && !e.shiftKey && TOOL_KEYS[k]) return act(() => setTool(TOOL_KEYS[k]))
+      if (!mod && !e.altKey && !e.shiftKey && e.code === 'KeyQ') return act(() => onKeepTool?.())   // Q = 도구 유지 켜기/끄기(Excalidraw와 같은 글쇠, 한글 입력이어도 자리로)
       if (mod && k.toLowerCase() === 'v') return   // 붙여넣기는 브라우저 붙여넣기 신호에서(주소면 웹 카드, 아니면 칠판 붙여넣기 — 아래 onPaste). 여기서 막으면 그 신호가 안 옴
       if (!ids.length) return
       const LOCK_MSG = '잠긴 도형이에요 — 옮기기·지우기·고치기는 막혀 있어요(풀기 Ctrl+L)'
@@ -2250,7 +2269,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
       <svg ref={svg} width={size.w} height={size.h} style={{ display: 'block', cursor, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }} data-testid="board"
-        onPointerDown={e => { if (R.current.stylePv) setStylePv(false); onPointerDown(e) }} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onDoubleClick={onDoubleClick} onContextMenu={e => e.preventDefault()}
+        onPointerDown={e => { if (R.current.stylePv) setStylePv(false); onPointerDown(e) }} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={phone ? touchEnd : undefined} onDoubleClick={phone ? undefined : onDoubleClick} onContextMenu={e => e.preventDefault()}
         onMouseDown={e => { if (R.current.editing && e.button !== 0) e.preventDefault() }}>
         <g transform={`translate(${cam.x},${cam.y}) scale(${z})`} style={{ '--z': z }}>
           {visible.map(([it0, i]) => [asTable(it0), i]).map(([it, i]) => (it._id === editingId && it.label?.align === 'left' && editing?.kind === 'label' ? <Item key={it._id} it={{ ...it, label: { ...it.label, text: '' } }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />
@@ -2377,6 +2396,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           if (selIt.some(it => it.group_id)) out.push(['그룹 해제', 'Ctrl+Shift+G', act(() => commit(ungroupItems(m.items, ids), ids, '묶음 풂'))])
           out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
           if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push('-', ['프레임으로 감싸기', 'Alt+G', act(wrapFrame)])
+          if (selIt.some(it => isLegendLine(it))) out.push(['범례 넣기', '', act(insertLegend)])   // 선·화살표를 고르고 우클릭(2026-10-27 실검증 — 「표」 창 안에만 있으면 못 찾음, 표 창 단추도 그대로)
           out.push('-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
           if (onAsk) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])   // 「정리해 줘」 ① — 고른 것이 재료
         }

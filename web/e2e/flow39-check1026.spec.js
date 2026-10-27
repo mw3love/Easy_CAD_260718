@@ -1,7 +1,9 @@
 // 흐름 39 — 10-26 실검증 손질: 스타일 복사 Alt+C/V(Ctrl+Alt+C = 윈도 Copilot) · 발표 레이저(끌면 빨간 자취·글 선택 안 잡힘, 도구를 켜면 그 커서) ·
-// 대화창 「취소」 한 줄(긴 진행 글에 눌려 세로였음) · 창을 닫으면 접속자 이름이 바로 빠짐(전엔 20초쯤 남음)
+// 대화창 「취소」 한 줄(긴 진행 글에 눌려 세로였음) · 창을 닫으면 접속자 이름이 바로 빠짐(전엔 20초쯤 남음) · 선을 고르고 우클릭 「범례 넣기」(10-27)
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, clickScene, pickShape, dragScene } from './helpers.js'
+import { boardName, openBoard, setCam, clickScene, pickShape, dragScene, liveDoc, toPage } from './helpers.js'
+
+const menuBtns = page => page.locator('div[style*="z-index: 30"] > div > button').allInnerTexts()
 
 test('스타일 복사·붙여넣기 = Alt+C / Alt+V', async ({ page }) => {
   await openBoard(page, boardName('stylekey')); await setCam(page)
@@ -63,4 +65,35 @@ test('창을 닫으면 접속자 이름이 바로 빠짐', async ({ browser }) =
   await b.goto('about:blank')                                                                // 탭 닫기와 같음(pagehide)
   await expect(who).not.toContainText('작가', { timeout: 3000 })                             // 전엔 15초 넘게 남았음
   await ca.close(); await cb.close()
+})
+
+test('선을 고르고 우클릭 「범례 넣기」(표 창 안에만 있으면 못 찾음)', async ({ page }) => {
+  await openBoard(page, boardName('legendmenu')); await setCam(page)
+  await page.keyboard.press('2'); await dragScene(page, { x: 0, y: 0 }, { x: 200, y: 0 }); await page.keyboard.press('Escape')
+  await clickScene(page, 700, 500); await clickScene(page, 100, 0)
+  const p = await toPage(page, 100, 0); await page.mouse.click(p.x, p.y, { button: 'right' })
+  const names = await menuBtns(page)
+  expect(names.some(n => n.startsWith('범례 넣기'))).toBe(true)
+  await page.locator('div[style*="z-index: 30"] > div > button', { hasText: '범례 넣기' }).click()
+  await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'legend').length).toBe(1)
+  await clickScene(page, 700, 500); const q = await toPage(page, 700, 500); await page.mouse.click(q.x, q.y, { button: 'right' })
+  expect((await menuBtns(page)).some(n => n.startsWith('범례'))).toBe(false)                // 선을 안 고르면 없음
+})
+
+test('도구 유지(Q·「유지」) — 켜면 그린 뒤에도 그 도구, 도구를 바꿔도 그대로, Esc = 선택 · 끄면 하나 그리고 선택으로', async ({ page }) => {
+  await openBoard(page, boardName('keeptool')); await setCam(page)
+  const count = async t => (await liveDoc(page)).items.filter(it => it.type === t).length
+  await page.keyboard.press('q'); await expect(page.getByText('도구 유지 켬', { exact: false }).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: '유지', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await pickShape(page, '사각형')
+  await dragScene(page, { x: 0, y: 0 }, { x: 100, y: 60 }); await dragScene(page, { x: 200, y: 0 }, { x: 300, y: 60 })
+  expect(await count('rect')).toBe(2)                                                        // 다시 고르지 않고 둘
+  await page.keyboard.press('Escape'); await page.keyboard.press('4')                        // 도구를 바꿔도 유지
+  await dragScene(page, { x: 0, y: 200 }, { x: 100, y: 200 }); await dragScene(page, { x: 0, y: 260 }, { x: 100, y: 260 })
+  expect(await count('line')).toBe(2)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('button', { name: '선택', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await page.getByRole('button', { name: '유지', exact: true }).click()                      // 끄기
+  await pickShape(page, '사각형'); await dragScene(page, { x: 400, y: 0 }, { x: 500, y: 60 }); await dragScene(page, { x: 600, y: 0 }, { x: 700, y: 60 })
+  expect(await count('rect')).toBe(3)                                                        // 둘째 끌기는 고르기
 })

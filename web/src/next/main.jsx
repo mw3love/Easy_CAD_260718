@@ -34,14 +34,18 @@ function useSize(ref) {
 // 위 막대 버튼 — 아이콘 밑 짧은 이름(데스크톱 첫 화면 원칙), 켜짐은 옅은 코랄 바탕
 // 좁은 창(NARROW_W 미만 — 브라우저 옆에 띄워 쓸 때, 2026-10-19 사용자 선택)은 아이콘만(이름은 툴팁) — 지침 「자리가 모자랄 때만 아이콘만」
 const NARROW_W = 1440, Narrow = createContext(false)
+const PHONE_W = 700   // 휴대폰(2026-10-27) = 보기·묻기·회의만 — 위 막대는 이름만, 아래 큰 버튼 셋, 왼쪽 판 없음, 대화창은 화면 전체, 손가락 = 이동·확대
 // special = KAIROS(2026-10-23 사용자: 다른 버튼과 다른 특별한 버튼 — 오른쪽 구석, 코랄로 채움. 열림은 한 단계 진하게)
 const SPECIAL_BG = on => (on ? '#c4613f' : '#da7756')
+// 「도구 유지」 자물쇠 — 데스크톱에 없는 웹 버튼이라 icons.json(데스크톱에서 뽑음) 대신 여기, 같은 선 굵기 1.6(2026-10-27)
+const KEEP_ICONS = { keep_on: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="1.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>',
+  keep_off: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="1.5"/><path d="M8 10.5V7.5a4 4 0 0 1 7.6-1.7"/></svg>' }
 const Btn = ({ icon, label, onClick, onDown, title, on, disabled, special }) => { const narrow = useContext(Narrow); const bg = o => (special ? SPECIAL_BG(o) : o ? 'rgba(218,119,86,.22)' : 'transparent'); return (
   <button onClick={onClick} onPointerDown={onDown} title={title || label} aria-label={label} disabled={disabled} aria-pressed={on || undefined} style={{ all: 'unset', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.35 : 1,
     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: narrow ? '4px 4px' : '4px 8px', borderRadius: 6, minWidth: narrow ? 24 : 40,   // 좁은 창 옆 여백 6 → 4px: 「칠판」 버튼이 늘며 960px에서 상태 글이 0px로 눌렸음(2026-10-19)
     background: bg(on), font: special ? "700 11px 'Pretendard', sans-serif" : "500 11px 'Pretendard', sans-serif", color: special ? '#fff' : C.ink }}
     onMouseEnter={e => { if (!disabled && (special || !on)) e.currentTarget.style.background = special ? SPECIAL_BG(true) : 'rgba(218,119,86,.12)' }} onMouseLeave={e => { e.currentTarget.style.background = bg(on) }}>
-    {ICONS[icon] ? <span aria-hidden style={{ width: 18, height: 18, display: 'block', color: special ? '#fff' : 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ICONS[icon].replace('<svg ', '<svg width="18" height="18" ') }} />
+    {(ICONS[icon] || KEEP_ICONS[icon]) ? <span aria-hidden style={{ width: 18, height: 18, display: 'block', color: special ? '#fff' : 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: (ICONS[icon] || KEEP_ICONS[icon]).replace('<svg ', '<svg width="18" height="18" ') }} />
       : <span style={{ fontSize: 16, lineHeight: '18px' }}>{icon}</span>}{!narrow && <span style={{ whiteSpace: 'nowrap' }}>{label}</span>}   {/* 이름은 한 줄(「전체 화면」이 두 줄로 꺾여 위 막대가 높아졌음 — 2026-10-20) */}
   </button>
 ) }
@@ -51,7 +55,7 @@ const Group = ({ children }) => <div style={{ display: 'flex', gap: 2, backgroun
 const TOOLS = [['select', 'select', '선택', '1'], ['arrow', 'sarrow', '화살표', '2'], ['text', 'text', '글자', '3'], ['line', 'line', '선', '4'], ['polygon', 'polygon', '다각형', '5'], ['pen', 'pen', '펜', '6'], ['badge', 'badge', '번호', '7']]   // [도구, 아이콘(icons.json), 이름, 글쇠]
 
 // 표 넣기 — 행·열·첫 행 머리(데스크톱 `_TableSizeDialog`: 기본 3×3, 머리 켬, 행 1~100·열 1~50)
-function TableForm({ onInsert, onLegend, onClose }) {   // onLegend = 범례 넣기(2026-10-19 사용자: 표 기반, 자주 안 쓰니 우클릭 메뉴 대신 여기)
+function TableForm({ onInsert, onLegend, onClose }) {   // onLegend = 범례 넣기(2026-10-19 사용자: 표 기반, 자주 안 쓰니 우클릭 메뉴 대신 여기 — 10-27부터 선 우클릭에도)
   const [r, setR] = useState(3), [c, setC] = useState(3), [h, setH] = useState(true)
   const num = (v, set, max) => <input type="number" min={1} max={max} value={v} onChange={e => set(Math.max(1, Math.min(max, +e.target.value || 1)))} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') onInsert(r, c, h); if (e.key === 'Escape') onClose() }}
     style={{ width: 52, height: 24, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px' }} />
@@ -279,16 +283,21 @@ function App() {
   const setDockTab = v => { setDockTabS(v); try { localStorage.setItem('mb-dock', v) } catch { /* 기억 못 해도 그만 */ } }
   const [dockW, setDockWS] = useState(() => { try { return Math.max(DOCK_W, Math.min(DOCK_MAX, +localStorage.getItem('mb-dock-w') || DOCK_W)) } catch { return DOCK_W } })   // 왼쪽 판 폭 — 이 브라우저에 기억
   const setDockW = v => { setDockWS(v); try { localStorage.setItem('mb-dock-w', String(v)) } catch { /* 기억 못 해도 그만 */ } }
-  const [chatOpen, setChatOpen] = useState(() => { try { return localStorage.getItem('mb-chat-open') !== '0' } catch { return true } }), [selKey, setSelKey] = useState('')   // 대화창 열림은 이 브라우저에 기억(기본 열림 — 화면 원칙: 작업공간 + AI 대화창)
+  const [chatOpen, setChatOpen] = useState(() => { if (window.innerWidth < PHONE_W) return false; try { return localStorage.getItem('mb-chat-open') !== '0' } catch { return true } }), [selKey, setSelKey] = useState('')   // 대화창 열림은 이 브라우저에 기억(기본 열림 — 화면 원칙: 작업공간 + AI 대화창), 휴대폰은 칠판부터(대화창이 화면 전체라)
   useEffect(() => { try { localStorage.setItem('mb-chat-open', chatOpen ? '1' : '0') } catch { /* 기억 못 해도 그만 */ } }, [chatOpen])
   const [chatW, setChatWS] = useState(() => { try { return chatClamp(+localStorage.getItem('mb-chat-w') || CHAT_W) } catch { return CHAT_W } })   // 대화창 폭 — 이 브라우저에 기억(왼쪽 판 `mb-dock-w`와 같게)
   const setChatW = v => { setChatWS(v); try { localStorage.setItem('mb-chat-w', String(v)) } catch { /* 기억 못 해도 그만 */ } }
   const [narrow, setNarrow] = useState(() => window.innerWidth < NARROW_W)   // 좁은 창 = 위 막대 아이콘만 + 대화창은 칠판 위에 뜸
-  useEffect(() => { const on = () => setNarrow(window.innerWidth < NARROW_W); window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
+  const [phone, setPhone] = useState(() => window.innerWidth < PHONE_W), phoneRef = useRef(phone); phoneRef.current = phone
+  useEffect(() => { const on = () => { setNarrow(window.innerWidth < NARROW_W); setPhone(window.innerWidth < PHONE_W) }; window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
   const [activeLayer, setActiveLayer] = useState('default')   // 「그리는 중」 레이어(파일을 열면 기본부터 — 데스크톱 `_apply_loaded_layers`)
   const [model, setModel] = useState(() => fromEcad(emptyDoc()))
   const [cam, setCam] = useState({ x: 0, y: 0, z: 1 })   // 화면 = 칠판 × z + (x, y)
   const [tool, setTool] = useState('select')
+  const [keepTool, setKeepToolS] = useState(() => { try { return localStorage.getItem('mb-keep-tool') === '1' } catch { return false } })   // 「도구 유지」 — 이 브라우저에 기억
+  const keepRef = useRef(keepTool); keepRef.current = keepTool
+  const toggleKeep = () => { const v = !keepRef.current; keepRef.current = v; setKeepToolS(v); try { localStorage.setItem('mb-keep-tool', v ? '1' : '0') } catch { /* 기억 못 해도 그만 */ }
+    setStatus(v ? '도구 유지 켬 — 그린 뒤에도 그 도구 그대로(Esc = 선택으로)' : '도구 유지 끔 — 하나 그리면 선택으로 돌아가요') }
   const [status, setStatus] = useState('')
   // 어두운 화면(데스크톱 🌙와 같은 뜻) — 고른 값은 이 브라우저에 기억, 없으면 시스템 설정(next.html이 첫 값을 정함)
   const [dark, setDark] = useState(() => document.documentElement.dataset.theme === 'dark')
@@ -307,7 +316,7 @@ function App() {
     const b = docBounds(items); if (!b) return
     // 처음 열 때(서버 답)는 화면 크기를 재기 전 값(1×1)을 붙잡은 함수가 불려 배율 2%가 됐다 — 그 자리에서 직접 잰다
     if (!s) { const r = box.current?.getBoundingClientRect(); s = r && r.width > 1 ? { w: r.width, h: r.height } : size }
-    const L = Math.min(LEFT_CARDS, s.w / 4)   // 왼쪽 카드(도형·심볼·레이어) 밑도 빼고 — 맨 왼쪽 메모가 카드에 가렸음(2026-10-19 점검, Editor `showIds`와 같은 220)
+    const L = phoneRef.current ? 0 : Math.min(LEFT_CARDS, s.w / 4)   // 왼쪽 카드(도형·심볼·레이어) 밑도 빼고 — 맨 왼쪽 메모가 카드에 가렸음(2026-10-19 점검, Editor `showIds`와 같은 220)
     s = { ...s, w: s.w - rightInset(box.current) - L }   // 좁은 창의 뜬 대화창 밑은 빼고 맞춤(그 자리에서 읽음 — 이 함수는 옛 값을 붙잡고 불릴 수 있음)
     const pad = 40, z = Math.min(ZMAX, Math.max(ZMIN, Math.min((s.w - 2 * pad) / Math.max(b.w, 1), (s.h - 2 * pad) / Math.max(b.h, 1), 1)))
     const c = { z, x: L + s.w / 2 - (b.x + b.w / 2) * z, y: s.h / 2 - (b.y + b.h / 2) * z }
@@ -427,8 +436,12 @@ function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
+      {phone && <div data-testid="phone-top" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>   {/* 휴대폰 위 = 칠판 이름·사람 수·밝기만 */}
+        <span style={{ flex: 1, minWidth: 0, font: "700 15px 'Pretendard', sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{server ? `「${DOC_NAME}」` : 'Magic Board'}</span>
+        {server && <span title={people.join(', ')} style={{ fontSize: 13, color: C.muted, whiteSpace: 'nowrap' }}>👥 {people.length || 1}</span>}
+        <button onClick={toggleDark} title="밝게 / 어둡게" style={{ all: 'unset', cursor: 'pointer', fontSize: 18, padding: '2px 4px' }}>{dark ? '☀️' : '🌙'}</button></div>}
       <Narrow.Provider value={narrow}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: narrow ? 4 : 8, padding: '4px 8px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>
+      <div style={{ display: phone ? 'none' : 'flex', alignItems: 'center', gap: narrow ? 4 : 8, padding: '4px 8px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>
         <Group>
  {/* 칠판·열기·내려받기는 왼쪽 판 「칠판」 칸으로(2026-10-23 사용자) */}
           <Btn icon="save" label="저장" onClick={server ? saveServer : saveFile} title={server ? `서버 「${DOC_NAME}」에 저장` : '.ecad로 내려받기'} />
@@ -442,7 +455,8 @@ function App() {
           <Btn icon="undo" label="되돌리기" onClick={() => ed.current?.undo()} title="되돌리기 (Ctrl+Z)" />
           <Btn icon="redo" label="다시" onClick={() => ed.current?.redo()} title="다시 실행 (Ctrl+Y)" />
         </Group>
-        <Group>{TOOLS.map(([k, icon, label, key]) => <Btn key={k} icon={icon} label={label} on={tool === k} onClick={() => setTool(k)} onDown={k === 'select' || k === 'pen' ? undefined : e => toolDown(e, k)} title={`${label} (${key})${k === 'select' || k === 'pen' ? '' : ' — 칠판으로 끌면 그 자리에'}`} />)}</Group>
+        <Group>{TOOLS.map(([k, icon, label, key]) => <Btn key={k} icon={icon} label={label} on={tool === k} onClick={() => setTool(k)} onDown={k === 'select' || k === 'pen' ? undefined : e => toolDown(e, k)} title={`${label} (${key})${k === 'select' || k === 'pen' ? '' : ' — 칠판으로 끌면 그 자리에'}`} />)}
+          <Btn icon={keepTool ? 'keep_on' : 'keep_off'} label="유지" on={keepTool} onClick={toggleKeep} title="도구 유지 (Q) — 켜면 그린 뒤에도 그 도구가 그대로(도구를 바꿔도), Esc·「선택」으로 멈춤" /></Group>
         <Group><div style={ANCHOR}>
           <Btn icon="present" label="발표" onClick={() => ed.current?.startPresent()} title="발표 — 프레임 순서대로 한 장씩 전체 화면(고른 프레임부터) · → 다음 · ← 이전 · M 이동/바로 · Esc 끝" />
           <Btn icon="frame" label="프레임" on={tool === 'frame'} onClick={() => setTool(t => (t === 'frame' ? 'select' : 'frame'))} onDown={e => toolDown(e, 'frame')} title="프레임 — 버튼을 칠판으로 끌면 그 자리에 16:9 · 칠판에서 끌어서 영역을 감싸면 그 안이 출력 한 쪽(번호 순서). 클릭만 = 16:9, 우클릭 「프레임으로 감싸기」도" />
@@ -478,7 +492,7 @@ function App() {
       </div>
       </Narrow.Provider>
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>   {/* 왼쪽 판 + 작업공간 + 오른쪽 KAIROS 대화창(좁은 창은 대화창만 칠판 위에 뜸) */}
-      <Dock tab={dockTab} setTab={setDockTab} width={dockW} setWidth={setDockW} help={helpOpen} onHelp={() => setHelpOpen(o => !o)} mini={w => <Minimap docked width={w} items={mapItems} cam={cam} size={size} setCam={setCam} dark={dark} />} panes={{
+      {!phone && <Dock tab={dockTab} setTab={setDockTab} width={dockW} setWidth={setDockW} help={helpOpen} onHelp={() => setHelpOpen(o => !o)} mini={w => <Minimap docked width={w} items={mapItems} cam={cam} size={size} setCam={setCam} dark={dark} />} panes={{
         board: <BoardForm docked onClose={() => {}} onSample={openSample}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderTop: `1px solid ${C.line}`, paddingTop: 8 }}>
             {[['열기', () => file.current.click(), '.ecad 파일 열기(지금 칠판을 그 내용으로 바꿈)'], ['내려받기', saveFile, '.ecad 파일로 내려받기'], ['저장', server ? saveServer : saveFile, server ? `서버 「${DOC_NAME}」에 저장 (Ctrl+S)` : '.ecad로 내려받기 (Ctrl+S)']].map(([l, f, t]) =>
@@ -487,14 +501,14 @@ function App() {
         shape: <Palette docked lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} />,
         frame: orderedFrames(model.items).length ? <Frames docked items={model.items} sel={selKey ? selKey.split(',') : []} onReorder={ids => ed.current?.reorderFrames(ids)} onRename={(id, n) => ed.current?.renameFrame(id, n)} onGo={id => ed.current?.goFrame(id)} onPresent={id => ed.current?.startPresent(id)} dark={dark} />
           : <div data-testid="frames-empty" style={{ padding: '10px 12px', color: C.muted, fontSize: 12, lineHeight: 1.6 }}><div style={{ font: "700 15px 'Pretendard', sans-serif", color: C.ink, marginBottom: 6 }}>프레임</div>아직 없어요 — 위 막대 「프레임」을 눌러 칠판에서 영역을 감싸면 여기에 쌓여요(순서 = 출력·발표 순서).</div>,
-        layer: <Layers docked model={model} setModel={setModel} active={activeLayer} setActive={setActiveLayer} onChanged={onCommit} onMoveSel={id => ed.current?.moveSelToLayer(id)} dark={dark} /> }} />
+        layer: <Layers docked model={model} setModel={setModel} active={activeLayer} setActive={setActiveLayer} onChanged={onCommit} onMoveSel={id => ed.current?.moveSelToLayer(id)} dark={dark} /> }} />}
       {/* --mb-right-inset = 뜬 대화창 폭 — 우상 속성·우하 미니맵 카드가 그만큼 왼쪽으로 비킴 */}
       <div ref={box} onDragOver={e => { const ts = [...(e.dataTransfer?.types || [])]; if (ts.includes('Files') || ts.includes('text/uri-list')) e.preventDefault() }}
         onDrop={e => { const fs = [...(e.dataTransfer?.files || [])]; e.preventDefault()   // 끌어 놓기 — 파일(그림·녹음 = 회의록) 또는 주소(대화창 그림 후보·웹 주소 = 웹 카드). 막지 않으면 브라우저가 그 파일·주소로 떠남
           if (fs.length) return ed.current?.dropFiles(fs, e)
           const u = (e.dataTransfer?.getData('text/uri-list') || '').split(/\r?\n/).find(x => x && !x.startsWith('#')); if (u) ed.current?.dropUrl(u, e.dataTransfer.getData('text/x-mb-caption') || '', e) }}
         style={{ flex: 1, position: 'relative', overflow: 'hidden', '--mb-right-inset': narrow && chatOpen ? `${chatW + 12}px` : '0px' }}>
-        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onAsk={(text, kind) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind }) }} />
+        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} phone={phone} keepTool={keepTool} onKeepTool={toggleKeep} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onAsk={(text, kind) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind }) }} />
         {helpOpen && <HelpCard onClose={() => setHelpOpen(false)} />}
         {!model.items.length && !meetSt && !aiBusy && <EmptyGuide onAsk={() => { setChatOpen(true); setChatFocus({ id: Date.now() }) }} onDeep={() => { setChatOpen(true); setChatFocus({ id: Date.now(), tool: 'deep' }) }}
           onMeet={() => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : ed.current?.meetStart())} />}
@@ -504,8 +518,15 @@ function App() {
           background: 'var(--mb-card)', border: '1px solid var(--mb-line)', boxShadow: '0 2px 8px rgba(0,0,0,.12)', font: "600 13px 'Pretendard', sans-serif", color: 'var(--mb-ink)', pointerEvents: 'none', whiteSpace: 'nowrap' }}><Spinner />{aiBusy}</div>}   {/* 정돈·정리 문서 중 — 칠판만 보고 있어도 도는 게 보이게(2026-10-20 사용자) */}
         {findOpen > 0 && <FindBar key={findOpen} items={model.items} server={server} onMarks={setMarks} onGo={id => ed.current?.showItem(id)} onClose={() => setFindOpen(0)} />}
       </div>
-      {chatOpen && <ChatPanel ed={ed} selKey={selKey} floating={narrow} onClose={() => setChatOpen(false)} request={chatAsk} focus={chatFocus} onBusy={setAiBusy} width={chatW} setWidth={setChatW} />}
+      {chatOpen && <ChatPanel ed={ed} selKey={selKey} floating={narrow} full={phone} onClose={() => setChatOpen(false)} request={chatAsk} focus={chatFocus} onBusy={setAiBusy} width={chatW} setWidth={setChatW} />}
       </div>
+      {phone && <div data-testid="phone-bar" style={{ display: 'flex', gap: 8, padding: '8px 10px calc(8px + env(safe-area-inset-bottom))', background: C.bar, borderTop: `1px solid ${C.line}` }}>   {/* 휴대폰 아래 = 엄지로 누르는 큰 버튼 셋 */}
+        {[['⤢', '다 보기', () => fit(modelRef.current.items), false, false],
+          ['🎙', meetSt === 'saved' ? '정리하기' : meetSt ? '끝내기' : '회의', () => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : meetSt ? ed.current?.meetStop() : ed.current?.meetStart()), !!meetSt, meetSt === 'start' || meetSt === 'stopping'],
+          ['✦', 'KAIROS', () => setChatOpen(true), false, false]].map(([ic, label, f, on, off]) =>
+          <button key={ic} onClick={f} disabled={off} style={{ all: 'unset', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, height: 44, borderRadius: 10, cursor: 'pointer', opacity: off ? 0.5 : 1,
+            font: "600 15px 'Pretendard', sans-serif", color: ic === '✦' || on ? '#fff' : C.ink, background: ic === '✦' ? '#da7756' : on ? '#d44c47' : 'var(--mb-card)', border: `1px solid ${ic === '✦' || on ? 'transparent' : C.line}` }}><span aria-hidden>{ic}</span>{label}</button>)}
+      </div>}
     </div>
   )
 }

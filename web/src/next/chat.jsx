@@ -185,7 +185,7 @@ function NavBtn({ side, onClick, title, testid, children }) {
 }
 
 // ed = Editor 손잡이(selTexts·pinCard·showCard), selKey = 고른 것이 바뀔 때 다시 읽게(main이 넘김)
-export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBusy, width = CHAT_W, setWidth }) {   // width·setWidth = 폭(왼쪽 경계 끌기 — main.jsx가 이 브라우저에 기억)   // onBusy(글) = 칠판 위 알약(정리 문서·딥모드 중에만, 끝나면 '')   // focus = { id, tool } — 빈 칠판 안내가 입력 칸으로(그 길 이름표까지, 2026-10-26)
+export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus, onBusy, width = CHAT_W, setWidth }) {   // width·setWidth = 폭(왼쪽 경계 끌기 — main.jsx가 이 브라우저에 기억)   // onBusy(글) = 칠판 위 알약(정리 문서·딥모드 중에만, 끝나면 '')   // focus = { id, tool } — 빈 칠판 안내가 입력 칸으로(그 길 이름표까지, 2026-10-26)
   const [busyJob, setBusyJob] = useState('')   // 기다리는 일의 종류(모르면 '' = 서버가 짐작)   // request = { id, text, kind } — 칠판에서 시킨 질문(바뀔 때마다 한 번 보냄)   // floating = 좁은 창 — 칠판 위에 뜬 카드(2026-10-19)
   const [msgs, setMsgs] = useState([]), [loaded, setLoaded] = useState(false), [draft, setDraft] = useState(''), [busy, setBusy] = useState(null)
   const [, tick] = useState(0), [models, setModels] = useState(null), [server, setServer] = useState(true), [gone, setGone] = useState({})
@@ -498,9 +498,9 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBus
   useEffect(() => { if (!focus || focused.current === focus.id || (focus.tool && !models)) return; focused.current = focus.id
     if (focus.tool && tools.some(t => t[0] === focus.tool)) setPickTool(focus.tool); ta.current?.focus() }, [focus, models])   // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <aside style={{ ...(floating ? { ...css.panel, ...css.float } : css.panel), width }} aria-label="KAIROS 대화" onPointerDown={e => e.stopPropagation()}>
+    <aside style={full ? { ...css.panel, position: 'fixed', inset: 0, zIndex: 50, width: '100%', borderLeft: 0 } : { ...(floating ? { ...css.panel, ...css.float } : css.panel), width }} aria-label="KAIROS 대화" onPointerDown={e => e.stopPropagation()}>
       {/* 폭 조절 — 왼쪽 경계 끌기(320~720, 화면 절반까지), 두 번 누르면 기본 폭(왼쪽 판 `dock-resize`와 같은 손맛) */}
-      {setWidth && <div data-testid="chat-resize" title="끌어서 대화창 폭 조절 · 두 번 누르면 기본 폭" onDoubleClick={() => setWidth(CHAT_W)}
+      {setWidth && !full && <div data-testid="chat-resize" title="끌어서 대화창 폭 조절 · 두 번 누르면 기본 폭" onDoubleClick={() => setWidth(CHAT_W)}
         onPointerDown={e => { e.preventDefault(); const x0 = e.clientX, w0 = width, el = e.currentTarget; el.setPointerCapture(e.pointerId)
           const mv = ev => setWidth(chatClamp(w0 - (ev.clientX - x0))), up = () => { el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up) }
           el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up) }}
@@ -526,7 +526,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBus
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           {credits && <span data-testid="chat-credits" title={`이번 달 ${Math.round(credits.quota).toLocaleString('ko-KR')} 크레딧 중 남은 것(${myKey ? '내 키' : '서버 키'}) — 답을 받을 때마다 새로`}
             style={{ font: `500 12px ${F}`, color: credits.remaining < credits.quota * 0.1 ? '#da7756' : C.muted }}>남은 {Math.round(credits.remaining).toLocaleString('ko-KR')}</span>}
-          <button title="대화창 닫기" onClick={onClose} style={{ ...css.ghost, padding: '0 7px' }}>✕</button>
+          <button title="대화창 닫기" onClick={onClose} style={{ ...css.ghost, padding: full ? '4px 12px' : '0 7px', fontSize: full ? 15 : undefined }}>{full ? '✕ 칠판' : '✕'}</button>
         </div>
       </div>
       <div style={css.bar}>   {/* 대화 관리 줄 — 새 대화 · 지난 대화 · 내 키 */}
