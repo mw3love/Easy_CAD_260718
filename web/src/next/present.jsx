@@ -28,6 +28,9 @@ const TOOLS = [
   ['erase', I(<><path d="M7 15 L3.5 11.5 L10.5 4.5 L15 9 L9 15 Z" /><path d="M7 15 H15" /></>), '지우개', '6 · E (두 번 = 이 장 판서 지우기)', ['Digit6', 'KeyE']],
 ]
 const IDLE_MS = 2000
+// 레이저 점 = 운영체제 커서 그림(2026-10-28 사용자: 레이저를 켜면 마우스만 움직여도 늦게 따라옴) — 전엔 움직일 때마다 빨간 점(div)을 React로 옮겨 발표 화면 전체를 다시 그렸고(373개 칠판 실측 움직임당 0.7 → 5.6ms),
+// 화면에 그린 점은 진짜 커서보다 한두 장면 늦게 따라옴. 커서 그림은 OS가 바로 그려 지연이 없음. 32px = 크롬이 큰 커서를 막지 않는 크기, 그림이 안 되면 십자
+const LASER_CURSOR = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><defs><radialGradient id="g"><stop offset=".44" stop-color="#ff2828" stop-opacity=".6"/><stop offset=".65" stop-color="#ff2828" stop-opacity=".45"/><stop offset="1" stop-color="#ff2828" stop-opacity="0"/></radialGradient></defs><circle cx="16" cy="16" r="16" fill="url(#g)"/><circle cx="16" cy="16" r="7" fill="#ff2a2a"/></svg>')}") 16 16, crosshair`
 const BIG_BAND = 64   // 영상 크게 보기의 위 검은 띠 — 「⤡ 원래 크기로」가 영상(유튜브 단추)과 겹치지 않게
 // 발표 속 유튜브 크게 보기(2026-10-20 사용자) — 발표 전체 화면 안에서 유튜브 전체 화면을 켜면 크롬·유튜브가 서로 다르게 알아 끝내기 단추·F가 안 먹음(실측).
 // 그래서 유튜브 전체 화면 단추는 숨기고(fs=0), 카드 제목 띠 「⤢ 크게 보기」 = 그 영상만 검은 바탕에 화면 꽉(사진 크게 보기처럼), 영상 밖·띠·「원래대로」 = 돌아옴.
@@ -70,8 +73,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   // Q = 이 칠판 QR을 TV에 크게(2026-10-28 대회 시연 — 객석이 휴대폰으로 바로 들어옴). 게시했으면 보기 링크(고치기 없음), 아니면 칠판 주소(같이 고침)
   const [qr, setQr] = useState(null), qrRef = useRef(null); qrRef.current = qr
   const showQr = () => api.getPublish().then(tok => setQr(tok ? { link: `${location.origin}/?view=${tok}`, view: true } : { link: `${location.origin}/?board=${encodeURIComponent(DOC_NAME)}`, view: false }))
-  // 레이저 포인터(2026-10-18 사용자) — ` · L로 켜고 끔(휠 클릭은 편집 화면처럼 화면 이동)
-  const [mpos, setMpos] = useState(null), mouse = useRef({ x: -99, y: -99 })
+  // 레이저 포인터(2026-10-18 사용자) — ` · L로 켜고 끔(휠 클릭은 편집 화면처럼 화면 이동), 점 = 커서 그림(LASER_CURSOR)
   const [laserOn, setLaserOn] = useState(false)   // 레이저 = 도구와 따로 켜는 커서 — 켠 채로 펜·네모 등도 씀(2026-10-18 사용자)
   const laserShown = laserOn && !tool, laserRef = useRef(false); laserRef.current = laserShown   // 도구를 켜면 그 도구 커서, 끄면 다시 레이저(2026-10-26 실검증 — 판서하는데 커서가 계속 빨간 점이라 불편)
   // 레이저로 누른 채 끌기 = 빨간 자취(0.6초 뒤 사라짐) — 전엔 글 선택(파란 칠)이 잡히거나 깜빡였음(2026-10-26 실검증)
@@ -206,7 +208,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   const move = e => { const pn = pan.current
     if (pn) { const dx = e.clientX - pn.x, dy = e.clientY - pn.y; if (!pn.moved && Math.hypot(dx, dy) < 4) return; pn.moved = true
       setZoom({ s: pn.z0?.s || 1, ox: (pn.z0?.ox || 0) + dx, oy: (pn.z0?.oy || 0) + dy }); return }
-    wake(); mouse.current = { x: e.clientX, y: e.clientY }; if (laserRef.current) setMpos({ ...mouse.current }); if (trailOn.current) setTrail(tr => [...tr, { x: e.clientX, y: e.clientY, t: Date.now() }]); const nb = e.clientY >= window.innerHeight - 100; if (nb !== nearBottom) setNearBottom(nb); if (!draft) return; const p = { x: e.clientX, y: e.clientY }
+    wake(); if (trailOn.current) setTrail(tr => [...tr, { x: e.clientX, y: e.clientY, t: Date.now() }]); const nb = e.clientY >= window.innerHeight - 100; if (nb !== nearBottom) setNearBottom(nb); if (!draft) return; const p = { x: e.clientX, y: e.clientY }
     if (draft.tool === 'erase') { const q = draft.pts.at(-1), dd = Math.hypot(p.x - q.x, p.y - q.y), steps = Math.max(1, Math.ceil(dd / 6))   // 빠르게 그어도 사이를 빠뜨리지 않게
       for (let j = 1; j <= steps; j++) { const s = toScene(q.x + (p.x - q.x) * j / steps, q.y + (p.y - q.y) * j / steps); onErase(s, 8 / k, draft.key) }
       setDraft(d => ({ ...d, pts: [...d.pts, p] })); return }
@@ -239,7 +241,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
       style={{ all: 'unset', cursor: 'pointer', padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', font: "600 12px 'Pretendard', sans-serif", color: cur === v ? '#fff' : 'rgba(255,255,255,.6)', background: cur === v ? '#da7756' : 'transparent' }}>{name}</button>)}</div>
     <span style={{ fontSize: 11, color: 'rgba(255,255,255,.6)', whiteSpace: 'nowrap' }}>{label}</span></div>
   return <div ref={root} tabIndex={-1} data-testid="presenter" onPointerDown={down} onPointerMove={move} onPointerUp={up} onContextMenu={e => e.preventDefault()}
-    style={{ position: 'fixed', inset: 0, zIndex: 1000, outline: 'none', background: '#000', cursor: laserShown ? 'none' : show ? (tool && tool !== 'erase' ? 'crosshair' : zoom?.card ? 'zoom-out' : 'default') : 'none', ...th }}>
+    style={{ position: 'fixed', inset: 0, zIndex: 1000, outline: 'none', background: '#000', cursor: laserShown ? LASER_CURSOR : show ? (tool && tool !== 'erase' ? 'crosshair' : zoom?.card ? 'zoom-out' : 'default') : 'none', ...th }}>
     <svg width={W} height={H} style={{ display: 'block' }}>
       {!zoom?.card && <rect x={hx - g} y={hy - g} width={hw + 2 * g} height={hh + 2 * g} fill={th['--mb-board']} />}
       <g transform={`translate(${zx},${zy}) scale(${zs})`}><g transform={`translate(${gx},${gy}) scale(${gk})`} style={{ '--z': k * (zoom?.s || 1) }}>
@@ -273,7 +275,6 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     {toast && <div style={{ position: 'absolute', left: '50%', top: 24, transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: 8, background: 'rgba(24,24,27,.9)', color: '#fff', font: "500 13px 'Pretendard', sans-serif", pointerEvents: 'none' }}>{toast}</div>}
     {trail.length > 1 && <svg data-testid="laser-trail" width={W} height={H} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>{trail.slice(1).map((q, j) => { const a = trail[j], f = Math.max(0, 1 - (Date.now() - q.t) / TRAIL_MS)
       return <line key={q.t + ':' + j} x1={a.x} y1={a.y} x2={q.x} y2={q.y} stroke="#ff2a2a" strokeWidth={3 + 5 * f} strokeLinecap="round" opacity={f} style={{ filter: 'drop-shadow(0 0 4px rgba(255,40,40,.8))' }} /> })}</svg>}
-    {laserShown && mpos && <div data-testid="laser" style={{ position: 'absolute', left: mpos.x - 7, top: mpos.y - 7, width: 14, height: 14, borderRadius: 7, background: '#ff2a2a', boxShadow: '0 0 10px 4px rgba(255,40,40,.6)', pointerEvents: 'none' }} />}
     {textAt && <input autoFocus placeholder="글 쓰고 Enter" onPointerDown={e => e.stopPropagation()} onKeyDown={e => { if (e.key === 'Enter') commitText(e.currentTarget.value); if (e.key === 'Escape') setTextAt(null) }} onBlur={e => commitText(e.currentTarget.value)}
       style={{ ...(b => ({ left: b.x, top: b.y, height: b.h, padding: b.pad, fontSize: b.F }))(textBoxAt(textAt)), position: 'absolute', minWidth: 160, boxSizing: 'border-box', fontFamily: APP_FONT, fontWeight: 400, lineHeight: METRICS.app.lineSpacing, color: penColor, background: 'rgba(0,0,0,.12)', border: 'none', outline: `1.5px dashed ${penColor}`, borderRadius: 2 }} />}
     {menu && (() => { const pick = f => () => { setMenu(null); f() }, items = [...TOOLS.map(([id, , name, key]) => [`${name}   (${key})${tool === id ? '  — 다시 누르면 끄기' : ''}`, pick(() => setTool(t => (t === id ? null : id))), tool === id]), [`레이저   (\`)${laserOn ? '  — 다시 누르면 끄기' : ''}`, pick(() => setLaserOn(v => !v)), laserOn], '-', ['이 장 판서 지우기   (6 6)', pick(clearSlide)], ['이전 장', pick(() => go(-1))], ['끝', pick(onClose)]]

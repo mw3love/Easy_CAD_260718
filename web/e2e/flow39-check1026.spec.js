@@ -26,18 +26,18 @@ test('발표 레이저 — 끌면 빨간 자취(글 선택 안 잡힘), 펜을 �
   await page.getByRole('button', { name: '발표', exact: true }).click()
   const pres = page.getByTestId('presenter'); await expect(pres).toBeVisible()
   const vp = page.viewportSize()
+  const LASER = /^url\("data:image\/svg\+xml/                                                // 레이저 점 = 커서 그림(10-28 — 화면에 그린 점은 늦게 따라왔음)
   await page.keyboard.press('l'); await page.mouse.move(vp.width * 0.3, vp.height * 0.5)
-  await expect(page.getByTestId('laser')).toBeVisible()
+  await expect(pres).toHaveCSS('cursor', LASER)
   await page.mouse.down(); await page.mouse.move(vp.width * 0.7, vp.height * 0.5, { steps: 10 })
   await expect(page.getByTestId('laser-trail')).toBeVisible()
   await page.mouse.up()
   expect(await page.evaluate(() => getSelection().toString())).toBe('')                     // 전엔 글이 파랗게 골라졌음
   await expect(page.getByTestId('laser-trail')).toBeHidden({ timeout: 2000 })               // 0.6초 뒤 사라짐
   await page.keyboard.press('1'); await page.mouse.move(vp.width * 0.4, vp.height * 0.4)      // 펜
-  await expect(page.getByTestId('laser')).toBeHidden()
   await expect(pres).toHaveCSS('cursor', 'crosshair')
   await page.keyboard.press('Escape'); await page.mouse.move(vp.width * 0.5, vp.height * 0.4)  // 펜 끔 = 다시 레이저
-  await expect(page.getByTestId('laser')).toBeVisible()
+  await expect(pres).toHaveCSS('cursor', LASER)
 })
 
 test('기다리는 동안 「취소」는 한 줄(진행 글이 길어도 — 정리 문서·인터랙티브 HTML처럼)', async ({ page }) => {
