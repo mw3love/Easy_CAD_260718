@@ -302,6 +302,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     const tg = !busy && !from && (kind === 'deep-section' || (text == null && !kind)) ? ed.current?.deepTarget?.() : null   // 판 꼭지를 고른 채 고치는 말 = 그 꼭지만 다시(5단계) — 질문은 보통 대화
     if (kind === 'deep-section' && busy) return
     if (kind === 'deep-section' || (tg && REDO_RE.test(draft.trim()))) { deepSection(tg, kind === 'deep-section' ? '' : draft.trim()); return }
+    if (text != null && kind === 'slides') { if (!busy) slidesSend(kind, text); return }   // 칠판 우클릭 「발표 자료 만들기」 = 그 자료로 질문지부터
     if (text == null && !busy && (deepSend(kind) || slidesSend(kind))) return
     const pend = text == null && !from && replyTo == null ? msgs.findLastIndex(m => m.role !== 'error') : -1
     if (pend >= 0 && msgs[pend].kind === 'ask' && draft.trim() && !busy) return choose(pend, kind, draft.trim())   // 되묻기에 글로 답함(§8 항목64)
@@ -370,14 +371,14 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     ed.current?.showIds([r.ids[0]]); setSkipSel(String(r.ids[0]))   // 보여 주려고 고른 판은 다음 질문에 안 실음(붙이기와 같게)
   }
   // 📽 발표 자료(§8 항목69, 2026-10-28) — 딥모드와 같은 걸음: 「+ › 발표 자료」 + 주제 = 질문지 카드(그때 고른 것의 글을 재료로 붙잡아 둠) → 장 계획 → 「이대로 만들기」 = 칠판에 프레임 N장(`ed.slidesBoard`)
-  function slidesSend(kind) {
-    const li = msgs.findLastIndex(m => m.role !== 'error'), last = msgs[li], t = draft.trim()
-    if (last?.kind === 'slides' && last.step === 'ask' && !last.done) { slidesGo(li, t); return true }
-    if (last?.kind === 'slides' && last.step === 'plan' && !last.built && !last.stale && t && (!kind || kind === 'slides')) { slidesReplan(li, t); return true }
+  function slidesSend(kind, text = null) {   // text = 칠판 우클릭 「발표 자료 만들기」가 시킨 주제(3단계)
+    const li = msgs.findLastIndex(m => m.role !== 'error'), last = msgs[li], t = (text ?? draft).trim()
+    if (text == null && last?.kind === 'slides' && last.step === 'ask' && !last.done) { slidesGo(li, t); return true }
+    if (text == null && last?.kind === 'slides' && last.step === 'plan' && !last.built && !last.stale && t && (!kind || kind === 'slides')) { slidesReplan(li, t); return true }
     if (kind !== 'slides' || !t) return false
     const at = Date.now(), material = contextText(sel)
     update([...msgs.filter(m => m.role !== 'error'), { role: 'user', content: t, at, slides: true }, { role: 'assistant', kind: 'slides', step: 'ask', topic: t, brief: {}, ...(material ? { material, ctxCount: sel.length } : {}), at: at + 1 }])
-    setDraft(''); setPickTool(''); if (mic !== 'off') micStop.current?.()
+    if (text == null) setDraft(''); setPickTool(''); if (mic !== 'off') micStop.current?.()
     return true
   }
   async function slidesCall(body, job) {
@@ -406,7 +407,8 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   async function slidesBuild(i) {
     const m = msgs[i], plan = keptSlides(m)
     const d = await slidesCall({ step: 'build', topic: m.topic, brief: m.brief, material: m.material || '', plan }, 'slides-build'); if (!d) return
-    const r = ed.current?.slidesBoard?.(d.deck); if (!r) return
+    const deck = d.deck?.cover?.img ? { ...d.deck, cover: (await deepImgs([{ body: d.deck.cover }]))[0].body } : d.deck   // 표지 그림(3단계) = 칠판 그림 칸으로
+    const r = ed.current?.slidesBoard?.(deck); if (!r) return
     setMsg(i, { built: r.ids[0], frames: r.frames, model: d.model, elapsed: d.elapsed, credits: d.credits })
     ed.current?.showIds(r.ids); setSkipSel(r.ids.join())
   }

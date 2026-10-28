@@ -58,3 +58,27 @@ test('발표 자료 2단계 — 장 모양(표지 띠·숫자 칸·단계 줄·�
   expect(rects).toHaveLength(2 + 3 + 2 + 3 + 1)                                           // 표지 띠·줄 + 제목 줄 3 + 숫자 칸 2 + 단계 줄 3 + 한마디 줄
   expect(rects.every(x => x.style === 0)).toBe(true)
 })
+
+test('발표 자료 3단계 — 고른 자료 우클릭 「발표 자료 만들기」 = 그 자료로 질문지 · 표지 그림이 표지 오른쪽 위에', async ({ page }) => {
+  const name = boardName('slides3'), seen = []
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAFElEQVR4nGP4z8DAwMDAwMDAwAAAHwAB/2Y2E7QAAAAASUVORK5CYII='
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { slides: 'm' } } }))
+  await page.route('**/api/img/**', r => r.fulfill({ body: Buffer.from(PNG, 'base64'), contentType: 'image/png' }))
+  await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); seen.push(b)
+    return r.fulfill({ json: b.slides?.step === 'plan' ? { kind: 'slides', plan: { title: '점검', slides: [{ title: '표지', source: 'board' }, { title: '결과', source: 'board' }] }, estimate: { credits: [20, 30], seconds: [20, 30] }, model: 'm', elapsed: 1 }
+      : { kind: 'slides', deck: { title: '점검', sources: [], cover: { img: `/api/img/${name}/1_cover.png`, w: 4, h: 3 }, slides: [{ title: '점검', layout: '표지', bullets: ['10월'], notes: '' }, { title: '결과', layout: '글머리', bullets: ['정상'], notes: '' }] }, model: 'm', elapsed: 1 } }) })
+  await openBoard(page, name, { chat: true }); await setCam(page)
+  await page.evaluate(t => { const dt = new DataTransfer(); dt.setData('text/plain', t); window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })) }, '# 송신소 점검\n- 안테나 정상')
+  await expect.poll(async () => (await liveDoc(page)).items.length).toBe(1)
+  const b = await page.locator('svg text', { hasText: '안테나 정상' }).first().boundingBox()
+  await page.mouse.click(b.x + 4, b.y + b.height / 2, { button: 'right' })
+  await page.getByText('발표 자료 만들기 (KAIROS)').click()
+  const ask = page.getByTestId('deep-ask'); await expect(ask).toContainText('「고른 자료로 발표 자료」')
+  await expect(ask).toContainText('칠판에서 고른 것 1개를 재료로')
+  await page.getByTestId('deep-plan-go').click(); await page.getByTestId('slides-build').click()
+  await expect(page.getByTestId('slides-show')).toContainText('프레임 2장')
+  expect(seen[0].slides.material).toContain('안테나 정상')
+  const its = (await liveDoc(page)).items, cover = its.find(it => it.type === 'image'), f1 = its.find(it => it.type === 'frame' && it.no === Math.min(...its.filter(x => x.type === 'frame').map(x => x.no)))
+  expect(cover?.data?.length).toBeGreaterThan(10)
+  expect(cover.pos[0]).toBeGreaterThan(f1.pos[0] + f1.rect[2] / 2); expect(cover.pos[1]).toBeLessThan(f1.pos[1] + 100)   // 표지 오른쪽 위
+})

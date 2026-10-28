@@ -106,3 +106,15 @@ def test_build_keeps_layouts_and_falls_back_when_empty():
     got = [(s["title"], s["layout"]) for s in out["deck"]["slides"]]
     assert got == [("표지", "표지"), ("숫자", "숫자"), ("빈 숫자", "글머리"), ("단계", "단계"), ("끝", "마무리")]   # 첫 장 = 표지, 숫자 하나뿐 = 글머리, 모르는 끝 장 = 마무리
     assert out["deck"]["slides"][1]["numbers"][0] == {"value": "70%", "label": "연료"} and out["deck"]["slides"][3]["steps"] == ["전환", "분리", "설치"]
+
+
+def test_build_draws_cover_beside_writing_and_survives_failure():
+    plan = {"title": "점검", "slides": [{"title": "표지", "source": "board"}, {"title": "결과", "source": "board"}]}
+    ans = json.dumps({"slides": [{"title": "표지", "bullets": ["부제"]}, {"title": "결과", "bullets": ["정상"]}]}, ensure_ascii=False)
+    asked = []
+    out = slides.build("k", fake_client(ans, []), "점검", {}, plan, model="w", image=lambda p: asked.append(p) or {"img": "/api/img/b/1.png", "w": 4, "h": 3, "model": "img-m", "extra": 1})
+    assert out["deck"]["cover"] == {"img": "/api/img/b/1.png", "w": 4, "h": 3, "model": "img-m"} and "주제: 점검" in asked[0] and "결과" in asked[0]
+    def boom(p):
+        raise RuntimeError("quota")
+    out = slides.build("k", fake_client(ans, []), "점검", {}, plan, model="w", image=boom)
+    assert "cover" not in out["deck"] and "quota" in out["cover_error"] and len(out["deck"]["slides"]) == 2

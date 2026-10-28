@@ -357,7 +357,7 @@ class Handler(SimpleHTTPRequestHandler):
                 sys.stderr.write("[발표 자료 계획] %s %.1f초 %d장\n" % (out["model"], out["elapsed"], len(out["plan"]["slides"])))
             elif step == "build":
                 plan = d.get("plan") if isinstance(d.get("plan"), dict) else {}
-                out = self._with("slides", slides.WRITER_MODEL, lambda m: slides.build(key, gw._client(key, base, timeout=600), topic, brief, plan, base_url=base, material=material, model=m))
+                out = self._with("slides", slides.WRITER_MODEL, lambda m: slides.build(key, gw._client(key, base, timeout=600), topic, brief, plan, base_url=base, material=material, model=m, image=self._deep_image(str(req.get("board") or ""), key, base)))
                 sys.stderr.write("[발표 자료 만들기] %s %.1f초 %d장 출처 %d\n" % (out["model"], out["elapsed"], len(out["deck"]["slides"]), len(out["deck"]["sources"])))
             else:
                 return self._json(400, {"error": "step"})

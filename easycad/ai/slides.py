@@ -96,8 +96,28 @@ def material_text(plan: dict, mat: dict, board: str = "") -> str:
     return "\n".join(lines)
 
 
-def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: str = gw.BASE_URL, material: str = "", model: str = WRITER_MODEL, exa=None) -> dict:
-    """장 계획 → {"deck": {"title", "slides": [{title, bullets, notes}], "sources"}, "model", "elapsed", "missing"}. exa = 시험용."""
+COVER = ("발표 자료 표지 오른쪽 위에 놓일 그림 한 장. 주제: {title}. 다룰 내용: {points}. "
+         "글자·숫자·로고 없이, 깔끔한 플랫 일러스트, 흰 바탕, 차분한 색에 주황 포인트 하나, 가로 4:3.")
+
+
+def cover_prompt(plan: dict) -> str:
+    return COVER.format(title=plan["title"], points=" · ".join(s["title"] for s in plan["slides"][1:5]))
+
+
+def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: str = gw.BASE_URL, material: str = "", model: str = WRITER_MODEL, exa=None, image=None) -> dict:
+    """장 계획 → {"deck": {"title", "slides": [{title, layout, bullets, notes, …}], "sources", "cover"?}, "model", "elapsed", "missing"}. exa = 시험용.
+    image = 표지 그림 그리기(서버 `_deep_image` — 지시문 → {"img", "w", "h", "model"}), 장 본문을 쓰는 동안 같이(3단계 — 그림 약 12초·12크레딧이 기다림에 안 더해지게)."""
+    if image is not None:   # 표지 그림은 장 계획만으로 그림 — 본문과 동시에
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(image, cover_prompt(clean_plan(plan)))
+            out = build(key, client, topic, brief, plan, base_url=base_url, material=material, model=model, exa=exa)
+            try:
+                got = fut.result()
+                out["deck"]["cover"] = {k: got[k] for k in ("img", "w", "h", "model") if k in got}
+            except Exception as e:   # 그림이 틀어져도 장은 그대로
+                out["cover_error"] = f"{type(e).__name__}: {e}"[:200]
+        return out
     plan = clean_plan(plan)
     t0 = time.time()
     secs = [{"title": s["title"], "shape": "주인공 글", "source": s["source"] if s["source"] == "web" else "ai", "query": s["query"]} for s in plan["slides"]]

@@ -907,8 +907,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const fr = base([X, Y], { type: 'frame', rect: [0, 0, W, H], name: `${i + 1}. ${s.title}`, no: no0 + i, ratio: '16:9', z: zb }); out.push(fr); ids.push(fr._id)
       const lines = (s.bullets || []).filter(Boolean)
       if (kind === '표지') {
-        out.push(box(X, Y, 28, H, CORAL), box(L + 24, Y + 300, 120, 10, CORAL, 5), txt(L + 24, Y + 340, s.title, 56, { weight: 700 }))
-        if (lines.length) out.push(txt(L + 24, Y + 470, lines.join('\n'), 26, { color: MUTE }))
+        const cv = i === 0 && deck.cover?.data && deck.cover.w ? deck.cover : null, dy = cv ? 200 : 0   // 표지 그림(3단계) = 오른쪽 위, 제목은 그 밑으로
+        if (cv) { const iw = 560, ih = Math.min(400, iw * cv.h / cv.w); out.push(base([X + W - 96 - iw, Y + 64], { type: 'image', rect: [0, 0, iw, ih], data: cv.data, z, alt: `표지 그림 — ${deck.title || s.title}` })) }
+        out.push(box(X, Y, 28, H, CORAL), box(L + 24, Y + 300 + dy, 120, 10, CORAL, 5), txt(L + 24, Y + 340 + dy, s.title, cv ? 48 : 56, { weight: 700 }))
+        if (lines.length) out.push(txt(L + 24, Y + 450 + dy, lines.join('\n'), 26, { color: MUTE }))
       } else {
         out.push(txt(L, Y + 72, s.title, 40, { weight: 700 }), box(L, Y + 150, 96, 8, CORAL, 4))
         if (kind === '숫자' && s.numbers?.length) {
@@ -2586,6 +2588,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           if (selIt.some(it => isLegendLine(it))) out.push(['범례 넣기', '', act(insertLegend)])   // 선·화살표를 고르고 우클릭(2026-10-27 실검증 — 「표」 창 안에만 있으면 못 찾음, 표 창 단추도 그대로)
           out.push('-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
           if (onBubble && ids.length === 1) out.push(['AI 말풍선 (KAIROS)', '', act(() => onBubble(ids[0]))])   // 이 물건만의 작은 대화창(2026-10-28 사용자)
+          if (onAsk && (selTexts().length || selImages().length)) {   // 📽 발표 자료(§8 항목69 3단계) — 고른 것(딥모드 판·정리 문서·메모…)이 재료, 주제 = 판·문서 제목
+            const t0 = selIt.find(it => it.deep_plan)?.deep_plan?.plan?.title || selIt.find(it => it.type === 'doc')?.title || selIt.find(it => it.type === 'frame')?.name || ''
+            out.push(['발표 자료 만들기 (KAIROS)', '', act(() => onAsk(t0 ? `${t0} — 발표 자료` : '고른 자료로 발표 자료', 'slides'))]) }
           if (onAsk && (selTexts().length || selImages().length)) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])   // 「정리해 줘」 ① — 고른 것이 재료
         }
         // 빈 곳 = 붙여넣기만(2026-10-25 사용자: 빈 곳 메뉴는 없어도 됨 — 전체 선택은 Ctrl+A, 칠판 전체 정리 문서는 전체 선택 뒤 우클릭, 도움말은 왼쪽 「?」).
