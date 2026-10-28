@@ -10,7 +10,7 @@ async function fake(page, seen) {
   await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
   await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); seen.push(b)
     return r.fulfill({ json: b.kind === 'bubble'
-      ? { kind: 'bubble', content: b.item.type === 'memo' ? '할 일만 뽑아 아래에 붙였어요.' : '작은 그림이에요.', memo: FIXED, model: 'fake-model', elapsed: 0.1, credits: 1.2 }
+      ? { kind: 'bubble', content: b.item.type === 'memo' ? '할 일만 뽑아 아래에 붙였어요.' : '작은 그림이에요.', edit: FIXED, model: 'fake-model', elapsed: 0.1, credits: 1.2 }
       : { content: '큰 대화 답', model: 'fake-model', elapsed: 0.1 } }) })
 }
 const pasteText = (page, t) => page.evaluate(t => { const dt = new DataTransfer(); dt.setData('text/plain', t); window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })) }, t)
@@ -106,4 +106,36 @@ test('그림 말풍선 2단계 — 「배경 밝게」 = 그 자리 그림을 �
   await input.fill('이거 뭐야?'); await input.press('Enter')
   await expect(bub.getByTestId('bubble-a')).toHaveCount(2); await expect(bub.getByTestId('bubble-a').last()).toHaveText(/빨간 점이에요/)
   expect(seen[0].item.image).toMatch(/^data:image\/jpeg;base64,/)
+})
+
+test('말풍선 3단계 — 표는 그 자리에서 칸이 바뀌고(줄 더하면 높이도) · 글 상자는 글이 바뀜 · 원래대로', async ({ page }) => {
+  const name = boardName('bubble4'), seen = []
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
+  await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); seen.push(b)
+    return r.fulfill({ json: b.item.edit === 'table' ? { kind: 'bubble', content: '합계 줄을 더했어요.', edit: '| 항목 | 수량 |\n|---|---|\n| 안테나 | 2 |\n| 송신기 | 1 |\n| 합계 | 3 |', model: 'm', elapsed: 0.1 }
+      : { kind: 'bubble', content: '짧게 줄였어요.', edit: '점검 끝', model: 'm', elapsed: 0.1 } }) })
+  await openBoard(page, name); await setCam(page)
+  await pasteText(page, '| 항목 | 수량 |\n|---|---|\n| 안테나 | 2 |\n| 송신기 | 1 |')
+  await expect.poll(async () => (await liveDoc(page)).items.length).toBe(1)
+  const t0 = (await liveDoc(page)).items[0]; expect(t0.type).toBe('table')
+  await openOn(page, '안테나')
+  const bub = page.getByTestId('bubble'), input = bub.getByTestId('bubble-input')
+  await input.fill('합계 줄 더해 줘'); await input.press('Enter')
+  await expect(bub.getByTestId('bubble-flip')).toHaveText('원래대로')
+  expect(seen[0].item).toMatchObject({ type: 'table', edit: 'table' }); expect(seen[0].item.text).toContain('| 안테나 | 2 |')
+  let t = (await liveDoc(page)).items[0]
+  expect(t.cells.at(-1)).toEqual(['합계', '3']); expect(t.rows).toBe(4); expect(t.rect[3]).toBeGreaterThan(t0.rect[3])
+  await bub.getByTestId('bubble-flip').click()
+  t = (await liveDoc(page)).items[0]; expect(t.rows).toBe(3); expect(t.cells).toEqual(t0.cells)
+  await bub.getByTestId('bubble-close').click()
+
+  await page.mouse.click(800, 760)
+  await pasteText(page, '송신소 점검 결과를 정리했습니다')
+  await expect.poll(async () => (await liveDoc(page)).items.length).toBe(2)
+  await openOn(page, '점검 결과를')
+  const tb = page.getByTestId('bubble')
+  await tb.getByTestId('bubble-input').fill('더 짧게'); await tb.getByTestId('bubble-input').press('Enter')
+  await expect(tb.getByTestId('bubble-flip')).toHaveText('원래대로')
+  expect(seen.at(-1).item).toMatchObject({ type: 'text', edit: 'text' })
+  expect((await liveDoc(page)).items.find(it => it.type === 'text').text).toBe('점검 끝')
 })

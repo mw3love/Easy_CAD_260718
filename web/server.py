@@ -340,7 +340,7 @@ class Handler(SimpleHTTPRequestHandler):
         return round(b0 - b1, 1) if b1 is not None else None
 
     def _bubble(self, req: dict, key: str):
-        """💬 AI 말풍선 — {"item": {"type", "text", "image"?}, "messages"} → {"kind": "bubble", "content", "memo"?(고친 메모 마크다운), "model", "elapsed", "credits"}."""
+        """💬 AI 말풍선 — {"item": {"type", "text", "edit"?(memo·table·text), "image"?}, "messages"} → {"kind": "bubble", "content", "edit"?(고친 물건 전체), "model", "elapsed", "credits"}."""
         item = req.get("item") if isinstance(req.get("item"), dict) else {}
         image = str(item.get("image") or "")
         image = image if image.startswith("data:image/") else ""
@@ -362,12 +362,12 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"kind": "bubble", "content": "말한 점만 고쳐서 이 그림을 바꿨어요.", "image_url": url, "model": out["model"], "elapsed": el, "credits": out.get("credits")})
         try:
             out = self._with("bubble", req.get("model") or gw.FALLBACK_DEFAULT_MODEL, lambda m: board_bubble.reply(
-                key, {"type": str(item.get("type") or ""), "text": str(item.get("text") or "")}, req.get("messages") or [], model=m, image=image, base_url=base))
+                key, {"type": str(item.get("type") or ""), "text": str(item.get("text") or ""), "edit": str(item.get("edit") or "")}, req.get("messages") or [], model=m, image=image, base_url=base))
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         except Exception as e:
             return self._json(502, {"error": gw.friendly_error(e)})
-        sys.stderr.write("[말풍선] %s %.1f초%s\n" % (out["model"], out["elapsed"], " (메모 고침)" if out.get("memo") else ""))
+        sys.stderr.write("[말풍선] %s %.1f초%s\n" % (out["model"], out["elapsed"], " (고침)" if out.get("edit") else ""))
         return self._json(200, {"kind": "bubble", **out, "credits": self._spent(key, base, b0)})
 
     def _live(self, ask: str, material: str, key: str, prev_html: str = ""):

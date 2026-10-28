@@ -149,7 +149,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, setMemoLines, setImage, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, setImage, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -868,8 +868,30 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 💬 AI 말풍선(2026-10-28) — 물건 하나의 자리(칠판 좌표)·글(프레임은 안의 것까지)·그림. 없으면 null
   function bubbleInfo(id) {
     const m = R.current.model, it = m.items.find(x => x._id === id); if (!it) return null
-    const ids = new Set(withContents([id])), text = it.type === 'memo' ? memoMarkdown(it.lines) : m.items.filter(x => ids.has(x._id)).flatMap(itemTexts).join('\n\n')
-    return { type: it.type, box: sceneBox(it, textBox), text, image: it.type === 'image' && it.data ? (it.data.startsWith('data:') ? it.data : 'data:image/png;base64,' + it.data) : '' }
+    // edit = 말풍선이 그 자리에서 고쳐 쓰는 물건(3단계 — 메모·표·글 상자·글이 있는 도형), 서버엔 글 = 'text'
+    const edit = it.type === 'memo' ? 'memo' : it.type === 'table' ? 'table' : it.type === 'text' ? 'text' : it.label?.text?.trim() ? 'label' : ''
+    const ids = new Set(withContents([id])), text = edit === 'memo' ? memoMarkdown(it.lines) : edit === 'table' ? memoMarkdown([{ k: 'table', rows: it.cells || [] }])
+      : edit === 'label' ? it.label.text : m.items.filter(x => ids.has(x._id)).flatMap(itemTexts).join('\n\n')
+    return { type: it.type, edit, box: sceneBox(it, textBox), text, image: it.type === 'image' && it.data ? (it.data.startsWith('data:') ? it.data : 'data:image/png;base64,' + it.data) : '' }
+  }
+  // 말풍선이 고쳐 쓴 것(AI 답 `edit`) = 그 자리에서(Ctrl+Z 한 번) — 메모 = 마크다운 → 줄, 표 = 마크다운 표 → 칸(칸 수가 바뀌면 너비 고르게·칸 꾸밈 지움, 높이는 줄 수만큼),
+  // 글 상자·도형 글 = 글(꾸밈 지움). { before, after } 칸 묶음(「원래대로 ↔ 바꾼 것」이 `setFields`로 바꿔 끼움), 못 고치면 null
+  function bubbleEdit(id, md) {
+    const it = R.current.model.items.find(x => x._id === id); if (readOnly || !it || !md?.trim()) return null
+    let after = null
+    if (it.type === 'memo') after = { lines: memoFromAnswer(md) }
+    else if (it.type === 'table') { const rows = memoFromAnswer(md).find(l => l.k === 'table')?.rows; if (!rows?.length) return null
+      const cols = Math.max(...rows.map(r => r.length)), cells = rows.map(r => Array.from({ length: cols }, (_, c) => r[c] || ''))
+      after = { cells, ...(cols === it.cols && rows.length === it.rows ? {} : { rows: rows.length, cols, col_widths: cols === it.cols ? it.col_widths : Array(cols).fill(1 / cols), cell_styles: undefined, cell_runs: undefined,
+        rect: [it.rect[0], it.rect[1], it.rect[2], it.rect[3] * rows.length / Math.max(1, it.rows)] }) } }
+    else if (it.type === 'text') after = { text: md.trim(), runs: undefined }
+    else if (it.label) after = { label: { ...it.label, text: md.trim(), runs: undefined } }
+    return after && { before: setFields(id, after), after }
+  }
+  function setFields(id, patch, label = 'AI 말풍선') {   // 바꾸기 전 그 칸들(물건이 없으면 null)
+    const m = R.current.model, it = m.items.find(x => x._id === id); if (readOnly || !it) return null
+    commit(m.items.map(x => (x._id === id ? { ...x, ...patch } : x)), R.current.sel, label)
+    return Object.fromEntries(Object.keys(patch).map(k => [k, it[k]]))
   }
   // 말풍선이 고친 그림 = 그 자리에서 그림만 바꿈(폭은 그대로, 높이 = 새 비율 aspect = 높이/폭 · Ctrl+Z 한 번). 바꾸기 전 { data, aspect }(그림이 없으면 null)
   function setImage(id, data, aspect, label = 'AI 말풍선') {
@@ -877,12 +899,6 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const [x, y, w, h] = it.rect
     commit(m.items.map(o => (o._id === id ? { ...o, data, rect: [x, y, w, aspect ? w * aspect : h] } : o)), R.current.sel, label)
     return { data: it.data, aspect: h / w }
-  }
-  // 말풍선이 고친 메모 = 그 자리에서 줄만 바꿈(Ctrl+Z 한 번). 바꾸기 전 줄(메모가 없으면 null)
-  function setMemoLines(id, lines, label = 'AI 말풍선') {
-    const m = R.current.model, it = m.items.find(x => x._id === id); if (readOnly || !it || it.type !== 'memo') return null
-    commit(m.items.map(x => (x._id === id ? { ...x, lines } : x)), R.current.sel, label)
-    return it.lines
   }
   // 여러 도형이 한눈에 들어오게(딥모드 판 보기 등) — 없으면 false
   function showIds(ids) {

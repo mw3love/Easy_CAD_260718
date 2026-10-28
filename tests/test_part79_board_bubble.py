@@ -43,16 +43,18 @@ def test_messages_put_item_and_image_on_last_question_only():
         board_bubble.build_messages({"type": "memo", "text": "x"}, [{"role": "assistant", "content": "답"}])
 
 
-def test_reply_edits_memo_only_for_memos():
+def test_reply_edits_only_editable_items():
     sent = {}
-    ans = '```json\n{"reply": "할 일만 뽑아 붙였어요.", "memo": "# 점검\\n- [ ] 교체"}\n```'
-    out = board_bubble.reply("k", {"type": "memo", "text": "# 점검"}, [{"role": "user", "content": "할 일 뽑아 줘"}], model="m", client=fake_client(ans, sent))
-    assert out["content"] == "할 일만 뽑아 붙였어요." and out["memo"] == "# 점검\n- [ ] 교체" and sent["model"] == "m"
+    ans = '```json\n{"reply": "할 일만 뽑아 붙였어요.", "edit": "# 점검\\n- [ ] 교체"}\n```'
+    out = board_bubble.reply("k", {"type": "memo", "text": "# 점검", "edit": "memo"}, [{"role": "user", "content": "할 일 뽑아 줘"}], model="m", client=fake_client(ans, sent))
+    assert out["content"] == "할 일만 뽑아 붙였어요." and out["edit"] == "# 점검\n- [ ] 교체" and sent["model"] == "m"
+    assert "고칠 수 있음(메모)" in sent["messages"][-1]["content"]
     out = board_bubble.reply("k", {"type": "image", "text": ""}, [{"role": "user", "content": "고쳐 줘"}], client=fake_client(ans, {}))
-    assert "memo" not in out                                                   # 메모가 아닌 물건은 고치지 않음
-    out = board_bubble.reply("k", {"type": "memo", "text": "x"}, [{"role": "user", "content": "뭐야?"}], client=fake_client("그냥 글 답", {}))
+    assert "edit" not in out                                                   # 고칠 수 있는 물건이 아니면 고치지 않음
+    out = board_bubble.reply("k", {"type": "memo", "text": "x", "edit": "memo"}, [{"role": "user", "content": "뭐야?"}], client=fake_client("그냥 글 답", {}))
     assert out == {"content": "그냥 글 답", "model": board_bubble.gw.FALLBACK_DEFAULT_MODEL, "elapsed": out["elapsed"]}   # JSON이 아니면 답만
-    assert board_bubble.parse('{"reply": "", "memo": "# 새 메모"}', True) == {"reply": "메모를 고쳤어요.", "memo": "# 새 메모"}
+    assert board_bubble.parse('{"reply": "", "edit": "# 새 메모"}', True) == {"reply": "고쳤어요.", "edit": "# 새 메모"}
+    assert board_bubble.parse('{"reply": "바꿈", "memo": "옛 이름"}', True) == {"reply": "바꿈", "edit": "옛 이름"}
 
 
 @pytest.fixture
@@ -78,13 +80,13 @@ def test_server_bubble_kind_and_threads_file(server, monkeypatch):
     base, data = server
     import server as srv
     calls = []
-    monkeypatch.setattr(srv.board_bubble, "reply", lambda key, item, msgs, **kw: calls.append((item, msgs, kw)) or {"content": "고쳤어요", "memo": "# 새", "model": kw["model"], "elapsed": 0.1})
+    monkeypatch.setattr(srv.board_bubble, "reply", lambda key, item, msgs, **kw: calls.append((item, msgs, kw)) or {"content": "고쳤어요", "edit": "# 새", "model": kw["model"], "elapsed": 0.1})
     monkeypatch.setattr(srv.route, "decide", lambda *a, **k: pytest.fail("말풍선은 길 고르기를 안 거침"))
-    out = _req(base, "/api/chat", {"kind": "bubble", "board": "칠판", "model": "gpt-x", "item": {"type": "memo", "text": "# 옛", "image": "javascript:x"},
+    out = _req(base, "/api/chat", {"kind": "bubble", "board": "칠판", "model": "gpt-x", "item": {"type": "memo", "text": "# 옛", "edit": "memo", "image": "javascript:x"},
                                    "messages": [{"role": "user", "content": "고쳐 줘"}]})
-    assert out["kind"] == "bubble" and out["memo"] == "# 새" and out["content"] == "고쳤어요"
+    assert out["kind"] == "bubble" and out["edit"] == "# 새" and out["content"] == "고쳤어요"
     item, msgs, kw = calls[-1]
-    assert item == {"type": "memo", "text": "# 옛"} and kw["image"] == "" and kw["model"] == "gpt-x" and msgs[-1]["content"] == "고쳐 줘"
+    assert item == {"type": "memo", "text": "# 옛", "edit": "memo"} and kw["image"] == "" and kw["model"] == "gpt-x" and msgs[-1]["content"] == "고쳐 줘"
     th = {"s1": [{"role": "user", "content": "고쳐 줘"}, {"role": "assistant", "content": "고쳤어요"}]}
     assert _req(base, "/api/threads/" + urllib.parse.quote("칠판"), th, method="PUT")["ok"] is True
     assert _req(base, "/api/threads/" + urllib.parse.quote("칠판"), method="GET") == th
@@ -102,7 +104,7 @@ def test_server_image_bubble_edit_saves_picture(server, monkeypatch):
     out = _req(base, "/api/chat", {"kind": "bubble", "board": "그림판", "item": {"type": "image", "text": "", "image": img}, "messages": [{"role": "user", "content": "배경을 밝게 해 줘"}]})
     prompt, kw = gen[-1]
     assert kw["input_images"] == [img] and kw["n"] == 1 and "배경을 밝게" in prompt and "그대로 유지" in prompt
-    assert out["kind"] == "bubble" and out["image_url"].startswith("/api/img/") and "memo" not in out
+    assert out["kind"] == "bubble" and out["image_url"].startswith("/api/img/") and "edit" not in out
     assert any(f.endswith(".png") for f in os.listdir(os.path.join(data, "그림판.img")))
     out = _req(base, "/api/chat", {"kind": "bubble", "board": "그림판", "item": {"type": "image", "text": "", "image": img}, "messages": [{"role": "user", "content": "이 그림 뭐야?"}]})
     assert out["content"] == "빨간 점" and "image_url" not in out and len(gen) == 1

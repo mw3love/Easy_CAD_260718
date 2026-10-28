@@ -746,7 +746,7 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
         {!phone && Object.entries(threads).filter(([id, t]) => t?.length && !bubbles.includes(id)).map(([id, t]) => { const info = ed.current?.bubbleInfo(id)
           return info && <BubbleBadge key={'bb' + id} id={id} info={info} cam={cam} count={t.filter(m => m.role === 'user').length} onOpen={() => openBubble(id)} /> })}
         {!phone && bubbles.map(id => <Bubble key={'b' + id} id={id} info={ed.current?.bubbleInfo(id)} cam={cam} size={size} thread={threads[id] || []} onThread={msgs => setThread(id, msgs)}
-          onClose={() => setBubbles(bs => bs.filter(x => x !== id))} onMemo={lines => ed.current?.setMemoLines(id, lines)} onImage={(data, aspect) => ed.current?.setImage(id, data, aspect)} onStatus={setStatus} />)}
+          onClose={() => setBubbles(bs => bs.filter(x => x !== id))} onEdit={md => ed.current?.bubbleEdit(id, md)} onFields={patch => ed.current?.setFields(id, patch)} onImage={(data, aspect) => ed.current?.setImage(id, data, aspect)} onStatus={setStatus} />)}
         {gone && <div data-testid="gone-banner" style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 25, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 10, background: '#d44c47', color: '#fff', font: "600 13px 'Pretendard', sans-serif", boxShadow: '0 4px 14px rgba(0,0,0,.2)' }}>
           이 칠판은 다른 창에서 지워졌어요 — 고친 것은 저장되지 않아요
           <button onClick={saveFile} style={{ all: 'unset', cursor: 'pointer', padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,.22)' }}>내려받기</button>
