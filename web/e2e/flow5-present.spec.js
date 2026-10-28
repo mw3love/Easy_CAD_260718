@@ -2,7 +2,7 @@
 import { test, expect } from '@playwright/test'
 import { boardName, openBoard, setCam, pickShape, dragScene, clickScene, liveDoc, waitSaved } from './helpers.js'
 
-test('프레임 셋 → 발표 넘기기·마지막에서 멈춤·판서는 「판서」 레이어 → 새로고침해도 프레임 순서 그대로', async ({ page }) => {
+test('프레임 셋 → 발표 넘기기·마지막에서 멈춤·판서는 끝나면 지움·「남기기」 = 「판서」 레이어 → 새로고침해도 프레임 순서 그대로', async ({ page }) => {
   const name = boardName('present')
   await openBoard(page, name); await setCam(page, { x: 320, y: 300, z: 0.5 })   // 왼쪽 도형 카드(폭 192) 밖에서 그리게
   for (const [i, x] of [0, 600, 1200].entries()) {
@@ -34,11 +34,19 @@ test('프레임 셋 → 발표 넘기기·마지막에서 멈춤·판서는 「�
   await page.mouse.move(vp.width * 0.6, vp.height * 0.5, { steps: 6 }); await page.mouse.up()
   await page.keyboard.press('Escape'); await page.keyboard.press('Escape')   // 도구 끄기 → 발표 끝
   await expect(page.getByTestId('presenter')).toBeHidden()
+  expect((await liveDoc(page)).items.some(it => it.type === 'path')).toBe(false)   // 발표는 발표에서 끝남 — 이번 판서는 지움(10-28 사용자)
+  await expect(page.getByTestId('notes-gone')).toContainText('발표 판서 1개 지움')
+  await page.getByTestId('notes-gone').getByRole('button', { name: '남기기' }).click()    // 남기기 = 되살림
+  await expect(page.getByTestId('notes-gone')).toBeHidden()
   doc = await liveDoc(page)
   const note = doc.items.find(it => it.type === 'path')
   expect(note).toBeTruthy()
   const layer = (doc.layers || []).find(l => l.id === note.layer_id)
   expect(layer?.name).toBe('판서')
+  await page.getByRole('button', { name: '발표', exact: true }).click(); await expect(page.getByTestId('presenter')).toBeVisible()
+  await page.keyboard.press('Escape'); await expect(page.getByTestId('presenter')).toBeHidden()
+  expect((await liveDoc(page)).items.filter(it => it.type === 'path')).toHaveLength(1)  // 전에 남긴 판서는 그대로
+  await expect(page.getByTestId('notes-gone')).toBeHidden()
 
   await waitSaved(page); await page.reload()
   await expect(page.getByText(`서버 「${name}」`).first()).toBeVisible()

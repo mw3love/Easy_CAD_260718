@@ -632,7 +632,19 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   function startPresent(fromId) {   // 발표 — 고른 프레임(또는 fromId)부터, 없으면 1번부터
     const fr = orderedFrames(hitPool()); if (!fr.length) { setStatus('프레임이 없어요 — 상단 「프레임」으로 보여 줄 영역을 감싸 보세요'); return }
-    const id = fromId || R.current.sel.find(s => fr.some(f => f._id === s)); setEditing(null); setPresent(Math.max(0, fr.findIndex(f => f._id === id)))
+    const id = fromId || R.current.sel.find(s => fr.some(f => f._id === s)); setEditing(null); setNotesGone(null); penAtStart.current = new Set(R.current.model.items.filter(it => it.layer_id === PEN_LAYER).map(it => it._id)); setPresent(Math.max(0, fr.findIndex(f => f._id === id)))
+  }
+  // 발표는 발표에서 끝남(2026-10-28 사용자) — 끝나면 이번 발표에서 그은 판서만 지우고 「남기기」 알약(되살림 = 지운 것을 다시 넣음, Ctrl+Z도 됨). 전에 있던 판서는 그대로
+  const penAtStart = useRef(new Set()), [notesGone, setNotesGone] = useState(null)   // notesGone = { items: 지운 판서 }
+  useEffect(() => { if (!notesGone) return; const t = setTimeout(() => setNotesGone(null), 8000); return () => clearTimeout(t) }, [notesGone])
+  function endPresent() {
+    setPresent(null)
+    const m = R.current.model, gone = m.items.filter(it => it.layer_id === PEN_LAYER && !penAtStart.current.has(it._id)); if (!gone.length) return
+    commit(removeItems(m.items, gone.map(it => it._id)), R.current.sel, '발표 판서 지움'); setNotesGone({ items: gone })
+  }
+  function keepNotes() {
+    const g = notesGone; setNotesGone(null); if (!g) return; const m = R.current.model, have = new Set(m.items.map(it => it._id)), back = g.items.filter(it => !have.has(it._id))
+    if (back.length) commit([...m.items, ...back], R.current.sel, '발표 판서 남김')
   }
   const cellRange = cs => ({ r0: Math.min(cs.r0, cs.r1), r1: Math.max(cs.r0, cs.r1), c0: Math.min(cs.c0, cs.c1), c1: Math.max(cs.c0, cs.c1) })
   // 고른 칸들 꾸밈 고치기 — per(지금 꾸밈, r, c) → 고칠 값(undefined = 그 칸 지움)
@@ -2489,10 +2501,14 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         return out })()} />}
       {present != null && (() => { const fr = orderedFrames(items.filter(it => !hiddenL.has(layerIdOf(it))))
         return <Presenter frames={fr.map(f => ({ id: f._id, name: f.name, box: sceneBox(f, textBox) }))} order={order.filter(([it]) => it.type !== 'frame' || isDeepPaper(it)).map(([it, i]) => (isDeepPaper(it) ? [deepPaper(it), i] : [it, i]))} onBoard={onBoard} routes={routes}
-          start={Math.min(present, fr.length - 1)} dark={dark} onClose={() => setPresent(null)} onAdd={addPenNotes} onUndo={undo} onFlipArrow={() => { const m = R.current.model, a = m.items.filter(it => it.layer_id === PEN_LAYER && it.type === 'sarrow').sort((p, q) => (q.z ?? 0) - (p.z ?? 0))[0]   // 방금(맨 위) 그린 판서 화살표 방향 뒤집기
+          start={Math.min(present, fr.length - 1)} dark={dark} onClose={endPresent} onAdd={addPenNotes} onUndo={undo} onFlipArrow={() => { const m = R.current.model, a = m.items.filter(it => it.layer_id === PEN_LAYER && it.type === 'sarrow').sort((p, q) => (q.z ?? 0) - (p.z ?? 0))[0]   // 방금(맨 위) 그린 판서 화살표 방향 뒤집기
             if (a) commit(m.items.map(it => (it._id === a._id ? { ...it, pts: [...it.pts].reverse() } : it)), R.current.sel, '화살표 뒤집기') }} onClearNotes={box => { const m = R.current.model, inBox = it => { const b = sceneBox(it, textBox), cx = b.x + b.w / 2, cy = b.y + b.h / 2; return cx >= box.x && cx <= box.x + box.w && cy >= box.y && cy <= box.y + box.h }   // 이 장(프레임) 안 판서만
             const ids = m.items.filter(it => it.layer_id === PEN_LAYER && inBox(it)).map(it => it._id); if (ids.length) commit(removeItems(m.items, ids), R.current.sel, '이 장 판서 지움') }}
           onErase={(p, tol, key) => { const m = R.current.model, hit = topHit(m.items.filter(it => it.layer_id === PEN_LAYER), p, tol, textBox); if (hit) commit(removeItems(m.items, [hit._id]), R.current.sel, '판서 지움', key) }} /> })()}
+      {notesGone && present == null && <div data-testid="notes-gone" onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', bottom: 54, left: '50%', transform: 'translateX(-50%)', zIndex: 7, display: 'flex', alignItems: 'center', gap: 10, padding: '4px 6px 4px 14px', borderRadius: 99,
+        background: 'rgba(24,24,27,.9)', color: '#fff', font: "500 13px 'Pretendard', sans-serif", whiteSpace: 'nowrap', boxShadow: '0 2px 10px rgba(0,0,0,.25)' }}>
+        발표 판서 {notesGone.items.length}개 지움
+        <button onClick={keepNotes} style={{ all: 'unset', cursor: 'pointer', padding: '3px 12px', borderRadius: 99, background: '#da7756', color: '#fff', fontWeight: 600 }}>남기기</button></div>}
       {tagEdit && (() => { const it = byId.get(tagEdit); if (!it) return null; const b = frameTagBox(it), o = scr({ x: b.x, y: b.y })   // 프레임 이름표 바로 고치기(치는 대로 — 2026-10-18 사용자)
         return <input key={tagEdit} autoFocus defaultValue={it.name || ''} placeholder="이름" onPointerDown={e => e.stopPropagation()} onChange={e => renameFrame(it._id, e.target.value)}
           onBlur={() => setTagEdit(null)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') setTagEdit(null) }}
