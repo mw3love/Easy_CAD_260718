@@ -30,6 +30,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import sys
 import threading
 import time
@@ -643,8 +644,43 @@ class Handler(SimpleHTTPRequestHandler):
         t = self._team() if team else None
         if t is None:
             return name
-        claim = self.command in ("POST", "PUT") and not self.path.startswith(("/api/presence/", "/api/find/"))
+        claim = self.command in ("POST", "PUT") and not self.path.startswith(("/api/presence/", "/api/find/", "/api/delete/"))
         return name if self._teams().allows(t, name, self.data_dir, claim=claim) else ""
+
+    # ── 칠판 지우기(2026-10-28 사용자 「만들어진 칠판 지우는 건?」) — 바로 없애지 않고 `trash/<이름>-<때>/`로 옮김(관리자가 파일로 되살림),
+    # 지운 이름은 `trash/deleted.json`에 남김: 열 때 빈 칠판을 만드는 앱이라 안 남기면 지운 링크·열어 둔 창이 같은 주소에 칠판을 되살림
+    def _gone_map(self) -> dict:
+        try:
+            with open(os.path.join(self.data_dir, "trash", "deleted.json"), encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
+
+    def _gone(self, name: str) -> bool:
+        return bool(name) and name in self._gone_map()
+
+    def _delete_board(self, name: str) -> int:
+        """칠판 파일 전부(`<이름>.ecad`·`.prev`·대화·회의·뜻 숫자·그림·PDF 폴더 — 이름 + 「.」으로 시작)를 휴지통으로. 옮긴 개수."""
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        trash = os.path.join(self.data_dir, "trash")
+        dest = os.path.join(trash, f"{name}-{stamp}")
+        with self.lock:
+            files = [fn for fn in os.listdir(self.data_dir) if fn == name or fn.startswith(name + ".")] if os.path.isdir(self.data_dir) else []
+            os.makedirs(dest, exist_ok=True)
+            for fn in files:
+                shutil.move(os.path.join(self.data_dir, fn), os.path.join(dest, fn))
+            gone = self._gone_map()
+            gone[name] = stamp
+            raw = json.dumps(gone, ensure_ascii=False).encode("utf-8")
+            write_via_temp(os.path.join(trash, "deleted.json"), lambda tmp: _write(tmp, raw))
+            for kind in ("publish", "invite"):   # 게시·초대 링크도 끊음
+                mp = self._publish_map(kind)
+                if mp.pop(name, None) is not None:
+                    self._publish_save(mp, kind)
+        with Handler.changed:   # 기다리던 받아 오기를 깨움(다음 물음에 410 = 창에 「지워짐」) — 판 번호를 아주 크게(되살리면 서버를 다시 켬)
+            Handler.revs[name] = 10 ** 12
+            Handler.changed.notify_all()
+        return len(files)
 
     def _doc_path(self, name: str) -> str:
         return os.path.join(self.data_dir, name + ".ecad")
@@ -721,6 +757,8 @@ class Handler(SimpleHTTPRequestHandler):
             if q.get("board") and out["ok"]:   # 이 칠판이 서버에 있나 — 남이 준 링크로 처음 열면 이름을 한 번 물음(main.jsx Gate)
                 nm = self._name(q["board"][0])
                 out["exists"] = bool(nm) and os.path.exists(self._doc_path(nm))
+                if self._gone(nm):   # 지운 칠판 링크 = 빈 칠판을 만들지 않고 안내(main.jsx Gate)
+                    out["gone"] = True
                 if out["exists"]:   # 칠판 이름(2026-10-28 — 주소와 따로, 문서 `title`) — 받은 링크의 이름 묻는 창 머리에
                     try:
                         title = str((self._doc_load(nm) or {}).get("title") or "")
@@ -817,6 +855,8 @@ class Handler(SimpleHTTPRequestHandler):
             name = self._name(m.group(2))
             if not name:
                 return self._send(400, b'{"error":"bad name"}')
+            if self._gone(name):
+                return self._send(410, b'{"error":"gone"}')
             if m.group(1) in ("publish", "invite"):
                 return self._json(200, {"token": self._publish_map(m.group(1)).get(name), "password": self._locked()})
             if m.group(1) == "since":
@@ -837,6 +877,8 @@ class Handler(SimpleHTTPRequestHandler):
             return super().do_GET()
         if p == "":
             return self._send(400, b'{"error":"bad name"}')
+        if self._gone(os.path.basename(p).split(".")[0]):
+            return self._send(410, b'{"error":"gone"}')
         if not os.path.exists(p):
             if p.endswith(".meet.json"):
                 return self._send(204)   # 받아 적던 회의 없음 = 보통(칠판 열 때마다 물어봄 — 404면 콘솔에 오류가 쌓임)
@@ -896,6 +938,14 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(200, meeting.live_token(key, base_url=self._base()))
             except Exception as e:
                 return self._json(502, {"error": str(e)})
+        m = re.match(r"^/api/delete/([^/]+)$", path)
+        if m:   # 칠판 지우기 — 휴지통으로(칠판 판 줄 메뉴)
+            name = self._name(m.group(1))
+            if not name:
+                return self._send(400, b'{"error":"bad name"}')
+            moved = self._delete_board(name)
+            sys.stderr.write("[지우기] %s — 파일 %d개 휴지통으로\n" % (name, moved))
+            return self._json(200, {"ok": True, "moved": moved})
         m = re.match(r"^/api/find/([^/]+)$", path)
         if m:
             return self._find_api(self._name(m.group(1)))
@@ -935,6 +985,8 @@ class Handler(SimpleHTTPRequestHandler):
                     mp[name] = secrets.token_urlsafe(12)
                 self._publish_save(mp, kind)
             return self._json(200, {"token": mp.get(name)})
+        if self._gone(name):   # 지운 칠판 — 열어 둔 창의 저장이 되살리지 않게
+            return self._send(410, b'{"error":"gone"}')
         with self.lock:   # 부분 저장 — 도형 단위로 덮어씀(서로 다른 도형이면 둘 다 남음)
             doc = self._doc_load(name) or {"format": "easycad-doc", "version": 1, "items": []}
             out = collab.apply_patch(doc, req)
@@ -947,6 +999,8 @@ class Handler(SimpleHTTPRequestHandler):
         p = self._board_path()
         if not p:
             return self._send(400, b'{"error":"bad name"}')
+        if self._gone(os.path.basename(p).split(".")[0]):   # 열어 둔 창이 지운 칠판을 되살리지 않게
+            return self._send(410, b'{"error":"gone"}')
         n = int(self.headers.get("Content-Length") or 0)
         if n <= 0 or n > MAX_BYTES:
             return self._send(413, b'{"error":"size"}')

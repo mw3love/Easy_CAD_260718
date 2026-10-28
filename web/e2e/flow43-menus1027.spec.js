@@ -67,7 +67,7 @@ test('왼쪽 프레임 판 줄 우클릭 = 발표·이름 바꾸기·내보내�
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await page.getByTestId('dock-board').click()   // 지금 칠판 = 「내 칠판 — 이 브라우저」에 있음
   await page.getByTestId('board-row').filter({ hasText: name }).click({ button: 'right' })
-  expect(await names(page)).toEqual(['이름 바꾸기', '새 탭에서 열기', '주소 복사', '내려받기 (.ecad)'])   // 이름 바꾸기 = 문서 이름만(2026-10-28 — 주소 그대로)
+  expect(await names(page)).toEqual(['이름 바꾸기', '새 탭에서 열기', '주소 복사', '내려받기 (.ecad)', '칠판 지우기…'])   // 이름 바꾸기 = 문서 이름만(2026-10-28 — 주소 그대로)
   await page.locator(MENU, { hasText: '주소 복사' }).click()
   expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(`?board=${name}`)
 })

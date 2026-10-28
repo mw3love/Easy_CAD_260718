@@ -165,6 +165,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, children }) { 
   const cached = () => myBoards().filter(b => b.ok !== false || b.name === DOC_NAME).map(b => ({ name: b.name, title: b.title, mtime: b.mtime || 0, c: b.c || b.t }))
   const [list, setList] = useState(null), [mine, setMine] = useState(cached), [name, setName] = useState(''), [all, setAll] = useState(false), [making, setMaking] = useState(false), [why, setWhy] = useState(''), [menu, setMenu] = useState(null)
   const [newMenu, setNewMenu] = useState(null), [codeOn, setCodeOn] = useState(false), [codeText, setCodeText] = useState(''), [codeWhy, setCodeWhy] = useState(''), menuRef = useRef(null), moreRef = useRef(null), fileRef = useRef(null)
+  const [del, setDel] = useState(null)   // 지울까요 확인 = { name }
   const [people, setPeople] = useState({}), [renaming, setRenaming] = useState(null), [renameText, setRenameText] = useState(''), [hov, setHov] = useState(null), [drag, setDrag] = useState(null), [over, setOver] = useState(null), clickT = useRef(null)
   // 서버가 아는 칠판만(+ 지금 것) — 빈 칠판도 남음: 열 때 서버에 빈 칠판을 바로 만듦(App, 2026-10-28 사용자: 칠판을 먼저 여러 개 만들고 작업할 수도).
   // 서버에 없는 이름 = 지운 칠판·팀 서버에서 우리 팀 것이 아닌 칠판(옛 기본 main 등)이라 빼야 함
@@ -290,7 +291,20 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, children }) { 
     {/* 줄 메뉴 = 우클릭·⋯(2026-10-28 — 우클릭을 모르면 못 찾음). 이름 바꾸기 = 문서 이름만(주소 그대로), 지우기는 없음(남과 같이 쓰는 칠판일 수 있음) — 「목록에서 빼기」 = 이 브라우저 목록에서만(칠판은 그대로) */}
     {menu && <FloatMenu at={menu} onClose={() => setMenu(null)} entries={[['이름 바꾸기', 'F2', () => startRename(menu.name)], ['새 탭에서 열기', '', () => { setMenu(null); window.open(boardUrl(menu.name), '_blank', 'noopener') }],
       ['주소 복사', '', () => { setMenu(null); navigator.clipboard?.writeText(location.origin + boardUrl(menu.name)) }], ['내려받기 (.ecad)', '', () => download(menu.name)],
-      ...(menu.mine && menu.name !== DOC_NAME ? ['-', ['목록에서 빼기', '', () => { setMenu(null); forgetBoard(menu.name); loadMine() }]] : [])]} />}
+      '-', ...(menu.mine && menu.name !== DOC_NAME ? [['목록에서 빼기', '', () => { setMenu(null); forgetBoard(menu.name); loadMine() }]] : []), ['칠판 지우기…', '', () => { setMenu(null); setDel({ name: menu.name }) }]]} />}
+    {/* 칠판 지우기(2026-10-28 사용자) — 앱 안 확인 창(브라우저 confirm은 칠판 조작을 막음), 지금 들어와 있는 사람을 보여 줌. 서버 휴지통으로 옮김 */}
+    {del && (() => { const t = boardTitle(del.name, findB(del.name)?.title), here = (people[del.name] || []).filter(p => p.id !== myId)
+      const go = async () => { setDel(null); if (!(await api.deleteBoard(del.name))) { setWhy('지우지 못했어요 — 서버 연결을 확인해 주세요'); return }
+        forgetBoard(del.name); if (del.name === DOC_NAME) location.href = location.pathname; else loadMine() }   // 지금 칠판을 지웠으면 쓰던(마지막) 칠판으로
+      return <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onPointerDown={e => { if (e.target === e.currentTarget) setDel(null) }}>
+        <div data-testid="board-delete" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') setDel(null) }} style={{ width: 320, display: 'flex', flexDirection: 'column', gap: 10, padding: 18, borderRadius: 12, background: C.card, border: `1px solid ${C.line}`, boxShadow: '0 8px 28px rgba(0,0,0,.25)', font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
+          <div style={{ font: "700 15px 'Pretendard', sans-serif" }}>「{t}」 칠판을 지울까요?</div>
+          <div style={{ color: C.muted, fontSize: 12, lineHeight: 1.55 }}>같이 쓰는 사람도 이 칠판을 더는 못 열어요(대화·그림·PDF 포함). 서버 휴지통으로 옮겨서, 서버를 맡은 사람은 되살릴 수 있어요.</div>
+          {here.length > 0 && <div data-testid="board-delete-here" style={{ fontSize: 12, color: '#d44c47', fontWeight: 600 }}>지금 {here.map(p => p.name).join(', ')} 님이 이 칠판에 있어요</div>}
+          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+            <button autoFocus onClick={() => setDel(null)} style={{ all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 6, border: `1px solid ${C.line}` }}>취소</button>
+            <button data-testid="board-delete-ok" onClick={go} style={{ all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 6, background: '#d44c47', color: '#fff', fontWeight: 600 }}>지우기</button>
+          </div></div></div> })()}
   </div>
 }
 
@@ -515,7 +529,7 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
   // 공동작업 맞추기(2026-10-18) — 고친 뒤 0.6초 쉬면 바뀐 도형만 보내고(부분 저장), 2초마다 남이 바꾼 것을 받아 내 안 보낸 변경을 그 위에 다시 얹음
   const pull = useCallback(async (since = null, wait = 0) => {
     const S = sync.current; if (!S.base || S.busy || ed.current?.syncBusy?.()) return   // 글 고치는 중엔 받음(고치는 그 도형은 내 것이 이김 — rebase) — 2026-10-19
-    const doc = await api.since(since ?? S.rev, wait).catch(() => null); if (!doc) return
+    const doc = await api.since(since ?? S.rev, wait).catch(() => null); if (doc === 'gone') { setGone(true); return } if (!doc) return
     if (S.busy || ed.current?.syncBusy?.()) return   // 받는 사이 끌기 등을 시작했으면 다음 차례에
     // 늦게 온 옛 판·내 저장의 메아리(기다리는 사이 내가 그 판까지 저장함) = 받을 것 없음 — 덮으면 방금 되돌린 것이 다시 살아났음(2026-10-28 flow35, 빈 칠판을 열 때 만들면서 자주 걸림).
     // 같은 판 번호는 저장 뒤 남의 변경을 받는 길(`flush` → pull(rev0))만 받음
@@ -532,6 +546,7 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
     S.busy = true; const rev0 = S.rev
     try {
       const rev = await api.patch({ base: rev0, ...p })
+      if (rev === 'gone') { setGone(true); return }   // 다른 창에서 지운 칠판 — 저장 안 됨(띠로 알림)
       if (rev == null) { setStatus('서버 저장 실패 — 다시 들어가야 할 수도(비밀번호)'); return }
       S.base = snapshotModel(m); S.rev = rev; setSaveNote(`서버 「${DOC_NAME}」에 저장됨`)
       if (rev > rev0 + 1) { S.busy = false; await pull(rev0) }   // 그사이 남도 고쳤음 — 바로 받아 옴
@@ -590,6 +605,7 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
   const [chatAsk, setChatAsk] = useState(null)   // 칠판 우클릭에서 대화창에 시킨 질문(「정리 문서 만들기」)
   const [chatFocus, setChatFocus] = useState(null)   // 빈 칠판 안내 → 대화창 입력 칸(그 길 이름표까지)
   const [meetSt, setMeetSt] = useState('')   // 「🎙 회의」 실시간 회의록 상태(Editor가 알려 줌) — '' | start | listen | reconnect | stopping | saved
+  const [gone, setGone] = useState(false)   // 열어 둔 사이 누가 이 칠판을 지움(2026-10-28 — 받아 오기·저장이 410)
   const [aiBusy, setAiBusy] = useState('')   // 칠판 위 「📄 정리 문서 만드는 중…」 알약(대화창이 알려 줌)
   const [helpOpen, setHelpOpen] = useState(false), [findOpen, setFindOpen] = useState(0), [marks, setMarks] = useState([])   // findOpen = 열 때마다 새 번호(다시 Ctrl+F = 칸에 다시 포커스)
   const keyAct = useRef(null)
@@ -708,6 +724,10 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
           const u = (e.dataTransfer?.getData('text/uri-list') || '').split(/\r?\n/).find(x => x && !x.startsWith('#')); if (u) ed.current?.dropUrl(u, e.dataTransfer.getData('text/x-mb-caption') || '', e) }}
         style={{ flex: 1, position: 'relative', overflow: 'hidden', '--mb-right-inset': narrow && chatOpen ? `${chatW + 12}px` : '0px' }}>
         <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} phone={phone} keepTool={keepTool} onKeepTool={toggleKeep} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onAddSymbol={(items, name, folder) => setSymAdd({ items, name, folder })} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onAsk={(text, kind) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind }) }} />
+        {gone && <div data-testid="gone-banner" style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 25, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 10, background: '#d44c47', color: '#fff', font: "600 13px 'Pretendard', sans-serif", boxShadow: '0 4px 14px rgba(0,0,0,.2)' }}>
+          이 칠판은 다른 창에서 지워졌어요 — 고친 것은 저장되지 않아요
+          <button onClick={saveFile} style={{ all: 'unset', cursor: 'pointer', padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,.22)' }}>내려받기</button>
+          <button onClick={() => { forgetBoard(DOC_NAME); location.href = location.pathname }} style={{ all: 'unset', cursor: 'pointer', padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,.22)' }}>쓰던 칠판으로</button></div>}   {/* 2026-10-28 칠판 지우기 — 열어 둔 창 */}
         {helpOpen && <HelpCard onClose={() => setHelpOpen(false)} />}
         {symAdd && <SymAddForm init={symAdd} folders={mySyms.folders} onClose={() => setSymAdd(null)} onOk={(name, folder) => {
           const ok = myApi.addSymbol(name, folder, symAdd.items); setSymAdd(null)
@@ -748,6 +768,17 @@ function TeamBlocked({ ss, onLogin }) {
       <button onClick={onLogin} style={{ all: 'unset', cursor: 'pointer', textAlign: 'center', padding: '6px 0', borderRadius: 6, color: C.ink, border: `1px solid ${C.line}` }}>다른 비밀번호로 들어가기</button>
     </div></div>
 }
+// 지운 칠판 링크로 들어옴(2026-10-28) — 열 때 빈 칠판을 만드는 앱이라 그대로 두면 같은 주소에 빈 칠판이 다시 생김
+function GoneBoard() {
+  const go = q => { location.href = location.pathname + q }
+  return <div data-testid="board-gone" style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
+    <div style={{ width: 320, display: 'flex', flexDirection: 'column', gap: 10, padding: 20, borderRadius: 12, border: `1px solid ${C.line}`, background: C.card, boxShadow: '0 6px 20px rgba(0,0,0,.12)' }}>
+      <div style={{ font: "700 16px 'Pretendard', sans-serif" }}>지워진 칠판이에요</div>
+      <div style={{ color: C.muted, fontSize: 12, lineHeight: 1.5 }}>누군가 이 칠판을 지웠어요. 서버 휴지통에 남아 있어서, 꼭 필요하면 서버를 맡은 사람이 되살릴 수 있어요.</div>
+      <button onClick={() => go(`?board=${newBoardName()}`)} style={{ all: 'unset', cursor: 'pointer', textAlign: 'center', padding: '7px 0', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>＋ 새 칠판</button>
+      <button onClick={() => go('')} style={{ all: 'unset', cursor: 'pointer', textAlign: 'center', padding: '6px 0', borderRadius: 6, color: C.ink, border: `1px solid ${C.line}` }}>쓰던 칠판으로</button>
+    </div></div>
+}
 function Gate() {
   const [gate, setGate] = useState('check'), [ss, setSs] = useState({})
   const check = async () => {   // 로그인이 필요한가 → (팀 서버면) 이 칠판을 써도 되나 — 주소에 칠판이 없으면 우리 팀 첫 칠판으로
@@ -755,6 +786,7 @@ function Gate() {
     if (s.auth && !s.ok) { setGate('login'); return }
     if (s.team && AUTO_BOARD && s.home && (AUTO_BOARD === 'new' || s.board_ok === false)) { location.replace(`${location.pathname}?board=${encodeURIComponent(s.home)}`); return }   // 주소 없이 들어온 팀 = 우리 팀 첫 칠판(새 비밀 주소를 팀이 가져가지 않게)
     if (s.team && s.board_ok === false) { setGate('blocked'); return }
+    if (s.gone) { forgetBoard(DOC_NAME); setGate('gone'); return }   // 지운 칠판 링크 = 빈 칠판을 만들지 않고 안내(2026-10-28), 「마지막 칠판」에서도 뺌
     // 남이 준 링크로 처음 연 칠판(이미 있고 내 목록에 없음) = 같이 쓰는 칠판 → 이름을 한 번 물음(혼자 쓰는 새 칠판은 안 물음 — 2026-10-27 Excalidraw처럼)
     if (s.exists && !isMyBoard(DOC_NAME) && !(() => { try { return localStorage.getItem('mb.name') } catch { return '' } })()) { setGate('name'); return }
     rememberBoard(DOC_NAME)   // 내 칠판 — 이 브라우저(만들거나 열어 본 것)
@@ -771,6 +803,7 @@ function Gate() {
   if (gate === 'login') return <LoginForm onDone={check} />
   if (gate === 'name') return <LoginForm nameOnly title={ss.title} onDone={check} />
   if (gate === 'blocked') return <TeamBlocked ss={ss} onLogin={() => setGate('login')} />
+  if (gate === 'gone') return <GoneBoard />
   return <App team={ss.team === null ? '관리자' : ss.team} openServer={!ss.auth} />
 }
 createRoot(document.getElementById('root')).render(VIEW_TOKEN ? <Viewer token={VIEW_TOKEN} /> : <Gate />)   // ?view= = 게시 링크(보기·발표만)

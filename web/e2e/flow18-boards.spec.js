@@ -91,3 +91,30 @@ test('「▾ › 파일로 새 칠판」 = 지금 칠판은 그대로 · 줄 ⋯
   await page.getByRole('button', { name: '공유' }).click()
   await expect(page.getByTestId('share-code')).toContainText(`${b.slice(0, 4)} ${b.slice(4)}`)   // 칠판 코드는 공유 창에(줄엔 안 보임)
 })
+
+test('칠판 지우기 — 확인 창(지금 있는 사람) · 휴지통으로 · 열어 둔 창 = 띠 · 지운 링크 = 안내(빈 칠판 안 생김)', async ({ page, browser }) => {
+  const a = `보드D${Date.now().toString(36)}`, keep = `보드K${Date.now().toString(36)}`
+  await openBoard(page, keep)
+  await openBoard(page, a); await setCam(page)
+  await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 200, y: 100 }); await waitSaved(page)
+  const c2 = await browser.newContext(), other = await c2.newPage()
+  await openBoard(other, a, { who: '박기자' })
+
+  await page.getByTestId('dock-board').click()
+  const row = page.getByTestId('board-form').locator(`[data-board="${a}"]`)
+  await expect(row.getByTestId('board-people')).toHaveText(/시.*박|박.*시/, { timeout: 6000 })
+  await row.click({ button: 'right' })
+  await page.locator('div[style*="z-index: 30"] > div > button', { hasText: '칠판 지우기…' }).click()
+  await expect(page.getByTestId('board-delete')).toContainText(`「${a}」 칠판을 지울까요?`)   // 조사는 이름과 상관없게
+  await expect(page.getByTestId('board-delete-here')).toContainText('박기자')          // 지금 들어와 있는 사람
+  await page.getByTestId('board-delete-ok').click()
+  await expect(page).toHaveURL(new RegExp(`board=${encodeURIComponent(keep)}$`))      // 지금 칠판을 지움 = 쓰던 칠판으로
+  expect(savedDoc(a)).toBeNull()
+  await expect(page.getByTestId('board-form').locator(`[data-board="${a}"]`)).toHaveCount(0)
+
+  await expect(other.getByTestId('gone-banner')).toBeVisible({ timeout: 8000 })        // 열어 둔 창 = 「지워졌어요」 띠
+  await other.goto(`/?board=${a}`)
+  await expect(other.getByTestId('board-gone')).toBeVisible()                           // 지운 링크 = 안내, 빈 칠판을 다시 만들지 않음
+  expect(savedDoc(a)).toBeNull()
+  await c2.close()
+})

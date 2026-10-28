@@ -91,3 +91,29 @@ def test_board_title_is_separate_from_address_and_people_per_board(server):
     assert _req(f"{base}/api/presence/{n}", "POST", {"id": "c1", "name": "가"})[0] == 200
     ppl = _req(base + "/api/people?names=" + ",".join([n, "zzzzzzzz"]))[1]["people"]
     assert ppl == {n: [{"id": "c1", "name": "가"}], "zzzzzzzz": []}
+
+
+def test_delete_board_moves_to_trash_and_blocks_revival(server):
+    """2026-10-28 칠판 지우기 — 파일 전부 휴지통(`trash/<이름>-<때>/`), 지운 이름은 기억해 열기·저장이 되살리지 않음(410), 게시 링크도 끊김."""
+    base, _, data = server
+    n = "d3l3t3m3"
+    assert _req(f"{base}/api/doc/{n}", "PUT", DOC)[0] == 200
+    assert _req(f"{base}/api/chatlog/{n}", "PUT", {"messages": []})[0] == 200
+    assert _req(f"{base}/api/publish/{n}", "POST", {"on": True})[0] == 200
+    (data / f"{n}.img").mkdir()
+    (data / f"{n}.img" / "1_abcdef.png").write_bytes(b"x")
+    keep = "d3l3t3m3x"   # 이름이 앞만 같은 칠판은 그대로(「이름 + .」만 옮김)
+    assert _req(f"{base}/api/doc/{keep}", "PUT", DOC)[0] == 200
+    st, d = _req(f"{base}/api/delete/{n}", "POST", {})
+    assert st == 200 and d["moved"] == 3                                            # .ecad·.chat.json·.img/
+    assert not any(p.name == n or p.name.startswith(n + ".") for p in data.iterdir())
+    trash = [p for p in (data / "trash").iterdir() if p.is_dir()]
+    assert len(trash) == 1 and (trash[0] / f"{n}.ecad").exists() and (trash[0] / f"{n}.img" / "1_abcdef.png").exists()
+    assert (data / f"{keep}.ecad").exists()
+    assert _req(base + "/api/session?board=" + n)[1].get("gone") is True
+    assert _req(f"{base}/api/doc/{n}")[0] == 410
+    assert _req(f"{base}/api/since/{n}?rev=0")[0] == 410
+    assert _req(f"{base}/api/patch/{n}", "POST", {"upsert": [], "delete": []})[0] == 410   # 열어 둔 창의 저장
+    assert _req(f"{base}/api/doc/{n}", "PUT", DOC)[0] == 410
+    assert not (data / f"{n}.ecad").exists()
+    assert n not in json.loads((data / "publish.json").read_text(encoding="utf-8"))           # 게시 링크도 끊김

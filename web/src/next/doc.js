@@ -76,8 +76,8 @@ export const api = {
   // 팀 서버(§8 항목67)면 + { team(관리자 = null), board_ok(이 칠판을 써도 되나), home(우리 팀 첫 칠판) }
   session: async (board = DOC_NAME) => { try { const r = await fetch(`/api/session?board=${encodeURIComponent(board)}`, { cache: 'no-store' }); return r.ok ? await r.json() : { auth: false, ok: true, none: true } } catch { return { auth: false, ok: true, none: true } } },
   login: async password => (await post('/api/login', { password })).ok,
-  patch: async body => { const r = await post(`/api/patch/${B}`, body); return r.ok ? (await r.json()).rev : null },
-  since: async (rev, wait = 0) => { const r = await fetch(`/api/since/${B}?rev=${rev}${wait ? `&wait=${wait}` : ''}`, { cache: 'no-store' }); return r.status === 200 ? parseDoc(await r.text()) : null },   // wait = 바뀔 때까지 서버가 기다림(롱 폴링)
+  patch: async body => { const r = await post(`/api/patch/${B}`, body); return r.status === 410 ? 'gone' : r.ok ? (await r.json()).rev : null },   // 'gone' = 다른 창에서 지운 칠판(2026-10-28)
+  since: async (rev, wait = 0) => { const r = await fetch(`/api/since/${B}?rev=${rev}${wait ? `&wait=${wait}` : ''}`, { cache: 'no-store' }); return r.status === 410 ? 'gone' : r.status === 200 ? parseDoc(await r.text()) : null },   // 'gone' = 지운 칠판 · wait = 바뀔 때까지 서버가 기다림(롱 폴링)
   leave: id => { try { fetch(`/api/presence/${B}`, { method: 'POST', headers: J, body: JSON.stringify({ id, leave: true }), keepalive: true }) } catch { /* 닫히는 중 — 못 보내면 5초 뒤 빠짐 */ } },   // 창 닫힘 = 접속자에서 바로 빠짐(keepalive = 닫혀도 보냄)
   presence: async (id, name, sel = [], edit = '') => { try { const r = await post(`/api/presence/${B}`, { id, name, sel, edit }); return r.ok ? await r.json() : null } catch { return null } },   // → { people: 이름들, others: [{ id, name, sel, edit }] }
   getPublish: async () => { try { const r = await fetch(`/api/publish/${B}`, { cache: 'no-store' }); return r.ok ? (await r.json()).token : null } catch { return null } },
@@ -89,6 +89,7 @@ export const api = {
   boards: async () => { try { const r = await fetch('/api/boards', { cache: 'no-store' }); return r.ok ? (await r.json()).boards || [] : [] } catch { return [] } },   // 칠판 목록(최근 고친 것부터) — 비밀번호 없는 서버는 빈 목록(전체 목록 = 남의 비밀 주소)
   boardByCode: async code => { try { const r = await fetch(`/api/boards?code=${encodeURIComponent(code)}`, { cache: 'no-store' }); return r.ok ? (await r.json()).boards || [] : [] } catch { return [] } },   // 칠판 코드 → 그 코드로 끝나는 칠판(「칠판 코드로 열기」, 최근 고친 것부터)
   people: async names => { if (!names.length) return {}; try { const r = await fetch(`/api/people?names=${names.map(encodeURIComponent).join(',')}`, { cache: 'no-store' }); return r.ok ? (await r.json()).people || {} : {} } catch { return {} } },   // 칠판마다 지금 접속자 { 이름: [{ id, name }] }(칠판 판 줄 동그라미, 2026-10-28)
+  deleteBoard: async name => { try { return (await post(`/api/delete/${encodeURIComponent(name)}`, {})).ok } catch { return false } },   // 칠판 지우기 = 서버 휴지통으로(2026-10-28)
   putDoc: async (name, doc) => { try { return (await fetch(`/api/doc/${encodeURIComponent(name)}`, { method: 'PUT', headers: J, body: JSON.stringify(doc) })).ok } catch { return false } },   // 「파일로 새 칠판」(2026-10-28 — 지금 칠판을 덮지 않고 새 주소에)
   getDoc: async name => { try { const r = await fetch(`/api/doc/${encodeURIComponent(name)}`, { cache: 'no-store' }); return r.ok ? await r.text() : null } catch { return null } },   // 다른 칠판 내려받기(줄 ⋯)
   setTitle: async (name, title) => { try { return (await post(`/api/patch/${encodeURIComponent(name)}`, { meta: { title } })).ok } catch { return false } },   // 칠판 이름 바꾸기 = 문서 `title`만(주소 그대로 — 남에게 준 링크가 안 끊김, 2026-10-28). 지금 칠판은 받아 오기로 따라옴
