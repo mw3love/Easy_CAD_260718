@@ -27,7 +27,7 @@ test('왼쪽 판 — 칸 바꾸기 · 열린 칸 다시 누르면 접힘(칠판 
   await page.getByRole('button', { name: '프레임', exact: true }).click(); await clickScene(page, 100, 100)   // 위 막대 「프레임」 클릭만 = 16:9 프레임
   await waitSaved(page)
   const card = page.getByTestId('frames-card')
-  await expect(card.getByRole('button', { name: /발표/ })).toBeVisible()
+  await expect(card.getByRole('button', { name: '▶ 발표' })).toBeVisible()
   await expect(card.getByTitle('접기')).toHaveCount(0)                              // 카드마다 접기는 없음
   await expect(page.getByTestId('dock-panel').getByText('미니맵')).toBeVisible()
   const w0 = (await page.getByTestId('board').boundingBox()).width

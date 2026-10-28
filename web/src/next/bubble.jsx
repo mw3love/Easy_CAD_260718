@@ -41,9 +41,9 @@ export function Bubble({ id, info, cam, size, thread = [], onThread, onClose, on
     onThread(next); setDraft(''); setBusy(true); setErr('')
     try {
       let model = ''; try { model = localStorage.getItem('magic-board-model') || '' } catch { /* 서버 기본 모델 */ }
-      const image = info.image ? await shrinkImage(info.image) : ''
+      const image = info.image ? await shrinkImage(info.image) : '', images = info.images ? await Promise.all(info.images.map(shrinkImage)) : []   // images = 프레임 안 그림(서버 `see`가 1024로 다시 줄임)
       const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() },
-        body: JSON.stringify({ kind: 'bubble', board: DOC_NAME, ...(model ? { model } : {}), item: { type: info.type, text: info.text, ...(info.edit ? { edit: info.edit === 'label' ? 'text' : info.edit } : {}), ...(image ? { image } : {}) }, messages: next.map(({ role, content }) => ({ role, content })) }) })
+        body: JSON.stringify({ kind: 'bubble', board: DOC_NAME, ...(model ? { model } : {}), item: { type: info.type, text: info.text, ...(info.edit ? { edit: info.edit === 'label' ? 'text' : info.edit } : {}), ...(image ? { image } : {}), ...(images.length ? { images } : {}) }, messages: next.map(({ role, content }) => ({ role, content })) }) })
       const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
       if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
       const a = { role: 'assistant', content: d.content || '', at: Date.now(), model: d.model, ...(d.credits ? { credits: d.credits } : {}) }
@@ -71,7 +71,7 @@ export function Bubble({ id, info, cam, size, thread = [], onThread, onClose, on
       border: `1px solid ${C.line}`, borderRadius: 12, boxShadow: '0 6px 20px rgba(0,0,0,.18)', font: `400 13px/1.55 ${F}` }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 8px 6px 12px', borderBottom: `1px solid ${C.line}` }}>
       <b style={{ fontSize: 13 }}>💬 {bubbleKind(info.type)} 말풍선</b>
-      <span style={{ font: `400 11px ${F}`, color: C.muted }}>이것만 보고 답해요</span>
+      <span data-testid="bubble-scope" style={{ font: `400 11px ${F}`, color: C.muted }} title={info.cut ? '글이 길어 앞쪽 2만 자까지만 보내요' : undefined}>{info.inside ? `프레임 안 ${info.inside}개를 보고 답해요${info.cut ? ' · 글 일부만' : ''}` : '이것만 보고 답해요'}</span>
       <button data-testid="bubble-close" title="닫기(Esc) — 대화는 남아요" onClick={onClose} style={{ ...btn, border: 0, marginLeft: 'auto', fontSize: 14 }}>✕</button>
     </div>
     <div ref={list} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>

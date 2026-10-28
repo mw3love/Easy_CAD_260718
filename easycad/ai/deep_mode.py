@@ -14,7 +14,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import board_chat, board_report, kr_tools, live_card
-from . import gateway as gw
+from . import gateway as gw, see
 
 EDITOR_MODEL = "claude-opus-5-5"
 WRITER_MODEL = "claude-sonnet-5-5"
@@ -284,14 +284,15 @@ def material_text(plan: dict, mat: dict, board: str = "") -> str:
     return "\n".join(lines)
 
 
-def write(client, plan: dict, mat: dict, brief: dict, *, model: str = WRITER_MODEL, board: str = "", day: str = "") -> list:
-    """꼭지마다 body → 계획 꼭지에 body를 단 목록(못 쓴 꼭지는 빈 body — 칠판이 머리만 그림)."""
+def write(client, plan: dict, mat: dict, brief: dict, *, model: str = WRITER_MODEL, board: str = "", day: str = "", images=None) -> list:
+    """꼭지마다 body → 계획 꼭지에 body를 단 목록(못 쓴 꼭지는 빈 body — 칠판이 머리만 그림). images = 「이 칠판」 그림(`see`)."""
+    images = list(images or [])
     secs = plan.get("sections") or []
     who = (brief or {}).get("누구에게")
     shapes = sorted({s["shape"] for s in secs if s["shape"] in SCHEMA})
     system = WRITER.format(audience=who if who and who != AUTO else "처음 보는 사람", today=day or today(), schema="\n".join(f"- {sh}: {SCHEMA[sh]}" for sh in shapes))
-    r = client.chat.completions.create(model=model, max_tokens=8000, messages=[
-        {"role": "system", "content": system}, {"role": "user", "content": material_text(plan, mat, board) + "\n\n꼭지마다 body를 써서 JSON 하나로."}])
+    r = client.chat.completions.create(model=model, max_tokens=8000, messages=see.attach([
+        {"role": "system", "content": system}, {"role": "user", "content": material_text(plan, mat, board) + see.note(len(images)) + "\n\n꼭지마다 body를 써서 JSON 하나로."}], images))
     got = (parse_json(r.choices[0].message.content or "") or {}).get("sections") or []
     by_title = {str(s.get("title")): s.get("body") for s in got if isinstance(s, dict)}
     by_order = [s.get("body") if isinstance(s, dict) else None for s in got]
@@ -302,7 +303,7 @@ def write(client, plan: dict, mat: dict, brief: dict, *, model: str = WRITER_MOD
     return out
 
 
-def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: str = gw.BASE_URL, board: str = "", model: str = WRITER_MODEL, exa=None, kr=None, fit=None, image=None) -> dict:
+def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: str = gw.BASE_URL, board: str = "", model: str = WRITER_MODEL, exa=None, kr=None, fit=None, image=None, images=None) -> dict:
     """계획(사용자가 고친 것) → 재료 → 본문 → {"plan": {title, headline, sources, sections[body]}, "model", "elapsed"}.
     image = 요약 그림 그리기(지시문 → {"img": 주소, "w", "h", "model"}) — 서버가 그림을 칠판 옆 폴더에 두고 주소만. 없으면 그 꼭지는 못 그림."""
     t0, day = time.time(), today()
@@ -311,7 +312,7 @@ def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: st
     li = next((i for i, s in enumerate(plan["sections"]) if s["shape"] == "움직이는 카드"), None)
     pi = next((i for i, s in enumerate(plan["sections"]) if s["shape"] == SUMMARY), None)
     with ThreadPoolExecutor(max_workers=2) as ex:   # 원리 꼭지 카드 = 본문과 동시에(4단계 — 재료는 판 전체)
-        fw = ex.submit(write, client, plan, mat, brief, model=model, board=board, day=day)
+        fw = ex.submit(write, client, plan, mat, brief, model=model, board=board, day=day, images=images)
         fl = ex.submit(_live, client, plan, mat, li, brief) if li is not None else None
         try:   # 본문 한 번이 실패해도 판은 꼭지 머리로 남김 — 모은 재료(크레딧)가 살고, 꼭지마다 「다시 쓰기」로 채움(2026-10-26 점검: 전엔 판 전체 실패)
             secs, fail = fw.result(), ""
@@ -426,7 +427,7 @@ def redo_text(plan: dict, idx: list, mat: dict, ask: str, board: str = "") -> st
     return "\n".join(lines) + "\n\n고칠 꼭지마다 body를 다시 써서 JSON 하나로."
 
 
-def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_url: str = gw.BASE_URL, board: str = "", model: str = WRITER_MODEL, exa=None, kr=None, fit=None, image=None) -> dict:
+def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_url: str = gw.BASE_URL, board: str = "", model: str = WRITER_MODEL, exa=None, kr=None, fit=None, image=None, images=None) -> dict:
     """판(꼭지마다 body + sources) + 고른 꼭지 번호 + 고칠 말 → {"sections": [{"i", …꼭지(새 body)}], "sources"(판 전체 — 새 출처는 뒤 번호), "model", "elapsed", "missing",
     "changes": [{"i", "title", "text"}](기자가 적은 「무엇을 고쳤나·못 한 까닭」 — 계획엔 안 넣고 대화창 답에만)}.
     출처 카드는 다시 쓸 게 없어 뺌(칠판이 판에서 쓴 번호로 채움). 움직이는 카드 꼭지 = 그 카드를 고칠 말대로(카드가 없으면 새로).
@@ -455,8 +456,8 @@ def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_
         shapes = sorted({secs[i]["shape"] for i in words} | ({sh for sh in SCHEMA if sh not in ("움직이는 카드", "출처 카드", SUMMARY)} if user_ask else set()))
         who = (brief or {}).get("누구에게")
         system = WRITER.format(audience=who if who and who != AUTO else "처음 보는 사람", today=day, schema="\n".join(f"- {sh}: {SCHEMA[sh]}" for sh in shapes if sh in SCHEMA)) + REDO.format()
-        r = client.chat.completions.create(model=model, max_tokens=6000, messages=[
-            {"role": "system", "content": system}, {"role": "user", "content": redo_text(plan, words, mat, ask, board)}])
+        r = client.chat.completions.create(model=model, max_tokens=6000, messages=see.attach([
+            {"role": "system", "content": system}, {"role": "user", "content": redo_text(plan, words, mat, ask, board) + see.note(len(images or []))}], images))
         got = [s for s in (parse_json(r.choices[0].message.content or "") or {}).get("sections") or [] if isinstance(s, dict)]
         out = {}
         for k, i in enumerate(words):   # 제목이 조금 바뀌어 와도 차례로

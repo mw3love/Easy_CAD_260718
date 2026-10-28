@@ -88,7 +88,7 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(srv.gw, "resolve_api_key", lambda explicit="": "test-key")
     seen = []
 
-    def fake_make(client, material, ask="", *, prev_html="", model=board_report.REPORT_MODEL):
+    def fake_make(client, material, ask="", *, prev_html="", model=board_report.REPORT_MODEL, images=None):
         seen.append({"material": material, "ask": ask, "prev": prev_html})
         return {"html": "<html><title>T</title></html>", "title": "T", "model": model, "elapsed": 0.1, "tone": "calm", "unchecked": ["4,800"] if "합계" in ask else []}
     monkeypatch.setattr(srv.board_report, "make", fake_make)

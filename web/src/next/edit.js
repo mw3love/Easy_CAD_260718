@@ -363,4 +363,6 @@ export function readingOrder(boxes, mode = 'rows') {
 export function orderedFrames(items) {
   return items.map((it, i) => [it, i]).filter(([it]) => it.type === 'frame').sort((a, b) => (a[0].no ?? 1e9) - (b[0].no ?? 1e9) || a[1] - b[1]).map(([it]) => it)
 }
+// 발표에 나오는 프레임(2026-10-28 사용자) — 프레임 `skip: true` = 「발표 안 함」(칠판엔 그대로, 발표·「프레임만」 내보내기에서 빠짐 — 토론용 묶음 등)
+export const presentFrames = items => orderedFrames(items).filter(f => !f.skip)
 export function setFrameOrder(items, ids) { const no = new Map(ids.map((id, i) => [id, i + 1])); return items.map(it => (no.has(it._id) ? { ...it, no: no.get(it._id) } : it)) }

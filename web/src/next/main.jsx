@@ -733,7 +733,7 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
           </div>}</BoardForm>,
         shape: <Palette docked lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} mine={{ mine: mySyms, api: myApi }} say={setStatus} />,
         frame: orderedFrames(model.items).length ? <Frames docked items={model.items} sel={selKey ? selKey.split(',') : []} onReorder={ids => ed.current?.reorderFrames(ids)} onRename={(id, n) => ed.current?.renameFrame(id, n)} onGo={id => ed.current?.goFrame(id)} onPresent={id => ed.current?.startPresent(id)}
-          onExport={id => { ed.current?.setSel([id]); setTimeout(() => setExportOpen(true)) /* 내보내기 창은 열 때 고른 것을 읽음 — 고른 것이 바뀐 다음에 열기 */ }} onRemove={id => ed.current?.removeFrame(id)} dark={dark} />
+          onExport={id => { ed.current?.setSel([id]); setTimeout(() => setExportOpen(true)) /* 내보내기 창은 열 때 고른 것을 읽음 — 고른 것이 바뀐 다음에 열기 */ }} onRemove={id => ed.current?.removeFrame(id)} onSkip={(id, s) => ed.current?.skipFrames([id], s)} dark={dark} />
           : <div data-testid="frames-empty" style={{ padding: '10px 12px', color: C.muted, fontSize: 12, lineHeight: 1.6 }}><div style={{ font: "700 15px 'Pretendard', sans-serif", color: C.ink, marginBottom: 6 }}>프레임</div>아직 없어요 — 위 막대 「프레임」을 눌러 칠판에서 영역을 감싸면 여기에 쌓여요(순서 = 출력·발표 순서).</div>,
         layer: <Layers docked model={model} setModel={setModel} active={activeLayer} setActive={setActiveLayer} onChanged={onCommit} dark={dark} /> }} />}
       {/* --mb-right-inset = 뜬 대화창 폭 — 우상 속성·우하 미니맵 카드가 그만큼 왼쪽으로 비킴 */}

@@ -10,7 +10,7 @@ import html as _html
 import re
 import time
 
-from easycad.ai import gateway as gw
+from easycad.ai import gateway as gw, see
 
 REPORT_MODEL = "claude-opus-5-5"   # 실측 40~55초·약 $0.10~0.15 — sonnet-5-5는 22초·$0.04지만 조금 단순(계획서 §8 항목61)
 MAX_MATERIAL = 40_000              # 칠판 자료 상한(자)
@@ -139,18 +139,19 @@ def unchecked_numbers(doc: str, material: str, limit: int = 8) -> list:
     return out[:limit]
 
 
-def make(client, material: str, ask: str = "", *, prev_html: str = "", model: str = REPORT_MODEL) -> dict:
+def make(client, material: str, ask: str = "", *, prev_html: str = "", model: str = REPORT_MODEL, images=None) -> dict:
     """칠판 자료(+요청) → {"html", "title", "model", "elapsed", "tone", "unchecked"}. `prev_html`이 있으면 그 문서를 `ask`대로 고쳐 씀(톤은 말했을 때만 바꿈).
-    unchecked = 자료에서 그대로 못 찾은 숫자(`unchecked_numbers` — 서버가 답 글에 알림)."""
+    unchecked = 자료에서 그대로 못 찾은 숫자(`unchecked_numbers` — 서버가 답 글에 알림). images = 칠판 그림(`see` — 새로 쓸 때만, 고쳐 쓰기는 앞 문서가 재료)."""
     tone = tone_of(ask)
+    images = [] if prev_html else list(images or [])
     if prev_html:
         user = REVISE.format(prev=prev_html[:60_000], ask=ask or "더 보기 좋게") + ("\n\n" + tone_line(tone) if tone else "")
     else:
         tone = tone or "calm"
-        user = ("[칠판 자료]\n" + (material or "").strip()[:MAX_MATERIAL] + "\n\n" + (f"[요청]\n{ask}\n\n" if ask else "") + tone_line(tone) + "\n\n"
+        user = ("[칠판 자료]\n" + (material or "").strip()[:MAX_MATERIAL] + see.note(len(images)) + "\n\n" + (f"[요청]\n{ask}\n\n" if ask else "") + tone_line(tone) + "\n\n"
                 + "위 자료를 정리한 문서 한 장을 만들어 줘.")
     t0 = time.time()
-    r = client.chat.completions.create(model=model, max_tokens=MAX_TOKENS, messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}])
+    r = client.chat.completions.create(model=model, max_tokens=MAX_TOKENS, messages=see.attach([{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}], images))
     doc = clean_html(r.choices[0].message.content or "")
     if "<" not in doc:
         raise RuntimeError("정리 문서를 만들지 못했어요(HTML이 아닌 답)")

@@ -230,7 +230,7 @@ def test_server_picked_model_first_then_default_when_it_cannot(server, monkeypat
     base, srv = server
     used = []
 
-    def make(client, material, ask, prev_html="", model=""):
+    def make(client, material, ask, prev_html="", model="", images=None):
         used.append(model)
         if model == "bad-model":
             raise RuntimeError("정리 문서 HTML이 아닌 답")

@@ -42,7 +42,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXAMPLES, EXAMPLE = os.path.join(HERE, "examples"), "intro"   # 예시 칠판 원본(2026-10-28) — `examples/intro/intro.ecad`·`.chat.json`·`.img/`
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_bubble, board_chat, slides, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, model_pick, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_bubble, board_chat, slides, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, model_pick, route, see, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
@@ -172,7 +172,7 @@ class Handler(SimpleHTTPRequestHandler):
             if kind == "live":   # 「+ › 움직이는 카드」(§8 항목66 4단계) — 하나만 따로, 재료 = 고른 것의 글. 앞 답이 카드이고 고칠 말이면 그 카드 고치기
                 t = str(last.get("content", ""))
                 fix = str(req.get("prev_html") or "") if req.get("prev_kind") == "live" and live_card.FOLLOW_WORDS.search(t) else ""
-                return self._live(t, ctx or str(last.get("context") or ""), key, fix)
+                return self._live(t, ctx or str(last.get("context") or ""), key, fix, see.clean(req.get("board_images")))
             reply = req.get("ask_reply") if isinstance(req.get("ask_reply"), dict) else None
             if not kind and reply:   # 되묻기 버튼 대신 입력 칸에 친 말(§8 항목64) — 그 말이 가리키는 버튼, 못 알아들으면 원래 1등 길(다시 안 물음)
                 kind = route.pick_from(str(req.get("ask_add") or ""), [str(c) for c in reply.get("choices") or []]) or str(reply.get("default") or "") or "chat"
@@ -215,9 +215,9 @@ class Handler(SimpleHTTPRequestHandler):
             if kind == "chat" and prev_html and not req.get("kind"):   # 정리 문서 바로 뒤 「더 짧게」 같은 말 = 그 문서 고치기(움직이는 카드 뒤면 그 카드 — §8 항목66 4-3)
                 kind = "live" if req.get("prev_kind") == "live" else "report"
             if kind == "live":
-                return self._live(str(last.get("content", "")), ctx or str(last.get("context") or ""), key, prev_html if req.get("prev_kind") == "live" else "")
+                return self._live(str(last.get("content", "")), ctx or str(last.get("context") or ""), key, prev_html if req.get("prev_kind") == "live" else "", see.clean(bimgs))
             if kind == "report":   # 「정리해 줘」 ① — 고른 것(없으면 칠판 전체)을 정리 문서 한 장으로(§8 항목61)
-                return self._report(self._name(str(req.get("board") or "")), str(last.get("content", "")), ctx or str(last.get("context") or ""), prev_html, key)
+                return self._report(self._name(str(req.get("board") or "")), str(last.get("content", "")), ctx or str(last.get("context") or ""), prev_html, key, see.clean(bimgs))
             if kind == "image":   # 「○○ 그려줘」 — 그림 후보(§8 항목61 ③-4): 칠판 옆 폴더에 두고 주소만 대화 기록에(기록이 그림으로 불지 않게)
                 name, prompt = self._name(str(req.get("board") or "")), str(last.get("content", ""))
                 if req.get("infographic"):   # 정리 문서의 「🎨 그림으로도」 — 같은 자료(고른 것, 없으면 칠판 전체)로 인포그래픽
@@ -286,8 +286,8 @@ class Handler(SimpleHTTPRequestHandler):
             if step == "build":
                 plan = d.get("plan") if isinstance(d.get("plan"), dict) else {}
                 uses_board = any(isinstance(s, dict) and s.get("source") == "board" for s in plan.get("sections") or [])
-                material = self._board_material(self._name(str(req.get("board") or ""))) if uses_board else ""
-                out = self._with("deep_write", deep_mode.WRITER_MODEL, lambda m: deep_mode.build(key, gw._client(key, base, timeout=600), topic, brief, plan, base_url=base, board=material, image=self._deep_image(str(req.get("board") or ""), key, base), model=m))
+                material, pics = self._board_see(self._name(str(req.get("board") or ""))) if uses_board else ("", [])
+                out = self._with("deep_write", deep_mode.WRITER_MODEL, lambda m: deep_mode.build(key, gw._client(key, base, timeout=600), topic, brief, plan, base_url=base, board=material, image=self._deep_image(str(req.get("board") or ""), key, base), model=m, images=pics))
                 sys.stderr.write("[딥모드 만들기] %s %.1f초 출처 %d%s\n" % (out["model"], out["elapsed"], len(out["plan"]["sources"]), " 재료 없음: " + ", ".join(out["missing"]) if out["missing"] else ""))
                 for w in out.get("switched") or []:   # 공공 데이터 → 웹 검색으로 갈아탄 꼭지(숫자 없음·다른 품목 — 실사용에서 얼마나 걸리나 보려고)
                     sys.stderr.write("[딥모드 웹으로] %s\n" % w)
@@ -296,8 +296,8 @@ class Handler(SimpleHTTPRequestHandler):
                 plan = d.get("plan") if isinstance(d.get("plan"), dict) else {}
                 idx = d.get("idx") if isinstance(d.get("idx"), list) else []
                 uses_board = any(isinstance(s, dict) and s.get("source") == "board" for j, s in enumerate(plan.get("sections") or []) if j in idx)
-                material = self._board_material(self._name(str(req.get("board") or ""))) if uses_board else ""
-                out = self._with("deep_write", deep_mode.WRITER_MODEL, lambda m: deep_mode.redo(key, gw._client(key, base, timeout=600), plan, idx, brief, str(d.get("ask") or ""), base_url=base, board=material, image=self._deep_image(str(req.get("board") or ""), key, base), model=m))
+                material, pics = self._board_see(self._name(str(req.get("board") or ""))) if uses_board else ("", [])
+                out = self._with("deep_write", deep_mode.WRITER_MODEL, lambda m: deep_mode.redo(key, gw._client(key, base, timeout=600), plan, idx, brief, str(d.get("ask") or ""), base_url=base, board=material, image=self._deep_image(str(req.get("board") or ""), key, base), model=m, images=pics))
                 sys.stderr.write("[딥모드 꼭지 다시] %s %.1f초 꼭지 %s%s\n" % (out["model"], out["elapsed"], [s["i"] for s in out["sections"]], " 못 씀: " + ", ".join(out["missing"]) if out["missing"] else ""))
                 return self._json(200, {"kind": "deep", "step": "section", **out, "credits": self._spent(key, base, b0)})
         except ValueError as e:
@@ -348,16 +348,18 @@ class Handler(SimpleHTTPRequestHandler):
         step, topic = d.get("step"), str(d.get("topic") or "")
         brief = d.get("brief") if isinstance(d.get("brief"), dict) else {}
         material = "" if brief.get("재료") == "웹 검색" else str(d.get("material") or "")[:slides.MAX_MATERIAL]
+        uids = [u for u in d.get("image_uids") or [] if isinstance(u, str)][:see.MAX_IMAGES] if brief.get("재료") != "웹 검색" else []
+        pics = see.from_doc(self._board_doc(self._name(str(req.get("board") or ""))), uids) if uids else []   # 고른 그림 = 칠판 파일에서(대화 기록엔 이름표만, 2026-10-28)
         base = self._base()
         b0 = self._balance(key, base)
         try:
             if step == "plan":
                 prev = d.get("prev") if isinstance(d.get("prev"), dict) else None
-                out = self._with("slides", slides.PLAN_MODEL, lambda m: slides.make_plan(gw._client(key, base, timeout=300), topic, brief, material=material, prev=prev, fix=str(d.get("fix") or "") if prev else "", model=m))
+                out = self._with("slides", slides.PLAN_MODEL, lambda m: slides.make_plan(gw._client(key, base, timeout=300), topic, brief, material=material, prev=prev, fix=str(d.get("fix") or "") if prev else "", model=m, images=pics))
                 sys.stderr.write("[발표 자료 계획] %s %.1f초 %d장\n" % (out["model"], out["elapsed"], len(out["plan"]["slides"])))
             elif step == "build":
                 plan = d.get("plan") if isinstance(d.get("plan"), dict) else {}
-                out = self._with("slides", slides.WRITER_MODEL, lambda m: slides.build(key, gw._client(key, base, timeout=600), topic, brief, plan, base_url=base, material=material, model=m, image=self._deep_image(str(req.get("board") or ""), key, base)))
+                out = self._with("slides", slides.WRITER_MODEL, lambda m: slides.build(key, gw._client(key, base, timeout=600), topic, brief, plan, base_url=base, material=material, model=m, image=self._deep_image(str(req.get("board") or ""), key, base), images=pics))
                 sys.stderr.write("[발표 자료 만들기] %s %.1f초 %d장 출처 %d\n" % (out["model"], out["elapsed"], len(out["deck"]["slides"]), len(out["deck"]["sources"])))
             else:
                 return self._json(400, {"error": "step"})
@@ -390,7 +392,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"kind": "bubble", "content": "말한 점만 고쳐서 이 그림을 바꿨어요.", "image_url": url, "model": out["model"], "elapsed": el, "credits": out.get("credits")})
         try:
             out = self._with("bubble", req.get("model") or gw.FALLBACK_DEFAULT_MODEL, lambda m: board_bubble.reply(
-                key, {"type": str(item.get("type") or ""), "text": str(item.get("text") or ""), "edit": str(item.get("edit") or "")}, req.get("messages") or [], model=m, image=image, base_url=base))
+                key, {"type": str(item.get("type") or ""), "text": str(item.get("text") or ""), "edit": str(item.get("edit") or "")}, req.get("messages") or [], model=m, image=image,
+                images=see.clean(item.get("images")), base_url=base))   # images = 프레임 안 그림(2026-10-28)
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         except Exception as e:
@@ -398,11 +401,11 @@ class Handler(SimpleHTTPRequestHandler):
         sys.stderr.write("[말풍선] %s %.1f초%s\n" % (out["model"], out["elapsed"], " (고침)" if out.get("edit") else ""))
         return self._json(200, {"kind": "bubble", **out, "credits": self._spent(key, base, b0)})
 
-    def _live(self, ask: str, material: str, key: str, prev_html: str = ""):
+    def _live(self, ask: str, material: str, key: str, prev_html: str = "", images=None):
         """움직이는 카드 하나 → {"kind": "live", "content", "title", "html", "model", "elapsed"} — 칠판에 붙이면 문서 카드 `live`(스크립트만 켠 칸).
         prev_html = 바로 앞 답이 움직이는 카드면 그 카드를 말대로 고침(정리 문서 `prev_html`과 같은 길)."""
         try:
-            out = self._with("live", live_card.LIVE_MODEL, lambda m: live_card.make(gw._client(key, self._base(), timeout=600), ask, material, prev_html=prev_html, model=m))
+            out = self._with("live", live_card.LIVE_MODEL, lambda m: live_card.make(gw._client(key, self._base(), timeout=600), ask, material, prev_html=prev_html, model=m, images=images))
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         except Exception as e:
@@ -423,27 +426,41 @@ class Handler(SimpleHTTPRequestHandler):
         tip = "\n\n선 굵기·색은 붙인 뒤 오른쪽 위 속성 카드 「선」에서 바로 바꿀 수 있어요." if re.search(r"굵|가늘|얇|색", ask) else ""
         return self._json(200, {"kind": "icon", "content": head + " — 누르면 칠판에 붙어요(선 하나하나 고칠 수 있어요)" + tip, **out, **getattr(self, "_extra", {})})
 
-    def _report(self, name: str, ask: str, material: str, prev_html: str, key: str):
-        """정리 문서 → {"kind": "report", "content", "title", "html", "model", "elapsed"} — 자료 = 고른 것의 글, 없으면 이 칠판 전체 글."""
-        if not material.strip() and not prev_html:
-            material = self._board_material(name)
-        if not material.strip() and not prev_html:
+    def _report(self, name: str, ask: str, material: str, prev_html: str, key: str, images=None):
+        """정리 문서 → {"kind": "report", "content", "title", "html", "model", "elapsed"} — 자료 = 고른 것의 글·그림, 없으면 이 칠판 전체 글·그림(`see`)."""
+        images = list(images or [])
+        if not material.strip() and not images and not prev_html:
+            material, images = self._board_see(name)
+        if not material.strip() and not images and not prev_html:
             return self._json(400, {"error": "정리할 것이 없어요 — 칠판에서 메모·글을 고르고 다시 물어 주세요"})
         try:
-            out = self._with("report", board_report.REPORT_MODEL, lambda m: board_report.make(gw._client(key, self._base(), timeout=600), material, ask, prev_html=prev_html, model=m))
+            out = self._with("report", board_report.REPORT_MODEL, lambda m: board_report.make(gw._client(key, self._base(), timeout=600), material, ask, prev_html=prev_html, model=m, images=images))
         except Exception as e:
             return self._json(502, {"error": f"정리 문서 실패: {gw.friendly_error(e)}"})
         sys.stderr.write("[정리 문서] %s %.1f초 %d자%s\n" % (out["model"], out["elapsed"], len(out["html"]), " 확인할 숫자 %d" % len(out["unchecked"]) if out.get("unchecked") else ""))
         tone = board_report.TONES.get(out.get("tone") or "", {}).get("name")
-        note = f"\n\n칠판 자료에서 그대로 찾지 못한 숫자: {', '.join(out['unchecked'])} — 계산한 값일 수 있어요. 문서에서 한 번 확인해 주세요" if out.get("unchecked") else ""
+        why = "그림에서 읽었거나 계산한 값일 수 있어요" if images and not prev_html else "계산한 값일 수 있어요"   # 숫자 대조는 글만 — 그림 속 숫자도 여기 걸림(2026-10-28 실측)
+        note = f"\n\n칠판 글에서 그대로 찾지 못한 숫자: {', '.join(out['unchecked'])} — {why}. 문서에서 한 번 확인해 주세요" if out.get("unchecked") else ""
         return self._json(200, {"kind": "report", "content": f"정리 문서 「{out['title']}」{f' · {tone} 톤' if tone else ''} — 칠판에 붙이면 인쇄용 문서 카드가 돼요{note}", **out})
 
-    def _board_material(self, name: str) -> str:
-        """이 칠판의 저장된 글 전부(「(메모) …」 줄들) — 고른 게 없을 때 정리 문서·인포그래픽의 자료."""
+    def _board_doc(self, name: str) -> dict:
+        """이 칠판의 저장된 문서(.ecad JSON), 없으면 {}."""
         if not name or not os.path.exists(self._doc_path(name)):
-            return ""
+            return {}
         with open(self._doc_path(name), encoding="utf-8") as f:
-            items = board_find.board_items(json.load(f))
+            return json.load(f)
+
+    def _board_see(self, name: str):
+        """이 칠판의 글 전부 + 그림(`see.MAX_IMAGES`장까지) — 정리 문서(고른 것 없음)·딥모드 「이 칠판」 재료. 그림만 있으면 글은 「(글 없음 — 그림만)」."""
+        doc = self._board_doc(name)
+        text, pics = self._board_material(name, doc), see.from_doc(doc)
+        if pics:
+            sys.stderr.write("[칠판 그림] %d장 같이 보냄\n" % len(pics))
+        return (text or ("(글 없음 — 그림만)" if pics else "")), pics
+
+    def _board_material(self, name: str, doc: dict | None = None) -> str:
+        """이 칠판의 저장된 글 전부(「(메모) …」 줄들) — 고른 게 없을 때 정리 문서·인포그래픽의 자료."""
+        items = board_find.board_items(doc if doc is not None else self._board_doc(name))
         return "\n\n".join(f"({board_find.KIND_NAME.get(it['type'], it['type'])}) {it['text']}" for it in items)
 
     def _save_img(self, name: str, data: bytes, ext: str) -> str:
@@ -1038,6 +1055,20 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 return self._json(502, {"error": f"글 읽기 실패: {gw.friendly_error(e)}"})
             sys.stderr.write("[글 읽기] %s %.1f초 %d자\n" % (out["model"], out["elapsed"], len(out["text"])))
+            return self._json(200, out)
+        if path == "/api/describe":   # 그림 설명 한두 줄 → 칠판이 그림 `alt`에(2026-10-28) — 본문 = {data: data: 그림 주소}. 화면 시험은 끔(`EASYCAD_DESCRIBE=off` — 크레딧)
+            req = self._body(30 * 1024 * 1024) or {}
+            url = str(req.get("data") or "")
+            if os.environ.get("EASYCAD_DESCRIBE") == "off" or not url.startswith("data:image/"):
+                return self._json(200, {"text": ""})
+            key = self._key()
+            if not key:
+                return self._no_key()
+            try:
+                out = board_ocr.describe(key, url, base_url=self._base())
+            except Exception as e:   # 설명은 덤 — 실패해도 그림은 그대로(칠판은 조용히 넘어감)
+                return self._json(502, {"error": f"그림 설명 실패: {gw.friendly_error(e)}"})
+            sys.stderr.write("[그림 설명] %s %.1f초 %d자\n" % (out["model"], out["elapsed"], len(out["text"])))
             return self._json(200, out)
         if path == "/api/stt-token":   # 대화창 🎤 — 실시간 받아쓰기 일회용 표(키는 서버에만, 2026-10-20)
             key = self._key()

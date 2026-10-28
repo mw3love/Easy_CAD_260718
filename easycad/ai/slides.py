@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import time
 
-from easycad.ai import deep_mode, gateway as gw
+from easycad.ai import deep_mode, gateway as gw, see
 
 PLAN_MODEL = "claude-sonnet-5-5"     # 장 계획 — 딥모드 편집장(opus)보다 싸고 빠르게(장 제목·요점만이라) — 추정, 실측 2026-10-28
 WRITER_MODEL = "claude-sonnet-5-5"   # 장마다 본문
@@ -68,20 +68,22 @@ def estimate(plan: dict) -> dict:
     return {"credits": [10 + 3 * n + 5 * web, 20 + 5 * n + 6 * web], "seconds": [15 + 2 * n, 30 + 4 * n]}
 
 
-def make_plan(client, topic: str, brief: dict, *, material: str = "", prev: dict | None = None, fix: str = "", model: str = PLAN_MODEL) -> dict:
+def make_plan(client, topic: str, brief: dict, *, material: str = "", prev: dict | None = None, fix: str = "", model: str = PLAN_MODEL, images=None) -> dict:
+    """images = 고른 것 속 그림(`see`) — 그림만 골라도 [고른 자료]로 짬."""
     t0 = time.time()
+    images = list(images or [])
     user = f"[주제]\n{topic}\n\n[질문지 답]\n{brief_text(brief)}"
-    if material:
-        user += f"\n\n[고른 자료]\n{material[:MAX_MATERIAL]}"
+    if material or images:
+        user += f"\n\n[고른 자료]\n{material[:MAX_MATERIAL]}{see.note(len(images))}"
     if prev:
         user += f"\n\n[앞 계획]\n" + "\n".join(f"{i + 1}. {s.get('title')} — {s.get('point')}" for i, s in enumerate(prev.get("slides") or [])) + f"\n\n[고칠 점]\n{fix}\n앞 계획에서 고칠 점만 반영해 다시."
-    r = client.chat.completions.create(model=model, max_tokens=3000, messages=[
-        {"role": "system", "content": PLANNER.format(n=count_of(brief))}, {"role": "user", "content": user}])
+    r = client.chat.completions.create(model=model, max_tokens=3000, messages=see.attach([
+        {"role": "system", "content": PLANNER.format(n=count_of(brief))}, {"role": "user", "content": user}], images))
     plan = clean_plan(deep_mode.parse_json(r.choices[0].message.content or ""))
     return {"plan": plan, "estimate": estimate(plan), "model": model, "elapsed": round(time.time() - t0, 1)}
 
 
-def material_text(plan: dict, mat: dict, board: str = "") -> str:
+def material_text(plan: dict, mat: dict, board: str = "", n_images: int = 0) -> str:
     lines = [f"[발표] {plan.get('title')}", "", "[장]"]
     for i, s in enumerate(plan["slides"]):
         lines.append(f"{i + 1}. {s['title']} — {s.get('point') or ''} · 출처 {s['source']}")
@@ -90,8 +92,8 @@ def material_text(plan: dict, mat: dict, board: str = "") -> str:
             lines.append("   [재료]\n" + "\n".join("   " + x for x in m["text"][:4000].splitlines()))
         elif s["source"] == "web":
             lines.append("   [재료 없음 — 숫자 없이]")
-    if board:
-        lines.append("\n[고른 자료]\n" + board[:MAX_MATERIAL])
+    if board or n_images:
+        lines.append("\n[고른 자료]\n" + board[:MAX_MATERIAL] + see.note(n_images))
     lines.append("\n[출처 번호]\n" + ("\n".join(f"[{x['n']}] {x['title']} — {x['url']}" for x in mat["sources"]) or "(없음)"))
     return "\n".join(lines)
 
@@ -104,14 +106,14 @@ def cover_prompt(plan: dict) -> str:
     return COVER.format(title=plan["title"], points=" · ".join(s["title"] for s in plan["slides"][1:5]))
 
 
-def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: str = gw.BASE_URL, material: str = "", model: str = WRITER_MODEL, exa=None, image=None) -> dict:
+def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: str = gw.BASE_URL, material: str = "", model: str = WRITER_MODEL, exa=None, image=None, images=None) -> dict:
     """장 계획 → {"deck": {"title", "slides": [{title, layout, bullets, notes, …}], "sources", "cover"?}, "model", "elapsed", "missing"}. exa = 시험용.
     image = 표지 그림 그리기(서버 `_deep_image` — 지시문 → {"img", "w", "h", "model"}), 장 본문을 쓰는 동안 같이(3단계 — 그림 약 12초·12크레딧이 기다림에 안 더해지게)."""
     if image is not None:   # 표지 그림은 장 계획만으로 그림 — 본문과 동시에
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=1) as ex:
             fut = ex.submit(image, cover_prompt(clean_plan(plan)))
-            out = build(key, client, topic, brief, plan, base_url=base_url, material=material, model=model, exa=exa)
+            out = build(key, client, topic, brief, plan, base_url=base_url, material=material, model=model, exa=exa, images=images)
             try:
                 got = fut.result()
                 out["deck"]["cover"] = {k: got[k] for k in ("img", "w", "h", "model") if k in got}
@@ -124,8 +126,9 @@ def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: st
     mat = deep_mode.gather(key, {"sections": secs}, base_url=base_url, exa=exa) if any(s["source"] == "web" for s in secs) else {"sources": [], "materials": [None] * len(secs)}
     who = (brief or {}).get("듣는 사람")
     system = WRITER.format(audience=who if who and who != deep_mode.AUTO else "처음 보는 동료", today=deep_mode.today())
-    r = client.chat.completions.create(model=model, max_tokens=8000, messages=[
-        {"role": "system", "content": system}, {"role": "user", "content": f"[주제] {topic}\n[질문지 답]\n{brief_text(brief)}\n\n" + material_text(plan, mat, material) + "\n\n장마다 써서 JSON 하나로."}])
+    images = list(images or [])
+    r = client.chat.completions.create(model=model, max_tokens=8000, messages=see.attach([
+        {"role": "system", "content": system}, {"role": "user", "content": f"[주제] {topic}\n[질문지 답]\n{brief_text(brief)}\n\n" + material_text(plan, mat, material, len(images)) + "\n\n장마다 써서 JSON 하나로."}], images))
     got = (deep_mode.parse_json(r.choices[0].message.content or "") or {}).get("slides") or []
     slides, missing = [], []
     for i, s in enumerate(plan["slides"]):   # 제목이 조금 바뀌어 와도 차례로 맞춤

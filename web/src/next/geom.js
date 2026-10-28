@@ -265,4 +265,4 @@ export const colFracs = it => (it.col_widths?.length === it.cols ? it.col_widths
 // 프레임(.ecad `frame`, 웹 먼저 2026-10-18 — 「종이틀」 대신: 드래그로 감싼 영역 = 출력 한 쪽·슬라이드 한 장). ratio = 가로:세로(긴 쪽 기준 — 세로로 길면 뒤집어 씀)
 export const FRAME_RATIOS = { '16:9': 16 / 9, '4:3': 4 / 3, A4: 297 / 210, '1:1': 1 }
 export const frameTagFs = it => Math.max(12, Math.min(it.rect[2], it.rect[3]) * 0.03)   // 틀 위 이름표 글자 크기(틀 크기 따라)
-export const frameTag = it => `${it.no ?? ''}${it.name ? ' · ' + it.name : ''}` || '프레임'
+export const frameTag = it => [it.no ?? '', it.name || ''].filter(s => s !== '').join(' · ') || '프레임'

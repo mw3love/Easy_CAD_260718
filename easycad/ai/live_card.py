@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 import time
 
-from . import gateway as gw
+from . import gateway as gw, see
 
 LIVE_MODEL = "gpt-6.1-sol"
 LIVE_MAX = 200_000   # 칠판 `livecard.js` `LIVE_MAX`와 같게(넘으면 칠판이 안 띄움)
@@ -88,8 +88,10 @@ def section_prompt(plan: dict, mat: dict, idx: int) -> str:
     return "\n".join(lines) + "\n\n이 꼭지의 움직이는 카드 HTML 하나를 써 줘."
 
 
-def make(client, ask: str, material: str = "", *, prev_html: str = "", audience: str = "처음 보는 사람", model: str = LIVE_MODEL, user: str = "") -> dict:
-    """요청(+ 칠판 재료 글) → {"html", "title", "model", "elapsed"}. `prev_html`이 있으면 그 카드를 `ask`대로 고쳐 씀, `user` = 다 짜 둔 요청 글(딥모드)."""
+def make(client, ask: str, material: str = "", *, prev_html: str = "", audience: str = "처음 보는 사람", model: str = LIVE_MODEL, user: str = "", images=None) -> dict:
+    """요청(+ 칠판 재료 글) → {"html", "title", "model", "elapsed"}. `prev_html`이 있으면 그 카드를 `ask`대로 고쳐 씀, `user` = 다 짜 둔 요청 글(딥모드).
+    images = 칠판에서 고른 그림(`see` — 새로 만들 때만)."""
+    images = [] if prev_html or user else list(images or [])
     if prev_html:
         content = REVISE.format(prev=prev_html[:60_000], ask=(ask or "더 알아보기 쉽게").strip()[:1000])
     elif user:
@@ -97,10 +99,10 @@ def make(client, ask: str, material: str = "", *, prev_html: str = "", audience:
     else:
         if not str(ask or "").strip():
             raise ValueError("무엇을 움직여 볼지 적어 주세요")
-        content = (f"[칠판 재료]\n{material.strip()[:20_000]}\n\n" if material and material.strip() else "") + f"[요청]\n{ask.strip()[:1000]}\n\n이 원리의 움직이는 카드 HTML 하나를 써 줘."
+        content = (f"[칠판 재료]\n{material.strip()[:20_000]}\n\n" if material and material.strip() else "") + f"[요청]\n{ask.strip()[:1000]}{see.note(len(images))}\n\n이 원리의 움직이는 카드 HTML 하나를 써 줘."
     t0 = time.time()
-    r = client.chat.completions.create(model=model, max_tokens=MAX_TOKENS, messages=[
-        {"role": "system", "content": SYSTEM.format(audience=audience or "처음 보는 사람", today=today())}, {"role": "user", "content": content}])
+    r = client.chat.completions.create(model=model, max_tokens=MAX_TOKENS, messages=see.attach([
+        {"role": "system", "content": SYSTEM.format(audience=audience or "처음 보는 사람", today=today())}, {"role": "user", "content": content}], images))
     doc = clean(r.choices[0].message.content or "")
     if "<" not in doc or "</html>" not in doc.lower():
         raise RuntimeError("움직이는 카드를 끝까지 만들지 못했어요(HTML이 끊김) — 다시 해 주세요")

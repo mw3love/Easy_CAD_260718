@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import time
 
-from easycad.ai import gateway as gw
+from easycad.ai import gateway as gw, see
 
 MAX_TURNS = 12     # 말풍선 앞 대화(물건 하나라 짧게)
 MAX_TEXT = 20000   # 물건 글 상한
@@ -32,8 +32,9 @@ def _item_block(item: dict) -> str:
     return f"[이 물건 — {kind}{f' · 고칠 수 있음({edit})' if edit else ''}]\n{text if text.strip() else '(글 없음)'}"
 
 
-def build_messages(item: dict, history: list, image: str = "") -> list:
-    """말풍선 기록 [{"role", "content"}] + 물건 → 게이트웨이 messages. 물건(지금 모습)은 마지막 질문 앞에 붙인다(고친 뒤 다시 물어도 새 글로)."""
+def build_messages(item: dict, history: list, image: str = "", images=None) -> list:
+    """말풍선 기록 [{"role", "content"}] + 물건 → 게이트웨이 messages. 물건(지금 모습)은 마지막 질문 앞에 붙인다(고친 뒤 다시 물어도 새 글로).
+    image = 그림 물건 자신, images = 프레임 안 그림들(`see`)."""
     turns = [{"role": m["role"], "content": str(m.get("content", ""))} for m in history
              if isinstance(m, dict) and m.get("role") in ("user", "assistant") and str(m.get("content", "")).strip()][-MAX_TURNS:]
     while turns and turns[0]["role"] != "user":
@@ -41,8 +42,9 @@ def build_messages(item: dict, history: list, image: str = "") -> list:
     if not turns or turns[-1]["role"] != "user":
         raise ValueError("마지막 말이 질문이 아닙니다")
     last = f"{_item_block(item)}\n\n[사용자]\n{turns[-1]['content']}"
-    turns[-1] = {"role": "user", "content": [{"type": "text", "text": last}, {"type": "image_url", "image_url": {"url": image}}] if image else last}
-    return [{"role": "system", "content": SYSTEM}] + turns
+    pics = ([image] if image else []) + list(images or [])
+    turns[-1] = {"role": "user", "content": last + (see.note(len(images)) if images else "")}
+    return see.attach([{"role": "system", "content": SYSTEM}] + turns, pics)
 
 
 def parse(text: str, editable: bool) -> dict:
@@ -63,10 +65,10 @@ def parse(text: str, editable: bool) -> dict:
     return out
 
 
-def reply(api_key: str, item: dict, history: list, *, model: str = gw.FALLBACK_DEFAULT_MODEL, image: str = "",
+def reply(api_key: str, item: dict, history: list, *, model: str = gw.FALLBACK_DEFAULT_MODEL, image: str = "", images=None,
           base_url: str = gw.BASE_URL, client=None, timeout: float = 180.0) -> dict:
     """한 차례 → {"content", "edit"?(고친 물건 전체 — 메모·표는 마크다운, 글은 글), "model", "elapsed"}. `client` = 시험용 가짜."""
-    messages = build_messages(item, history, image)
+    messages = build_messages(item, history, image, images)
     t0 = time.time()
     client = client or gw._client(api_key, base_url, timeout=timeout)
     resp = client.chat.completions.create(model=model, max_tokens=gw.DEFAULT_MAX_TOKENS, messages=messages)

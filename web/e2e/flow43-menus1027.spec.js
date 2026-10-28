@@ -55,7 +55,7 @@ test('왼쪽 프레임 판 줄 우클릭 = 발표·이름 바꾸기·내보내�
   await page.keyboard.press('Control+a'); await page.keyboard.press('Alt+g'); await page.keyboard.press('Escape')
   await page.getByTestId('dock-frame').click()
   await page.getByTestId('frame-row').first().click({ button: 'right' })
-  expect(await names(page)).toEqual(['이 장부터 발표', '이름 바꾸기', '이 프레임 내보내기…', '프레임만 지우기 (안의 것은 남김)'])
+  expect(await names(page)).toEqual(['이 장부터 발표', '발표에서 빼기', '이름 바꾸기', '이 프레임 내보내기…', '프레임만 지우기 (안의 것은 남김)'])   // 발표에서 빼기 = 2026-10-28
   await page.locator(MENU, { hasText: '이름 바꾸기' }).click()
   await page.getByTestId('frame-row').first().locator('input').fill('표지'); await page.keyboard.press('Enter')
   await expect.poll(async () => (await liveDoc(page)).items.find(it => it.type === 'frame')?.name).toBe('표지')

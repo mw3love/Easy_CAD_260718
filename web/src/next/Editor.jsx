@@ -33,7 +33,7 @@ import { arrowKindOf, swapArrowKind } from './arrowkind.js'
 import { shapeWH, symbolPath } from './symbols.js'
 import { cssColor } from '../ecadFormat.js'
 import { colEdges, colFracs, frameTag, frameTagFs, itemTransform, rowEdges } from './geom.js'
-import { orderedFrames, setFrameOrder } from './edit.js'
+import { orderedFrames, presentFrames, setFrameOrder } from './edit.js'
 import { Presenter } from './present.jsx'
 import { layersOf, layerIdOf } from './layers.jsx'
 import { buildSvg, download, exportPdf, exportPng, exportSvg, fontFaces, pngBlob, usesBoardFont, weightsOf } from './exporter.jsx'
@@ -149,7 +149,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, setImage, slidesBoard, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, skipFrames, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, selImageIds, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, setImage, slidesBoard, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -631,7 +631,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     commit([...m.items, ...its], R.current.sel, '판서')
   }
   function startPresent(fromId) {   // 발표 — 고른 프레임(또는 fromId)부터, 없으면 1번부터
-    const fr = orderedFrames(hitPool()); if (!fr.length) { setStatus('프레임이 없어요 — 상단 「프레임」으로 보여 줄 영역을 감싸 보세요'); return }
+    const fr = presentFrames(hitPool()); if (!fr.length) { setStatus(orderedFrames(hitPool()).length ? '발표할 프레임이 없어요 — 왼쪽 「프레임」 판에서 발표 아이콘을 켜 주세요' : '프레임이 없어요 — 상단 「프레임」으로 보여 줄 영역을 감싸 보세요'); return }
     const id = fromId || R.current.sel.find(s => fr.some(f => f._id === s)); setEditing(null); setNotesGone(null); penAtStart.current = new Set(R.current.model.items.filter(it => it.layer_id === PEN_LAYER).map(it => it._id)); setPresent(Math.max(0, fr.findIndex(f => f._id === id)))
   }
   // 발표는 발표에서 끝남(2026-10-28 사용자) — 끝나면 이번 발표에서 그은 판서만 지우고 「남기기」 알약(되살림 = 지운 것을 다시 넣음, Ctrl+Z도 됨). 전에 있던 판서는 그대로
@@ -818,7 +818,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     // 「고른 것」에 종이틀이 있으면 틀마다 한 쪽(틀 안의 것은 고르지 않아도 전부), 어느 틀에도 안 든 고른 것은 마지막 한 쪽에 모음(2026-10-18 사용자와 정함 — 「고른 것」·「종이틀대로」를 하나로)
     const onlyFrames = o.scope === 'frames', selIds = onlyFrames ? null : o.selection ? new Set(withContents(R.current.sel)) : null
     const isFrame = it => it.type === 'frame' || (it.type === 'titleblock' && (it.plain || !onlyFrames))
-    const selFrames = onlyFrames ? all.filter(([it]) => it.type === 'frame' || (it.type === 'titleblock' && it.plain)) : selIds ? all.filter(([it]) => selIds.has(it._id) && isFrame(it)) : []   // 프레임은 순서대로, 종이틀은 줄/칸 우선
+    const selFrames = onlyFrames ? all.filter(([it]) => (it.type === 'frame' && !it.skip) || (it.type === 'titleblock' && it.plain)) : selIds ? all.filter(([it]) => selIds.has(it._id) && isFrame(it)) : []   // 프레임은 순서대로, 종이틀은 줄/칸 우선
     if (onlyFrames && !selFrames.length) return { error: '프레임이 없어요 — 상단 「프레임」으로 영역을 감싸 보세요' }
     if (selFrames.length && !o.onePage) {   // onePage = 「고른 것 한 쪽에」 — 틀도 보통 도형처럼 고른 것 전체를 감싼 한 쪽(2026-10-18 사용자: 보이지 않는 종이틀)
       const rank = new Map(orderedFrames(m.items).map((f, i) => [f._id, i]))
@@ -852,6 +852,11 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const m = R.current.model, ids = new Set(withContents(R.current.sel))
     return m.items.filter(it => ids.has(it._id) && it.type === 'image' && it.data).slice(0, 4).map(it => (it.data.startsWith('data:') ? it.data : 'data:image/png;base64,' + it.data))
   }
+  // 고른 것 속 그림의 이름표(.ecad `uid`, 6장까지) — 발표 자료가 기억해 두고 서버가 칠판 파일에서 꺼내 AI에게 보임(`easycad/ai/see.py`, 2026-10-28)
+  function selImageIds() {
+    const m = R.current.model, ids = new Set(withContents(R.current.sel))
+    return m.items.filter(it => ids.has(it._id) && it.type === 'image' && it.data).slice(0, 6).map(it => it._id)
+  }
   function itemTexts(it) {   // 도형 하나의 글(대화 재료)
     const out = []
     if (it.type === 'text' && it.text?.trim()) out.push(it.text)
@@ -872,7 +877,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const edit = it.type === 'memo' ? 'memo' : it.type === 'table' ? 'table' : it.type === 'text' ? 'text' : it.label?.text?.trim() ? 'label' : ''
     const ids = new Set(withContents([id])), text = edit === 'memo' ? memoMarkdown(it.lines) : edit === 'table' ? memoMarkdown([{ k: 'table', rows: it.cells || [] }])
       : edit === 'label' ? it.label.text : m.items.filter(x => ids.has(x._id)).flatMap(itemTexts).join('\n\n')
-    return { type: it.type, edit, box: sceneBox(it, textBox), text, image: it.type === 'image' && it.data ? (it.data.startsWith('data:') ? it.data : 'data:image/png;base64,' + it.data) : '' }
+    const url = x => (x.data.startsWith('data:') ? x.data : 'data:image/png;base64,' + x.data)
+    const images = it.type === 'image' ? [] : m.items.filter(x => x._id !== id && ids.has(x._id) && x.type === 'image' && x.data).slice(0, 6).map(url)   // 프레임 안 그림(2026-10-28 — 전엔 글만 봄)
+    const inside = it.type === 'frame' ? ids.size - 1 : 0   // 프레임 말풍선 머리 「안 N개를 보고」 · cut = 서버 글 상한(`board_bubble.MAX_TEXT` 2만 자)을 넘어 뒤가 잘림
+    return { type: it.type, edit, box: sceneBox(it, textBox), text, image: it.type === 'image' && it.data ? url(it) : '', ...(images.length ? { images } : {}), ...(inside ? { inside, cut: text.length > 20000 } : {}) }
   }
   // 말풍선이 고쳐 쓴 것(AI 답 `edit`) = 그 자리에서(Ctrl+Z 한 번) — 메모 = 마크다운 → 줄, 표 = 마크다운 표 → 칸(칸 수가 바뀌면 너비 고르게·칸 꾸밈 지움, 높이는 줄 수만큼),
   // 글 상자·도형 글 = 글(꾸밈 지움). { before, after } 칸 묶음(「원래대로 ↔ 바꾼 것」이 `setFields`로 바꿔 끼움), 못 고치면 null
@@ -1339,6 +1347,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // ── 프레임(2026-10-18 사용자와 정함 — 「종이틀」을 바꿈: 종이 비율은 큰 의미 없음) — 번호 = 출력 쪽·슬라이드 순서 ──
   const nextFrameNo = items => orderedFrames(items).length + 1   // 새 프레임 = 맨 끝
   function reorderFrames(ids) { const m = R.current.model; commit(setFrameOrder(m.items, ids), R.current.sel, '프레임 순서') }
+  function skipFrames(ids, skip) { const s = new Set(ids), m = R.current.model; commit(m.items.map(it => (s.has(it._id) && it.type === 'frame' ? { ...it, skip: skip || undefined } : it)), R.current.sel, skip ? '발표에서 빼기' : '발표에 넣기') }   // 2026-10-28 사용자
   function removeFrame(id) { const m = R.current.model; commit(removeItems(m.items, [id]), R.current.sel.filter(s => s !== id), '프레임만 지움') }   // 틀만(안의 것은 남김) — 왼쪽 프레임 판 우클릭
   function renameFrame(id, name) { const m = R.current.model; commit(m.items.map(it => (it._id === id ? { ...it, name } : it)), R.current.sel, '프레임 이름', 'fname' + id) }   // 치는 대로 — 되돌리기는 한 칸
   function goFrame(id) {   // 그 프레임이 화면에 꽉 차게(여백 10%)
@@ -1347,11 +1356,12 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     setSel([id]); setCam({ z, x: W / 2 - (b.x + b.w / 2) * z, y: size.h / 2 - (b.y + b.h / 2) * z })
   }
   // 감싸기: 고른 것을 여백 두고 감싸는 프레임(자유 비율)
-  function wrapFrame() {
-    const m = R.current.model, ids = new Set(withContents(R.current.sel)), its = m.items.filter(it => ids.has(it._id) && it.type !== 'titleblock' && it.type !== 'frame'); if (!its.length) return
+  function wrapFrame(skip = false) {   // skip = 「프레임으로 감싸고 AI 말풍선」 — 토론용 묶음이라 처음부터 발표 안 함(2026-10-28). 새 프레임 _id
+    const m = R.current.model, ids = new Set(withContents(R.current.sel)), its = m.items.filter(it => ids.has(it._id) && it.type !== 'titleblock' && it.type !== 'frame'); if (!its.length) return null
     const b = unionBox(its.map(it => sceneBox(it, textBox))), pad = 16   // 작고 일정한 여백(2026-10-18 사용자 선택 — 전엔 내용의 6%라 큰 묶음일수록 여백이 컸음)
-    const it = base([b.x - pad, b.y - pad], { type: 'frame', rect: [0, 0, b.w + 2 * pad, b.h + 2 * pad], name: frameAutoName(its), no: nextFrameNo(m.items), z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })
-    commit([...m.items, it], [it._id], '프레임으로 감싸기'); setStatus(`프레임 ${it.no} — 내보내기 하면 이 틀이 한 쪽이 돼요`)
+    const it = base([b.x - pad, b.y - pad], { type: 'frame', rect: [0, 0, b.w + 2 * pad, b.h + 2 * pad], name: frameAutoName(its), no: nextFrameNo(m.items), z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, ...(skip ? { skip: true } : {}) })
+    commit([...m.items, it], [it._id], '프레임으로 감싸기'); setStatus(skip ? '프레임으로 감쌌어요 — 발표에는 안 나와요(왼쪽 「프레임」 판에서 켤 수 있어요)' : `프레임 ${it.no} — 내보내기 하면 이 틀이 한 쪽이 돼요`)
+    return it._id
   }
   // 감쌀 것이 이미 어떤 프레임의 안의 것과 똑같음 = 감싸면 같은 프레임이 하나 더(2026-10-27 사용자 전수조사 — 메뉴에서 숨김). 일부만 고르면 그대로(큰 장 안의 확대 장)
   function wrapDup(items, ids) {
@@ -1851,8 +1861,21 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       // caption = 그림을 만든 요청 — 칠판엔 그림만, 요청은 보이지 않는 설명 `alt`(찾기·뜻으로 찾기·대화 재료가 읽음, 2026-10-20 사용자: 밑 글 빼고 깔끔하게)
       const it = base([at.x - w / 2, at.y - h / 2], { type: 'image', rect: [0, 0, w, h], data, z: topZ(m.items) + 1, ...(opts.caption ? { alt: opts.caption } : null) })
       commit([...m.items, it], [it._id], opts.caption ? '그림 붙이기' : '그림 붙여넣기')
+      if (!opts.caption) describeImage(it._id, data)
       setTool('select'); return it._id
     } catch { setStatus('그림을 읽지 못했어요') } finally { URL.revokeObjectURL(url) }
+  }
+  // 그림 설명 한두 줄(2026-10-28) — 붙여넣기·놓기·첨부로 넣은 그림(설명 없는 것)을 서버가 KAIROS(haiku, 한 장 0.1크레딧)로 설명 → 보이지 않는 `alt`.
+  // 뜻으로 찾기·글만 받는 AI 길·데스크톱이 「무슨 그림」을 앎. 1~3초 뒤에 오므로 되돌리기에 안 남김(Ctrl+Z가 안 보이는 고침을 되돌리지 않게), 실패하면 그냥 둠
+  function describeImage(id, data) {
+    if (readOnly) return
+    fetch('/api/describe', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() }, body: JSON.stringify({ data: 'data:image/png;base64,' + data }) })
+      .then(r => (r.ok ? r.json() : null)).then(d => { const t = d?.text?.trim(); if (t) quietSet(id, it => (it.type === 'image' && !it.alt ? { alt: t } : null)) }).catch(() => {})
+  }
+  function quietSet(id, f) {   // 되돌리기 칸 없이 한 도형 칸 고치기(저장·공동작업은 평소대로) — f(도형) → 더할 칸, null = 안 고침
+    const m = R.current.model, it = m.items.find(x => x._id === id), add = it && f(it); if (!add) return
+    const put = items => items.map(x => (x._id === id ? { ...x, ...add } : x))
+    R.current.model = { ...m, items: put(m.items) }; setModel(mm => ({ ...mm, items: put(mm.items) })); onCommit?.('그림 설명')
   }
   // 그림 후보 붙이기(대화창 🎨 — 누르면 빈자리, 끌어 놓으면 그 자리) — 서버 그림(/api/img/…)을 받아 이미지로 + 밑에 요청 글
   async function pinImage(url, caption, at) {
@@ -2363,7 +2386,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // ── 그리기 차례·화면 밖 빼기 ──
   const hiddenL = useMemo(() => new Set(layersOf(model).filter(l => !l.visible).map(l => l.id)), [model])
   const pageNo = useMemo(() => { const fr = items.filter(it => it.type === 'titleblock' && it.plain && !hiddenL.has(layerIdOf(it))); const mp = new Map()
-    readingOrder(fr.map(it => ({ ...sceneBox(it, textBox), id: it._id })), 'rows').forEach((b, i) => mp.set(b.id, i + 1)); orderedFrames(items).forEach((f, i) => mp.set(f._id, i + 1)); return mp }, [items, hiddenL])   // 프레임 = 순서(1..n)   // eslint-disable-line react-hooks/exhaustive-deps
+    readingOrder(fr.map(it => ({ ...sceneBox(it, textBox), id: it._id })), 'rows').forEach((b, i) => mp.set(b.id, i + 1)); presentFrames(items).forEach((f, i) => mp.set(f._id, i + 1)); items.forEach(it => it.type === 'frame' && it.skip && mp.set(it._id, '—')); return mp }, [items, hiddenL])   // 프레임 = 발표 순서(1..n), 「발표 안 함」 = —   // eslint-disable-line react-hooks/exhaustive-deps
   const order = useMemo(() => drawOrder(items).filter(([it]) => !hiddenL.has(layerIdOf(it))), [items, hiddenL]); R.current.order = order
   const onBoard = useMemo(() => boardMembership(items), [items])
   const routes = useMemo(() => resolveRoutes(items, rectOf), [items])
@@ -2583,11 +2606,13 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           if (ids.length >= 2 && !oneGroup && !inFrames) out.push(['그룹', 'Ctrl+G', act(() => commit(groupItems(m.items, ids), ids, '묶음'))])
           if (selIt.some(it => it.group_id)) out.push(['그룹 해제', 'Ctrl+Shift+G', act(() => commit(ungroupItems(m.items, ids), ids, '묶음 풂'))])
           out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
-          if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame') && !wrapDup(m.items, ids)) out.push('-', ['프레임으로 감싸기', 'Alt+G', act(wrapFrame)])
+          if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame') && !wrapDup(m.items, ids)) out.push('-', ['프레임으로 감싸기', 'Alt+G', act(() => wrapFrame())])
+          if (frs.length) { const off = frs.every(f => f.skip); out.push([off ? '발표에 넣기' : '발표에서 빼기', '', act(() => skipFrames(frs.map(f => f._id), !off))]) }   // 칠판엔 그대로(2026-10-28)
           if (onAddSymbol && !card && selIt.every(it => !NOT_SYMBOL.has(it.type))) out.push(['내 심볼에 추가…', '', act(() => addToMySymbols())])   // 2026-10-27 사용자 — KAIROS 아이콘 등을 심볼 칸에(이 브라우저). 메모·표는 그림 조각이 아니라 뺌(전수조사)
           if (selIt.some(it => isLegendLine(it))) out.push(['범례 넣기', '', act(insertLegend)])   // 선·화살표를 고르고 우클릭(2026-10-27 실검증 — 「표」 창 안에만 있으면 못 찾음, 표 창 단추도 그대로)
           out.push('-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
           if (onBubble && ids.length === 1) out.push(['AI 말풍선 (KAIROS)', '', act(() => onBubble(ids[0]))])   // 이 물건만의 작은 대화창(2026-10-28 사용자)
+          else if (onBubble && !readOnly && selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame') && !inFrames) out.push(['프레임으로 감싸고 AI 말풍선 (KAIROS)', '', act(() => { const id = wrapFrame(true); if (id) onBubble(id) })])   // 여럿 = 대화가 붙을 자리(프레임)를 먼저 — 발표엔 안 나옴
           if (onAsk && (selTexts().length || selImages().length)) {   // 📽 발표 자료(§8 항목69 3단계) — 고른 것(딥모드 판·정리 문서·메모…)이 재료, 주제 = 판·문서 제목
             const t0 = selIt.find(it => it.deep_plan)?.deep_plan?.plan?.title || selIt.find(it => it.type === 'doc')?.title || selIt.find(it => it.type === 'frame')?.name || ''
             out.push(['발표 자료 만들기 (KAIROS)', '', act(() => onAsk(t0 ? `${t0} — 발표 자료` : '고른 자료로 발표 자료', 'slides'))]) }
@@ -2597,7 +2622,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         // 우클릭한 그 자리에 붙는 것이 Ctrl+V와 다른 쓸모라 남김. 붙일 것도 없으면 메뉴를 안 띄움(항목 0개 = ContextMenu가 안 그림)
         if (clip.current?.items?.length) { if (has) out.push('-'); out.push(['붙여넣기', 'Ctrl+V', act(paste)]) }
         return out })()} />}
-      {present != null && (() => { const fr = orderedFrames(items.filter(it => !hiddenL.has(layerIdOf(it))))
+      {present != null && (() => { const fr = presentFrames(items.filter(it => !hiddenL.has(layerIdOf(it))))
         return <Presenter frames={fr.map(f => ({ id: f._id, name: f.name, box: sceneBox(f, textBox) }))} order={order.filter(([it]) => it.type !== 'frame' || isDeepPaper(it)).map(([it, i]) => (isDeepPaper(it) ? [deepPaper(it), i] : [it, i]))} onBoard={onBoard} routes={routes}
           start={Math.min(present, fr.length - 1)} dark={dark} onClose={endPresent} onAdd={addPenNotes} onUndo={undo} onFlipArrow={() => { const m = R.current.model, a = m.items.filter(it => it.layer_id === PEN_LAYER && it.type === 'sarrow').sort((p, q) => (q.z ?? 0) - (p.z ?? 0))[0]   // 방금(맨 위) 그린 판서 화살표 방향 뒤집기
             if (a) commit(m.items.map(it => (it._id === a._id ? { ...it, pts: [...it.pts].reverse() } : it)), R.current.sel, '화살표 뒤집기') }} onClearNotes={box => { const m = R.current.model, inBox = it => { const b = sceneBox(it, textBox), cx = b.x + b.w / 2, cy = b.y + b.h / 2; return cx >= box.x && cx <= box.x + box.w && cy >= box.y && cy <= box.y + box.h }   // 이 장(프레임) 안 판서만

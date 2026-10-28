@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import time
 
-from easycad.ai import gateway as gw
+from easycad.ai import gateway as gw, see
 
 SYSTEM = """너는 사용자가 하루 종일 옆에 띄워 두는 「웹 칠판」의 대화 도우미다. 한국어로 답한다.
 - 답은 칠판에 카드로 붙을 수 있다. 결론을 첫 문장에 쓰고, 짧은 문단이나 짧은 목록(- )으로 쓴다. 꼭 필요할 때만 길게.
@@ -205,8 +205,7 @@ def chat(api_key: str, history: list, *, model: str, context: str = "", kind: st
     if data:   # 공공 데이터 도구 결과(`kr_tools` — 기상청·천문연·법령·통계 등, 2026-10-20) — 숫자는 이것만, 출처 번호는 서버가 단 순서([1] 기상청 …)
         messages[-1] = {"role": "user", "content": f"[공공 데이터 — 숫자·날짜는 여기 것만 쓰고, 근거 문장 끝에 자료 머리의 번호를 [1]처럼. 출처 목록은 따로 쓰지 않는다(앱이 붙인다)]\n{data[:12000]}\n\n{messages[-1]['content']}"}
     if images and not search:   # 칠판에서 고른 그림을 보고 답(대화창 첨부, 2026-10-28) — 검색(Exa)은 글만 받아 안 붙임, 기록엔 안 남음(장수만)
-        messages[-1] = {"role": "user", "content": [{"type": "text", "text": messages[-1]["content"]}]
-                        + [{"type": "image_url", "image_url": {"url": u}} for u in list(images)[:4]]}
+        messages = see.attach(messages, list(images)[:4])
     t0 = time.time()
     if search:   # 오늘 날짜 + 「내일」→ 날짜(검색 답이 어제 기사의 「내일」을 옮기지 않게)
         messages[0] = {"role": "system", "content": f"{SEARCH_SYSTEM}\n- 오늘은 {_day(time.time())}."}

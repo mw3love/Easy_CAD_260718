@@ -376,37 +376,37 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     if (text == null && last?.kind === 'slides' && last.step === 'ask' && !last.done) { slidesGo(li, t); return true }
     if (text == null && last?.kind === 'slides' && last.step === 'plan' && !last.built && !last.stale && t && (!kind || kind === 'slides')) { slidesReplan(li, t); return true }
     if (kind !== 'slides' || !t) return false
-    const at = Date.now(), material = contextText(sel)
-    update([...msgs.filter(m => m.role !== 'error'), { role: 'user', content: t, at, slides: true }, { role: 'assistant', kind: 'slides', step: 'ask', topic: t, brief: {}, ...(material ? { material, ctxCount: sel.length } : {}), at: at + 1 }])
+    const at = Date.now(), material = contextText(sel), imgIds = selImgs.length ? ed.current?.selImageIds?.() || [] : []   // 고른 그림 = 이름표만 기억(서버가 칠판 파일에서 꺼내 보임 — 대화 기록이 그림으로 불지 않게, 2026-10-28)
+    update([...msgs.filter(m => m.role !== 'error'), { role: 'user', content: t, at, slides: true }, { role: 'assistant', kind: 'slides', step: 'ask', topic: t, brief: {}, ...(material || imgIds.length ? { material, ctxCount: sel.length + imgIds.length } : {}), ...(imgIds.length ? { imgIds } : {}), at: at + 1 }])
     if (text == null) setDraft(''); setPickTool(''); if (mic !== 'off') micStop.current?.()
     return true
   }
   async function slidesCall(body, job) {
     setBusy(Date.now()); setBusyJob(job)
     try {
-      const r = await chatPost({ model: useModel, board: DOC_NAME, kind: 'slides', slides: body, messages: [{ role: 'user', content: body.topic }] })
+      const r = await chatPost({ model: useModel, board: DOC_NAME, kind: 'slides', slides: { ...body, ...(body.imgIds?.length ? { image_uids: body.imgIds } : {}), imgIds: undefined }, messages: [{ role: 'user', content: body.topic }] })
       const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
       if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
       return d
     } catch (e) { setMsgs(cur => [...cur.filter(x => x.role !== 'error'), { role: 'error', content: String(e.message || e) }]); return null } finally { setBusy(null) }
   }
-  const slidesPlanMsg = (m, d) => ({ role: 'assistant', kind: 'slides', step: 'plan', topic: m.topic, brief: m.brief, material: m.material, plan: d.plan, estimate: d.estimate, drop: [], model: d.model, elapsed: d.elapsed, credits: d.credits, at: Date.now() })
+  const slidesPlanMsg = (m, d) => ({ role: 'assistant', kind: 'slides', step: 'plan', topic: m.topic, brief: m.brief, material: m.material, ...(m.imgIds ? { imgIds: m.imgIds } : {}), plan: d.plan, estimate: d.estimate, drop: [], model: d.model, elapsed: d.elapsed, credits: d.credits, at: Date.now() })
   async function slidesGo(i, more) {
     const m = msgs[i], brief = briefOf(m.brief, more, SLIDES_QS)
     if (more) setDraft('')
-    const d = await slidesCall({ step: 'plan', topic: m.topic, brief, material: m.material || '' }, 'slides-plan'); if (!d) return
+    const d = await slidesCall({ step: 'plan', topic: m.topic, brief, material: m.material || '', imgIds: m.imgIds }, 'slides-plan'); if (!d) return
     setMsgs(cur => { const next = [...cur.map((x, j) => (j === i ? { ...x, done: true, ...(more ? { more } : {}) } : x)), slidesPlanMsg({ ...m, brief }, d)]; save(next); return next })
   }
   async function slidesReplan(i, fix) {
     const m = msgs[i], mine = { role: 'user', content: fix, at: Date.now(), slides: true }
     setDraft(''); setMsgs(cur => [...cur, mine])
-    const d = await slidesCall({ step: 'plan', topic: m.topic, brief: m.brief, material: m.material || '', prev: keptSlides(m), fix }, 'slides-plan')
+    const d = await slidesCall({ step: 'plan', topic: m.topic, brief: m.brief, material: m.material || '', imgIds: m.imgIds, prev: keptSlides(m), fix }, 'slides-plan')
     if (!d) { setMsgs(cur => cur.filter(x => x !== mine)); setDraft(fix); return }
     setMsgs(cur => { const next = [...cur.map((x, j) => (j === i ? { ...x, stale: true } : x)), slidesPlanMsg(m, d)]; save(next); return next })
   }
   async function slidesBuild(i) {
     const m = msgs[i], plan = keptSlides(m)
-    const d = await slidesCall({ step: 'build', topic: m.topic, brief: m.brief, material: m.material || '', plan }, 'slides-build'); if (!d) return
+    const d = await slidesCall({ step: 'build', topic: m.topic, brief: m.brief, material: m.material || '', imgIds: m.imgIds, plan }, 'slides-build'); if (!d) return
     const deck = d.deck?.cover?.img ? { ...d.deck, cover: (await deepImgs([{ body: d.deck.cover }]))[0].body } : d.deck   // 표지 그림(3단계) = 칠판 그림 칸으로
     const r = ed.current?.slidesBoard?.(deck); if (!r) return
     setMsg(i, { built: r.ids[0], frames: r.frames, model: d.model, elapsed: d.elapsed, credits: d.credits })
