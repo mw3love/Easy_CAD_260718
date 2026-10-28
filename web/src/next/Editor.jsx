@@ -898,12 +898,31 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const BW = cols * W + (cols - 1) * GX, BH = rows * ROW, c = R.current.cam, view = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
     const at = nearSpot({ x: view.x + view.w / 2, y: view.y + view.h / 2 }, hitPool().map(it => sceneBox(it, textBox)), BW, BH, { pad: 48, step: 96 })
     const no0 = nextFrameNo(m.items), zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, z = topZ(m.items) + 1, out = [], ids = []
+    // 장 모양(2단계 — 서버 `slides.LAYOUTS`): 표지 = 왼쪽 코랄 띠 + 큰 제목 · 글머리·마무리 = 제목 밑 코랄 줄 + 줄 글 · 숫자 = 큰 숫자 칸 2~3개 · 단계 = 번호 붙은 둥근 줄 · 한마디 = 큰 한 문장
+    const CORAL = '#ffda7756', SOFT = '#fffdf1ec', GRAY = '#fff4f4f5', MUTE = '#ff6b6b75'
+    const box = (x, y, w, h, fill, r = 0) => base([x, y], { type: 'rect', rect: [0, 0, w, h], fill, pen: fill, width: 1, style: 0, ...(r ? { radius: r } : {}), z })
+    const txt = (x, y, text, font, extra = {}) => base([x, y], { type: 'text', text, color: INK, font, bg: null, z, ...extra })
     pages.forEach((s, i) => {
-      const X = at.x + (i % PER) * (W + GX), Y = at.y + Math.floor(i / PER) * ROW, cover = i === 0
+      const X = at.x + (i % PER) * (W + GX), Y = at.y + Math.floor(i / PER) * ROW, kind = s.small ? '출처' : s.layout || (i === 0 ? '표지' : '글머리'), L = X + 96, CW = W - 192
       const fr = base([X, Y], { type: 'frame', rect: [0, 0, W, H], name: `${i + 1}. ${s.title}`, no: no0 + i, ratio: '16:9', z: zb }); out.push(fr); ids.push(fr._id)
-      out.push(base([X + 96, Y + (cover ? 300 : 80)], { type: 'text', text: s.title, color: INK, font: cover ? 54 : 40, weight: 700, bg: null, z }))
       const lines = (s.bullets || []).filter(Boolean)
-      if (lines.length) out.push(base([X + 96, Y + (cover ? 440 : 230)], { type: 'text', text: lines.map(b => (cover || s.small ? b : `•  ${b}`)).join('\n'), color: cover ? '#ff6b6b75' : INK, font: s.small ? 15 : cover ? 26 : 28, bg: null, z }))
+      if (kind === '표지') {
+        out.push(box(X, Y, 28, H, CORAL), box(L + 24, Y + 300, 120, 10, CORAL, 5), txt(L + 24, Y + 340, s.title, 56, { weight: 700 }))
+        if (lines.length) out.push(txt(L + 24, Y + 470, lines.join('\n'), 26, { color: MUTE }))
+      } else {
+        out.push(txt(L, Y + 72, s.title, 40, { weight: 700 }), box(L, Y + 150, 96, 8, CORAL, 4))
+        if (kind === '숫자' && s.numbers?.length) {
+          const n = s.numbers.length, g = 48, tw = (CW - (n - 1) * g) / n
+          s.numbers.forEach((v, k) => { const x = L + k * (tw + g)
+            out.push(box(x, Y + 250, tw, 380, SOFT, 28), txt(x + 48, Y + 320, v.value, 76, { weight: 800, color: CORAL }), txt(x + 48, Y + 500, v.label, 22)) })
+        } else if (kind === '단계' && s.steps?.length) {
+          s.steps.forEach((t, k) => { const y = Y + 220 + k * 118
+            out.push(box(L, y, CW, 96, GRAY, 48), txt(L + 40, y + 24, String(k + 1), 30, { weight: 800, color: CORAL }), txt(L + 120, y + 26, t, 26)) })
+        } else if (kind === '한마디' && s.message) {
+          out.push(box(L, Y + 330, 14, 220, CORAL, 7), txt(L + 64, Y + 380, s.message, s.message.length > 20 ? 40 : 52, { weight: 700 }))
+          if (lines.length) out.push(txt(L + 64, Y + 520, lines[0], 24, { color: MUTE }))
+        } else if (lines.length) out.push(txt(L, Y + 230, lines.map(b => (kind === '출처' ? b : `${kind === '마무리' ? '→' : '•'}  ${b}`)).join('\n'), kind === '출처' ? 15 : 30))
+      }
       if (s.notes) { const memo = base([X, Y + H + 40], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#fffafafa', lines: [{ k: 'h3', t: `발표자 메모 · ${i + 1}장` }, { k: 'p', t: s.notes }], scale: 2, z })
         out.push({ ...memo, rect: [0, 0, MEMO.W, memoHeight(memo)] }) }
     })

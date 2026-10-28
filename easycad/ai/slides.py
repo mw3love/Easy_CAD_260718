@@ -15,6 +15,7 @@ WRITER_MODEL = "claude-sonnet-5-5"   # 장마다 본문
 SOURCES = ("ai", "web", "board")
 MAX_SLIDES = 15
 MAX_MATERIAL = 40000
+LAYOUTS = ("표지", "글머리", "숫자", "단계", "한마디", "마무리")   # 장 모양 — 칠판 `slidesBoard`가 그릴 줄 아는 것(2단계)
 
 PLANNER = """너는 발표 자료를 짜는 기획자다. 사용자의 주제(와 칠판에서 고른 자료)로 **장 계획**만 세운다(본문은 아직 쓰지 않는다).
 - JSON 하나만: {{"title": "발표 제목", "slides": [{{"title": "장 제목(짧게)", "point": "이 장에서 말할 한 줄", "source": "ai|web|board", "query": "웹 검색 문장 또는 null"}}]}}
@@ -24,8 +25,12 @@ PLANNER = """너는 발표 자료를 짜는 기획자다. 사용자의 주제(�
 - 듣는 사람·발표 시간·바라는 점(질문지 답)을 따른다. 「알아서」는 네가 정한다."""
 
 WRITER = """너는 발표 자료를 쓰는 사람이다. 장 계획의 장마다 **화면에 띄울 글**과 **발표자 메모**를 쓴다. 듣는 사람: {audience}. 오늘: {today}.
-- JSON 하나만: {{"slides": [{{"title": "장 제목", "bullets": ["화면 글 한 줄", …], "notes": "발표자가 말할 내용 2~4문장"}}]}}
-- bullets는 장마다 2~4줄, 한 줄 25자 안팎(읽는 글이 아니라 보는 글). 표지는 bullets에 부제·발표자 자리 한 줄.
+- JSON 하나만: {{"slides": [{{"title": "장 제목", "layout": "표지|글머리|숫자|단계|한마디|마무리", "bullets": ["화면 글 한 줄", …], "numbers": [{{"value": "70%", "label": "발전기 연료 [1]"}}], "steps": ["단계 한 줄", …], "message": "핵심 한 문장", "notes": "발표자가 말할 내용 2~4문장"}}]}}
+- layout(장 모양) 고르기 — 장마다 내용에 맞게, 같은 모양만 이어지지 않게(2026-10-28 2단계):
+  표지 = 첫 장(bullets = 부제·발표자 자리 한 줄) · 숫자 = 기억할 숫자가 2~3개(numbers, value는 8자 안팎 — 「70%」「8시간」) · 단계 = 순서·절차(steps 3~5개, 한 줄 30자 안팎) ·
+  한마디 = 꼭 남길 한 문장을 크게(message 25자 안팎) · 마무리 = 끝 장(bullets = 할 일·다음 걸음) · 그 밖엔 글머리.
+- 어떤 모양이든 bullets도 써 둔다(칠판이 그 모양을 못 그리면 글머리로).
+- bullets는 장마다 2~4줄, 한 줄 25자 안팎(읽는 글이 아니라 보는 글).
 - 숫자·날짜·최신 사실은 **재료에 있는 것만**, 쓴 줄 끝에 출처 번호 [n](재료 머리의 번호 그대로). 재료에 없는 숫자는 지어내지 않는다.
 - notes는 그 장을 말로 풀어 주는 문장(화면 글을 되풀이하지 않는다). 쉬운 말, 강조는 **굵게**만."""
 
@@ -108,5 +113,16 @@ def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: st
         bullets = [str(b).strip() for b in g.get("bullets") or [] if str(b).strip()][:5]
         if not bullets:
             missing.append(s["title"])
-        slides.append({"title": str(g.get("title") or s["title"]).strip()[:60], "bullets": bullets or [s.get("point") or ""], "notes": str(g.get("notes") or "").strip()})
+        one = {"title": str(g.get("title") or s["title"]).strip()[:60], "bullets": bullets or [s.get("point") or ""], "notes": str(g.get("notes") or "").strip()}
+        layout = str(g.get("layout") or "")
+        nums = [{"value": str(x.get("value") or "").strip()[:14], "label": str(x.get("label") or "").strip()[:60]} for x in g.get("numbers") or [] if isinstance(x, dict) and str(x.get("value") or "").strip()][:3]
+        steps = [str(x).strip()[:60] for x in g.get("steps") or [] if str(x).strip()][:5]
+        msg = str(g.get("message") or "").strip()[:80]
+        if i == 0:
+            layout = "표지"
+        elif layout == "숫자" and len(nums) < 2 or layout == "단계" and len(steps) < 2 or layout == "한마디" and not msg or layout not in LAYOUTS:
+            layout = "마무리" if i == len(plan["slides"]) - 1 else "글머리"   # 그 모양에 쓸 것이 없으면 글머리로
+        one["layout"] = layout
+        one.update({"numbers": nums} if layout == "숫자" else {"steps": steps} if layout == "단계" else {"message": msg} if layout == "한마디" else {})
+        slides.append(one)
     return {"deck": {"title": plan["title"], "slides": slides, "sources": mat["sources"]}, "model": model, "elapsed": round(time.time() - t0, 1), "missing": missing}

@@ -92,3 +92,17 @@ def test_server_slides_steps_and_material_rule(server, monkeypatch):
     assert out["kind"] == "slides" and calls[-1][3]["material"] == "(메모) 안테나" and calls[-1][3]["model"] == slides.PLAN_MODEL
     out = _post(server, {"kind": "slides", "board": "b", "slides": {"step": "build", "topic": "점검", "brief": {"재료": "웹 검색"}, "material": "(메모) 안테나", "plan": {"slides": []}}})
     assert out["kind"] == "slides" and "deck" in out and calls[-1][3]["material"] == ""      # 재료 = 웹 검색이면 고른 것을 안 씀
+
+
+def test_build_keeps_layouts_and_falls_back_when_empty():
+    plan = {"title": "점검", "slides": [{"title": "표지", "source": "board"}, {"title": "숫자", "source": "board"}, {"title": "빈 숫자", "source": "board"}, {"title": "단계", "source": "board"}, {"title": "끝", "source": "board"}]}
+    ans = json.dumps({"slides": [
+        {"title": "표지", "layout": "글머리", "bullets": ["부제"]},
+        {"title": "숫자", "layout": "숫자", "bullets": ["a"], "numbers": [{"value": "70%", "label": "연료"}, {"value": "2대", "label": "교체"}]},
+        {"title": "빈 숫자", "layout": "숫자", "bullets": ["b"], "numbers": [{"value": "1", "label": "x"}]},
+        {"title": "단계", "layout": "단계", "bullets": ["c"], "steps": ["전환", "분리", "설치"]},
+        {"title": "끝", "layout": "이상한", "bullets": ["d"]}]}, ensure_ascii=False)
+    out = slides.build("k", fake_client(ans, []), "점검", {}, plan, model="w")
+    got = [(s["title"], s["layout"]) for s in out["deck"]["slides"]]
+    assert got == [("표지", "표지"), ("숫자", "숫자"), ("빈 숫자", "글머리"), ("단계", "단계"), ("끝", "마무리")]   # 첫 장 = 표지, 숫자 하나뿐 = 글머리, 모르는 끝 장 = 마무리
+    assert out["deck"]["slides"][1]["numbers"][0] == {"value": "70%", "label": "연료"} and out["deck"]["slides"][3]["steps"] == ["전환", "분리", "설치"]

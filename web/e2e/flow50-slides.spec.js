@@ -41,3 +41,20 @@ test('발표 자료 — 질문지 → 장 계획(× 빼기) → 프레임 4장 +
   await page.keyboard.press('Control+z')
   await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'frame').length).toBe(0)   // 한 번에 되돌림
 })
+
+test('발표 자료 2단계 — 장 모양(표지 띠·숫자 칸·단계 줄·한마디)을 칠판 물건으로 · 모양에 쓸 것이 없으면 글머리', async ({ page }) => {
+  const name = boardName('slides2')
+  const deck = { title: '점검', sources: [], slides: [
+    { title: '점검 공유', layout: '표지', bullets: ['10월 27일'], notes: '' },
+    { title: '기억할 숫자', layout: '숫자', bullets: ['연료 70%'], numbers: [{ value: '70%', label: '발전기 연료' }, { value: '2대', label: '교체 대상' }], notes: '' },
+    { title: '교체 순서', layout: '단계', bullets: ['전환'], steps: ['예비기 전환', '2호기 분리', '설치'], notes: '' },
+    { title: '한 문장', layout: '한마디', bullets: ['근거'], message: '2호기는 교체가 필요하다', notes: '' }] }
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { slides: 'm' } } }))
+  await openBoard(page, name); await setCam(page)
+  const r = await page.evaluate(d => window.__mb.ed.slidesBoard(d), deck)
+  expect(r.frames).toBe(4)
+  const its = (await liveDoc(page)).items, texts = its.filter(it => it.type === 'text').map(it => it.text), rects = its.filter(it => it.type === 'rect')
+  expect(texts).toEqual(expect.arrayContaining(['70%', '발전기 연료', '2대', '1', '2', '3', '예비기 전환', '2호기는 교체가 필요하다']))
+  expect(rects).toHaveLength(2 + 3 + 2 + 3 + 1)                                           // 표지 띠·줄 + 제목 줄 3 + 숫자 칸 2 + 단계 줄 3 + 한마디 줄
+  expect(rects.every(x => x.style === 0)).toBe(true)
+})
