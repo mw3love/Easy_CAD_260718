@@ -38,7 +38,7 @@ test('칠판 칸 — 이름 칸 없음 · 「＋ 새 칠판」 = 바로 새 칠�
   await expect(form.getByPlaceholder('새 칠판 이름', { exact: false })).toHaveCount(0)
   await expect(form.getByRole('button', { name: '파일 열기' })).toHaveCount(0)               // 파일 = 「▾ › 파일로 새 칠판」·줄 ⋯ 내려받기(2026-10-28)
   await form.getByTestId('board-new-more').click()
-  await expect(page.getByTestId('board-new-menu').locator('button')).toHaveText(['#칠판 코드로 열기', '↥파일로 새 칠판'])   // 새 칠판은 옆 큰 단추(메뉴엔 없음)
+  await expect(page.getByTestId('board-new-menu').locator('button')).toHaveText(['#칠판 코드로 열기', '↥파일로 새 칠판', '★예시 칠판 열기'])   // 새 칠판은 옆 큰 단추(메뉴엔 없음)
   await page.keyboard.press('Escape'); await expect(page.getByTestId('board-new-menu')).toHaveCount(0)
   await form.getByTestId('board-new').click()
   await expect(page).toHaveURL(/board=[a-z2-9]{8}$/)
@@ -103,7 +103,7 @@ test('화살표를 고르고 바로 치면 글 — 라벨 없으면 가운데에
   expect(b.labels || b.label || null).toBeFalsy(); expect((await liveDoc(page)).items.length).toBe(n)   // 치다 지움 = 라벨 안 생김
 })
 
-test('예시 폴더도 지울 수 있음 — 지우면 새로 고쳐도 안 생김 · ⋯ 「예시 다시 넣기」로 돌아옴', async ({ page }) => {
+test('예시 폴더도 지울 수 있음 — 지우면 새로 고쳐도 안 생김 · 빠졌을 때만 보이는 「예시 심볼 되돌리기」로 돌아옴(2026-10-28)', async ({ page }) => {
   await openBoard(page, boardName('seed'))
   const mine = page.getByTestId('mine'), sec = name => page.getByTestId('pal-sec').filter({ hasText: name })
   await expect(mine.getByRole('button', { name: '카메라' })).toBeVisible()
@@ -111,7 +111,8 @@ test('예시 폴더도 지울 수 있음 — 지우면 새로 고쳐도 안 생�
   await expect(mine.getByRole('button', { name: '카메라' })).toHaveCount(0)
   await page.reload(); await expect(page.getByTestId('mine').getByRole('button', { name: '사람' })).toBeVisible()
   await expect(page.getByTestId('mine').getByRole('button', { name: '카메라' })).toHaveCount(0)        // 다시 안 생김
-  await page.getByTestId('mine-more').click(); await page.getByTestId('mine-pop').getByRole('button', { name: '예시 다시 넣기' }).click()
+  await expect(page.getByTestId('sym-reseed')).toHaveText('↺ 예시 심볼 되돌리기 (6개)')      // 메뉴 안이 아니라 따로 보이는 단추(2026-10-28 사용자)
+  await page.getByTestId('sym-reseed').click(); await expect(page.getByTestId('sym-reseed')).toHaveCount(0)   // 다 돌아오면 사라짐
   await expect(page.getByTestId('mine').getByRole('button', { name: '카메라' })).toHaveCount(1)
   await expect(page.getByTestId('mine').getByRole('button', { name: '사람' })).toHaveCount(1)          // 남아 있던 예시는 두 벌 안 됨
 })

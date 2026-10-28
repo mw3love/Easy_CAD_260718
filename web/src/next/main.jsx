@@ -195,6 +195,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, children }) { 
     let doc; try { doc = parseDoc(await f.text()) } catch (err) { setWhy(`파일을 못 읽었어요 — ${err.message}`); return }
     const n = newBoardName(), body = doc.title ? doc : { ...doc, title: f.name.replace(/\.(ecad|json)$/i, '').slice(0, 60) }
     if (await api.putDoc(n, body)) goTo(n); else setWhy('새 칠판에 못 올렸어요 — 서버 연결을 확인해 주세요') }
+  const exampleNew = async () => { closeMenu(); const n = newBoardName(); if (await api.example(n)) goTo(n); else setWhy('예시 칠판을 못 열었어요 — 서버 연결을 확인해 주세요') }   // 예시 칠판 하나 더(2026-10-28 — 처음 방문 때 받은 예시를 지웠을 때도)
   const myNames = new Set((mine || []).map(b => b.name))
   const others = (list || []).filter(b => !myNames.has(b.name)), shown = others.filter(b => all || !TEST_BOARD.test(b.name)), hidden = others.length - shown.length
   // 접속자 = 판이 열린 동안 3초마다(서버는 기억만 읽음 — 신호는 각 칠판 창이 보냄)
@@ -247,7 +248,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, children }) { 
       {!making && <div style={{ display: 'flex' }}>   {/* 갈라진 단추(2026-10-28 사용자 고름) — 왼쪽 = 바로 새 칠판(한 번), ▾ = 칠판 코드로 열기·파일로 새 칠판 */}
         <button data-testid="board-new" onClick={startNew} title={open ? '새 칠판 만들기 — 누르면 바로 새 칠판으로 옮겨 가요(이름은 나중에 목록에서 두 번 눌러서)' : '새 칠판 만들기 — 이름을 정하면 그 칠판으로 옮겨 가요'}
           style={{ ...accent, padding: '3px 8px 3px 10px', borderRadius: '6px 0 0 6px' }}>＋ 새 칠판</button>
-        <button ref={moreRef} data-testid="board-new-more" aria-label="새 칠판 메뉴" aria-expanded={!!newMenu} title="칠판 코드로 열기 · 파일로 새 칠판"
+        <button ref={moreRef} data-testid="board-new-more" aria-label="새 칠판 메뉴" aria-expanded={!!newMenu} title="칠판 코드로 열기 · 파일로 새 칠판 · 예시 칠판 열기"
           onClick={e => { if (newMenu) { closeMenu(); return } const r = e.currentTarget.getBoundingClientRect(); setNewMenu({ x: Math.max(RAIL_W + 4, r.right - 200), y: r.bottom + 4 }) /* 아이콘 줄은 안 덮게 */ }}
           style={{ ...accent, padding: '3px 6px', borderRadius: '0 6px 6px 0', borderLeft: '1px solid rgba(255,255,255,.45)', fontSize: 10 }}>▾</button>
       </div>}
@@ -256,6 +257,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, children }) { 
       {!codeOn ? <>
         <button data-testid="board-code-open" onClick={() => setCodeOn(true)} style={MENU_ROW} {...menuHover} title="받은 칠판 코드(QR 밑 8자)나 칠판 주소를 넣어 그 칠판으로"><span style={{ width: 14, textAlign: 'center' }}>#</span>칠판 코드로 열기</button>
         <button data-testid="board-file-new" onClick={() => fileRef.current?.click()} style={MENU_ROW} {...menuHover} title=".ecad 파일을 새 칠판으로 열어요(지금 칠판은 그대로)"><span style={{ width: 14, textAlign: 'center' }}>↥</span>파일로 새 칠판</button>
+        <button data-testid="board-example-new" onClick={exampleNew} style={MENU_ROW} {...menuHover} title="기능 소개로 채운 예시 칠판을 하나 더 열어요(지금 칠판은 그대로 — 예시를 지웠을 때도)"><span style={{ width: 14, textAlign: 'center' }}>★</span>예시 칠판 열기</button>
       </> : <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 6 }}>
         <span style={{ fontSize: 11, color: C.muted }}>받은 칠판 코드(QR 밑 8자)나 주소</span>
         <div style={{ display: 'flex', gap: 6 }}>
@@ -496,7 +498,7 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
   useEffect(() => { const on = () => setFull(!!document.fullscreenElement); document.addEventListener('fullscreenchange', on); return () => document.removeEventListener('fullscreenchange', on) }, [])
   const toggleFull = () => { try { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen() } catch { /* 막힌 환경이면 그대로 */ } }
   const toggleDark = () => setDark(d => { try { localStorage.setItem('mb.theme', d ? 'light' : 'dark') } catch { /* 기억 못 해도 그만 */ } return !d })
-  const [server, setServer] = useState(false), [srvKnown, setSrvKnown] = useState(false)
+  const [server, setServer] = useState(false), [srvKnown, setSrvKnown] = useState(false)   // srvKnown = 서버 답을 받음(대화창도 그 뒤에 — 처음 방문의 예시 대화가 복사된 뒤 읽게, 2026-10-28)
   // 서버 답 전(첫 0.1초)에도 서버 있는 모습으로 그림 — 「Magic Board」·흐린 공유·동그라미 없음 → 바뀌며 위 막대가 좌우로 밀렸음(2026-10-28 사용자 「새 칠판 누르면 살짝 깜빡」)
   const live = server || !srvKnown
   const [me, setMe] = useState(() => { try { return localStorage.getItem('mb.name') || '' } catch { return '' } }), [others, setOthers] = useState([]), [shareOpen, setShareOpen] = useState(false)
@@ -574,8 +576,10 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
   useEffect(() => {
     // 서버에 없는 칠판 = 빈 칠판을 먼저 만들고 그 판 번호로 엶(2026-10-28 사용자: 아무것도 안 쓴 칠판이 목록에서 사라졌음 — 칠판 코드로도 못 찾았음).
     // 받아 오기를 켜기 전에 만들어야 함 — 고치기 시작한 뒤에 도착하면 남의 변경처럼 합쳐져 되돌리기가 어긋났음(flow35)
-    loadServerDoc().then(async r => { const fresh = r.server && !r.doc, rev = fresh ? await api.patch({ upsert: [], delete: [] }) : null
+    // 처음 온 사람(이 브라우저에 칠판이 하나도 없음) = 예시 칠판 사본부터(2026-10-28 사용자 — 들어오자마자 「이렇게 쓰는 거구나」, 원본 없으면 빈 칠판 그대로)
+    ;(AUTO_BOARD === 'new' ? api.example() : Promise.resolve()).then(loadServerDoc).then(async r => { const fresh = r.server && !r.doc, rev = fresh ? await api.patch({ upsert: [], delete: [] }) : null
       if (typeof rev === 'number') r = { ...r, doc: { ...emptyDoc(), rev } }
+      setExample(r.doc?.example || '')
       setServer(r.server); setSrvKnown(true); if (r.doc) open(r.doc, `서버 「${DOC_NAME}」`, true, true); else if (r.server) { const m = modelRef.current; sync.current.base = snapshotModel(m); sync.current.rev = 0 }
       if (fresh || !r.server) setStatus(r.server ? `서버 「${DOC_NAME}」 · 새 칠판` : '서버 없음 — 파일로 열고 저장') }) }, [])   // eslint-disable-line
 
@@ -607,6 +611,11 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
   const [chatFocus, setChatFocus] = useState(null)   // 빈 칠판 안내 → 대화창 입력 칸(그 길 이름표까지)
   const [meetSt, setMeetSt] = useState('')   // 「🎙 회의」 실시간 회의록 상태(Editor가 알려 줌) — '' | start | listen | reconnect | stopping | saved
   const [gone, setGone] = useState(false)   // 열어 둔 사이 누가 이 칠판을 지움(2026-10-28 — 받아 오기·저장이 410)
+  const [example, setExample] = useState(''), [exAsk, setExAsk] = useState(false), [exHide, setExHide] = useState(false)   // 예시 칠판(문서 `example`, 2026-10-28) — 위 띠 · 「처음 모습으로」 확인 창 · 띠 닫기(이 창에서만)
+  const resetExample = async () => { setExAsk(false)
+    await flush(); for (let i = 0; i < 30 && sync.current.busy; i++) await new Promise(r => setTimeout(r, 100))   // 보내던 것을 먼저 끝냄 — 되돌린 뒤에 도착하면 옛 도형이 되살아남
+    if (!(await api.example())) { setStatus('처음 모습으로 못 되돌렸어요 — 서버 연결을 확인해 주세요'); return }
+    myApi.reseed(); location.reload() }   // 칠판·대화·예시 심볼 모두 — 대화창은 다시 열어야 새 기록을 읽음
   const [aiBusy, setAiBusy] = useState('')   // 칠판 위 「📄 정리 문서 만드는 중…」 알약(대화창이 알려 줌)
   const [helpOpen, setHelpOpen] = useState(false), [findOpen, setFindOpen] = useState(0), [marks, setMarks] = useState([])   // findOpen = 열 때마다 새 번호(다시 Ctrl+F = 칸에 다시 포커스)
   const keyAct = useRef(null)
@@ -729,6 +738,20 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
           이 칠판은 다른 창에서 지워졌어요 — 고친 것은 저장되지 않아요
           <button onClick={saveFile} style={{ all: 'unset', cursor: 'pointer', padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,.22)' }}>내려받기</button>
           <button onClick={() => { forgetBoard(DOC_NAME); location.href = location.pathname }} style={{ all: 'unset', cursor: 'pointer', padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,.22)' }}>쓰던 칠판으로</button></div>}   {/* 2026-10-28 칠판 지우기 — 열어 둔 창 */}
+        {/* 예시 칠판 띠(2026-10-28 사용자 — 만져 보다 망가지면 한 번에 처음으로): 이 사람 사본만 되돌림(칠판·대화·예시 심볼), 되돌리면 고친 것이 사라져 한 번 물음 */}
+        {example && !gone && !exHide && !phone && <div data-testid="example-band" style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 25, display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px 6px 14px', borderRadius: 10,
+          background: C.card, border: `1px solid ${C.line}`, color: C.ink, font: "500 13px 'Pretendard', sans-serif", boxShadow: '0 4px 14px rgba(0,0,0,.12)', whiteSpace: 'nowrap' }}>
+          <span><b style={{ fontWeight: 700 }}>예시 칠판</b> — 마음껏 만져 보세요. 망가져도 한 번에 되돌려요</span>
+          <button data-testid="example-reset" onClick={() => setExAsk(true)} title="이 칠판·KAIROS 대화·예시 심볼을 처음 모습으로" style={{ all: 'unset', cursor: 'pointer', padding: '4px 10px', borderRadius: 6, background: C.accent, color: '#fff', fontWeight: 600 }}>↺ 처음 모습으로</button>
+          <button aria-label="띠 닫기" title="띠 닫기 — 칠판을 다시 열면 또 보여요" onClick={() => setExHide(true)} style={{ all: 'unset', cursor: 'pointer', padding: '0 6px', color: C.muted, fontSize: 15 }}>×</button></div>}
+        {exAsk && <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onPointerDown={e => { if (e.target === e.currentTarget) setExAsk(false) }}>
+          <div data-testid="example-ask" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') setExAsk(false) }} style={{ width: 320, display: 'flex', flexDirection: 'column', gap: 10, padding: 18, borderRadius: 12, background: C.card, border: `1px solid ${C.line}`, boxShadow: '0 8px 28px rgba(0,0,0,.25)', font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
+            <div style={{ font: "700 15px 'Pretendard', sans-serif" }}>예시 칠판을 처음 모습으로 되돌릴까요?</div>
+            <div style={{ color: C.muted, fontSize: 12, lineHeight: 1.55 }}>이 칠판에서 고친 것과 KAIROS 대화가 처음 예시로 바뀌고, 지운 예시 심볼도 돌아와요. 다른 사람의 예시 칠판은 그대로예요.</div>
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>   {/* 엔터 = 되돌리기(칠판 지우기 창과 같게), Esc·바깥 = 취소 */}
+              <button onClick={() => setExAsk(false)} style={{ all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 6, border: `1px solid ${C.line}` }}>취소</button>
+              <button data-testid="example-reset-ok" autoFocus onClick={resetExample} style={{ all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 6, background: C.accent, color: '#fff', fontWeight: 600, outline: `2px solid ${C.accent}`, outlineOffset: 2 }}>되돌리기</button>
+            </div></div></div>}
         {helpOpen && <HelpCard onClose={() => setHelpOpen(false)} />}
         {symAdd && <SymAddForm init={symAdd} folders={mySyms.folders} onClose={() => setSymAdd(null)} onOk={(name, folder) => {
           const ok = myApi.addSymbol(name, folder, symAdd.items); setSymAdd(null)
@@ -742,7 +765,7 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
           background: 'var(--mb-card)', border: '1px solid var(--mb-line)', boxShadow: '0 2px 8px rgba(0,0,0,.12)', font: "600 13px 'Pretendard', sans-serif", color: 'var(--mb-ink)', pointerEvents: 'none', whiteSpace: 'nowrap' }}><Spinner />{aiBusy}</div>}   {/* 정돈·정리 문서 중 — 칠판만 보고 있어도 도는 게 보이게(2026-10-20 사용자) */}
         {findOpen > 0 && <FindBar key={findOpen} items={model.items} server={server} onMarks={setMarks} onGo={id => ed.current?.showItem(id)} onClose={() => setFindOpen(0)} />}
       </div>
-      {chatOpen && <ChatPanel ed={ed} selKey={selKey} floating={narrow} full={phone} onClose={() => setChatOpen(false)} request={chatAsk} focus={chatFocus} onBusy={setAiBusy} width={chatW} setWidth={setChatW} />}
+      {chatOpen && srvKnown && <ChatPanel ed={ed} selKey={selKey} floating={narrow} full={phone} onClose={() => setChatOpen(false)} request={chatAsk} focus={chatFocus} onBusy={setAiBusy} width={chatW} setWidth={setChatW} />}
       </div>
       {phone && <div data-testid="phone-bar" style={{ touchAction: 'none', display: 'flex', gap: 8, padding: '8px 10px calc(8px + env(safe-area-inset-bottom))', background: C.bar, borderTop: `1px solid ${C.line}` }}>   {/* 휴대폰 아래 = 엄지로 누르는 큰 버튼 셋 */}
         {[['⤢', '다 보기', () => fit(modelRef.current.items), false, false],

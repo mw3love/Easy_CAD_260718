@@ -17,6 +17,8 @@
   로그인 없이 보기만 GET `/api/pub/<토큰>`(데이터 폴더 `publish.json`). 계산은 `web/collab.py`.
 - 팀별 칠판(§8 항목67, 2026-10-27): 데이터 폴더 `teams.json`이 있으면 팀 비밀번호 → 그 팀 열쇠 = 그 팀 칠판만·그 팀 KAIROS 키
   (공용 비밀번호는 관리자 = 모든 칠판). 막는 곳 = 칠판 이름을 읽는 한 길 `_name()`, 없으면 지금과 똑같음.
+- 예시 칠판(2026-10-28): POST `/api/example/<이름>` = 원본 `web/examples/intro/`(칠판·대화·그림)를 이 칠판으로 복사 — 처음 방문의 사본·「처음 모습으로」.
+  이미 있는 칠판은 문서에 `example`이 있을 때만(409).
 ⚠ 사내망 `http`라 비밀번호·열쇠가 암호화 없이 오간다 — 회사 보안 확인 전엔 내 PC에서만(`--host 127.0.0.1`).
 
 실행: python web/server.py [--host 0.0.0.0] [--port 5191] [--data 폴더]
@@ -37,6 +39,7 @@ import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+EXAMPLES, EXAMPLE = os.path.join(HERE, "examples"), "intro"   # 예시 칠판 원본(2026-10-28) — `examples/intro/intro.ecad`·`.chat.json`·`.img/`
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
 from easycad.ai import board_chat, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, model_pick, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
@@ -682,6 +685,48 @@ class Handler(SimpleHTTPRequestHandler):
             Handler.changed.notify_all()
         return len(files)
 
+    # ── 예시 칠판(2026-10-28 사용자: 처음 들어온 사람이 「이렇게 쓰는 거구나」를 바로 알게 — 기능 소개로 가득 찬 칠판 + KAIROS 대화, 만져 보다 망가지면 한 번에 처음으로).
+    # 원본 = `web/examples/<예시>/`(이름 + 「.」으로 시작하는 파일·폴더), 사람마다 자기 사본(만져도 남에게 안 감). 처음 방문과 「처음 모습으로」가 같은 복사 —
+    # 그림 주소 속 칠판 이름(`/api/img/<이름>/`)을 바꿔 쓰고, 판 번호는 지금보다 크게(열어 둔 창이 받아 감). 이미 있는 칠판은 예시 칠판일 때만(남의 칠판을 덮지 않게)
+    def _example_copy(self, name: str, tpl: str = EXAMPLE) -> str:
+        """"" = 됨, 아니면 까닭("none" 원본 없음 · "taken" 예시가 아닌 칠판)."""
+        from urllib.parse import quote
+        src = os.path.join(EXAMPLES, tpl)
+        if not os.path.isfile(os.path.join(src, tpl + ".ecad")):
+            return "none"
+        swap = lambda text: text.replace(f"/api/img/{quote(tpl)}/", f"/api/img/{quote(name)}/")
+        os.makedirs(self.data_dir, exist_ok=True)
+        with self.lock:
+            old = self._doc_load(name)
+            if old is not None and not old.get("example"):
+                return "taken"
+            for fn in os.listdir(src):
+                if not fn.startswith(tpl + ".") or fn in (tpl + ".ecad", tpl + ".chat.json") or ".prev." in fn:
+                    continue
+                a, b = os.path.join(src, fn), os.path.join(self.data_dir, name + fn[len(tpl):])
+                if os.path.isdir(a):
+                    shutil.copytree(a, b, dirs_exist_ok=True)   # 그림 = 파일 이름이 시각이라 안 겹침 — 사용자가 더한 그림은 그대로 둠
+                else:
+                    write_via_temp(b, lambda tmp, a=a: _copy(a, tmp))
+            chat = os.path.join(src, tpl + ".chat.json")
+            if os.path.isfile(chat):
+                with open(chat, encoding="utf-8") as f:
+                    log = json.loads(swap(f.read()))
+                cp = os.path.join(self.data_dir, name + ".chat.json")
+                try:
+                    with open(cp, encoding="utf-8") as f:
+                        log["rev"] = int(json.load(f).get("rev") or 0) + 1
+                except (OSError, ValueError, AttributeError):
+                    pass
+                raw = json.dumps(log, ensure_ascii=False).encode("utf-8")
+                write_via_temp(cp, lambda tmp: _write(tmp, raw))
+            with open(os.path.join(src, tpl + ".ecad"), encoding="utf-8") as f:
+                doc = json.loads(swap(f.read()))
+            doc["rev"], doc["example"] = int((old or {}).get("rev") or 0) + 1, tpl
+            collab.ensure_uids(doc)
+            self._doc_save(name, doc)
+        return ""
+
     def _doc_path(self, name: str) -> str:
         return os.path.join(self.data_dir, name + ".ecad")
 
@@ -946,6 +991,16 @@ class Handler(SimpleHTTPRequestHandler):
             moved = self._delete_board(name)
             sys.stderr.write("[지우기] %s — 파일 %d개 휴지통으로\n" % (name, moved))
             return self._json(200, {"ok": True, "moved": moved})
+        m = re.match(r"^/api/example/([^/]+)$", path)
+        if m:   # 예시 칠판 — 처음 방문의 사본 만들기·「처음 모습으로」(같은 복사, 2026-10-28)
+            name = self._name(m.group(1))
+            if not name or self._gone(name):
+                return self._send(400, b'{"error":"bad name"}')
+            why = self._example_copy(name)
+            if why:
+                return self._json(404 if why == "none" else 409, {"error": why})
+            sys.stderr.write("[예시] %s ← %s\n" % (name, EXAMPLE))
+            return self._json(200, {"ok": True})
         m = re.match(r"^/api/find/([^/]+)$", path)
         if m:
             return self._find_api(self._name(m.group(1)))

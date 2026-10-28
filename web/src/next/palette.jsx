@@ -117,13 +117,14 @@ export function Palette({ lib, tool, onDown, onClick, dark, docked, mine, say })
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
         <span title="이 브라우저에 저장돼요 — 다른 PC·브라우저로 옮기려면 ⋯ 「파일로 저장」 → 「파일 불러오기」" style={{ flex: 1, whiteSpace: 'nowrap', font: "700 13px 'Pretendard', sans-serif" }}>내 심볼</span>
         {[['＋ 폴더', '새 폴더 만들기', e => setPop({ ...below(e), ask: { label: '새 폴더 이름', value: '', ok: v => mine.api.addFolder(v) } })],
-          ['⋯', '파일로 저장 · 파일 불러오기 · 예시 다시 넣기', e => setPop({ ...below(e), menu: [
-            ...(mine.mine.symbols.length ? [['파일로 저장', download]] : []), ['파일 불러오기', () => file.current.click()],
-            ['예시 다시 넣기', () => { const n = mine.api.reseed(); say?.(n ? `예시 심볼 ${n}개를 다시 넣었어요` : '빠진 예시가 없어요') }]] })]].map(([l, t, f]) =>
+          ['⋯', '파일로 저장 · 파일 불러오기', e => setPop({ ...below(e), menu: [
+            ...(mine.mine.symbols.length ? [['파일로 저장', download]] : []), ['파일 불러오기', () => file.current.click()]] })]].map(([l, t, f]) =>
           <button key={l} data-testid={l === '⋯' ? 'mine-more' : undefined} title={t} onClick={f} style={{ all: 'unset', cursor: 'pointer', padding: '1px 6px', borderRadius: 4, border: `1px solid ${C.line}`, font: "500 11px 'Pretendard', sans-serif" }}>{l}</button>)}
       </div>
       {folders.filter(isMine).map(f => { const list = syms.filter(s => s.folder === f); return <Section key={f} title={folderTitle(f)} color={FOLDER_GRAY} count={list.length} shut={shut.has('f:' + f)} onToggle={() => toggle('f:' + f)} onMenu={folderMenu(f)} folder={folderTitle(f)} lit={drop?.folder === folderTitle(f)}>{list.map(s => cellOf('customsym:' + s.id))}</Section> })}
       {!mine.mine.symbols.length && <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.5 }}>칠판에서 도형·아이콘을 고르고 우클릭 「내 심볼에 추가」</div>}
+      {(n => n > 0 && <button data-testid="sym-reseed" title="지운 예시 심볼(방송·기술·업무)만 다시 넣어요 — 내가 넣은 심볼은 그대로" onClick={() => { const k = mine.api.reseed(); say?.(k ? `예시 심볼 ${k}개를 되돌렸어요` : '빠진 예시가 없어요') }}
+        style={{ all: 'unset', cursor: 'pointer', alignSelf: 'flex-start', padding: '1px 6px', borderRadius: 4, border: `1px solid ${C.line}`, font: "500 11px 'Pretendard', sans-serif", color: C.muted }}>↺ 예시 심볼 되돌리기 ({n}개)</button>)(mine.api.missing())}   {/* 빠진 예시가 있을 때만(2026-10-28 사용자 — 메뉴 안 「예시 다시 넣기」를 따로 보이는 단추로) */}
       <input ref={file} type="file" accept=".json,application/json" hidden onChange={async e => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return
         const n = mine.api.importText(await f.text()); say?.(n >= 0 ? `내 심볼 ${n}개를 가져왔어요` : n === -2 ? '이 브라우저 저장 공간이 모자라요' : '내 심볼 파일로 읽지 못했어요') }} />
     </div>}

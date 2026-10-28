@@ -3,7 +3,7 @@
 // (Excalidraw 라이브러리처럼 로그인 없이 — 로그인이 생기면 그때 계정으로 옮김). 파일 모양 = 데스크톱 `symbol_library.json`과 같아 데스크톱 파일도 가져올 수 있음.
 // 칠판·속성 카드·도형 바꾸기는 서버 심볼과 합친 한 목록(`mergeLib`)을 그대로 씀 — 이 브라우저 폴더는 이름 앞에 `MINE`을 붙여 서버 폴더와 안 섞임.
 // 같은 날 사용자: 서버의 방송·기술·업무 폴더는 처음 쓰는 사람에게 칸을 알려 주는 「예시」일 뿐 → 처음 열 때 이 브라우저로 한 번 복사(`seeded`)하고
-// 그 뒤엔 내 심볼만 보임(기본 도형만 고정, 예시도 지우기·이름 바꾸기 됨). 지운 예시는 다시 안 생김 — 「예시 다시 넣기」로만. 복사본은 같은 id라 즐겨찾기가 그대로 이어짐.
+// 그 뒤엔 내 심볼만 보임(기본 도형만 고정, 예시도 지우기·이름 바꾸기 됨). 지운 예시는 다시 안 생김 — 도형 판 「예시 심볼 되돌리기」(빠졌을 때만 보임)·예시 칠판 「처음 모습으로」로만(2026-10-28). 복사본은 같은 id라 즐겨찾기가 그대로 이어짐.
 import { useEffect, useState } from 'react'
 
 const KEY = 'mb-mysym'
@@ -30,6 +30,8 @@ export function useMySymbols(server) {   // server = 서버 심볼 파일(예시
     // items = .ecad 아이템들(`toEcad` 모양), folder = 이 브라우저 폴더 이름(없으면 만듦)
     addSymbol: (name, folder, items) => { const f = folder.trim() || '내 심볼'
       return put({ folders: mine.folders.includes(f) ? mine.folders : [...mine.folders, f], symbols: [...mine.symbols, { id: newSymId(), name: name.trim() || '심볼', folder: f, thumb: '', items }] }) },
+    // 빠진 예시 수 — 도형 판 「예시 심볼 되돌리기 (N개)」 단추는 이게 있을 때만(2026-10-28 사용자: 메뉴 안이 아니라 따로 보이는 단추)
+    missing: () => { if (!server) return 0; const have = new Set(mine.symbols.map(x => x.id)); return (server.symbols || []).filter(x => !have.has(x.id)).length },
     // 예시 다시 넣기 = 서버 예시 중 지금 없는 것만(같은 id) 더함 → 더한 수
     reseed: () => { if (!server) return 0; const have = new Set(mine.symbols.map(x => x.id)), add = (server.symbols || []).filter(x => !have.has(x.id))
       const folders = [...mine.folders]; for (const x of add) if (!folders.includes(x.folder)) folders.push(x.folder)

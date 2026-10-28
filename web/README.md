@@ -61,3 +61,10 @@ KAIROS는 가짜 답으로 바꿔 끼워 크레딧을 안 쓴다. 글쇠를 바�
 
 칠판은 직접 만든 것(`src/next/`) — 2026-10-18 tldraw에서 갈아탐(§8 항목61 5단계). 문서는 `.ecad` 그대로, 서버 저장은 `/api/doc/<이름>`.
 옛 주소 `next.html?board=…`는 `/`로 넘어간다(즐겨찾기용). 글 편집은 TipTap 3.32.0(MIT), 부품은 `package.json`에 모두 버전 고정.
+
+## 예시 칠판 (2026-10-28)
+
+- 처음 온 브라우저는 빈 칠판 대신 **예시 칠판 사본**을 받는다. 원본 = `web/examples/intro/`(`intro.ecad` 칠판 · `intro.chat.json` KAIROS 대화 · `intro.img/` 그림).
+- 사람마다 자기 사본이라 만져도 남에게 안 간다. 칠판 위 띠 「↺ 처음 모습으로」 = 그 사본만 원본으로(서버 POST `/api/example/<이름>`, 예시가 아닌 칠판은 409로 막음).
+- 원본을 바꾸려면: 아무 칠판에서 만든 뒤 데이터 폴더의 `<이름>.ecad`·`.chat.json`·`.img/`를 `intro.*`로 이름을 바꿔 넣고, 칠판·대화 안의 `/api/img/<이름>/`도 `/api/img/intro/`로 바꾼다. 그림 칸은 파일 안에 base64라 JPG로 줄일 것.
+- 서버 PC에 반영: `git pull` → `npm run build` → 서버 다시 켜기.
