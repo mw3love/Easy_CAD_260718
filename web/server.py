@@ -42,7 +42,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXAMPLES, EXAMPLE = os.path.join(HERE, "examples"), "intro"   # 예시 칠판 원본(2026-10-28) — `examples/intro/intro.ecad`·`.chat.json`·`.img/`
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_bubble, board_chat, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, model_pick, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_bubble, board_chat, slides, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, model_pick, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
@@ -125,7 +125,7 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:   # 목록을 못 받아도 대화는 기본 모델로 된다
                 return self._json(200, {"default": gw.FALLBACK_DEFAULT_MODEL, "featured": {}, "error": str(e)})
         # 일마다 정해 둔 모델 — 대화창 「생각 중」 줄이 고른 모델이 아니라 실제로 일하는 모델을 보이게(2026-10-20 사용자: 정돈인데 gpt로 보였음)
-        jobs = {"report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "deep": deep_mode.EDITOR_MODEL, "live": live_card.LIVE_MODEL, "trace": board_trace.TRACE_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3), live = 「+ › 움직이는 카드」(4단계)
+        jobs = {"report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "deep": deep_mode.EDITOR_MODEL, "slides": slides.WRITER_MODEL, "live": live_card.LIVE_MODEL, "trace": board_trace.TRACE_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3), live = 「+ › 움직이는 카드」(4단계)
         jobs.update(deep_plan=deep_mode.EDITOR_MODEL, deep_write=deep_mode.WRITER_MODEL)   # 「모델 설정」 칸(2026-10-26)
         jobs = {k: model_pick.pick(v) for k, v in jobs.items()}   # 은퇴·없어져 갈아탄 것은 지금 부르는 이름으로
         return self._json(200, {**hit[1], "jobs": jobs, "choices": model_pick.choices()})
@@ -165,6 +165,8 @@ class Handler(SimpleHTTPRequestHandler):
             kind = req.get("kind") or ""
             if kind == "deep":   # 딥모드(§8 항목66) — 대화창 질문지·계획 카드가 단계(`deep.step`)를 정해 보냄, 길 고르기 없음
                 return self._deep(req, key)
+            if kind == "slides":   # 📽 발표 자료(§8 항목69) — 질문지·장 계획 카드가 단계(`slides.step`)를 정해 보냄, 길 고르기 없음
+                return self._slides(req, key)
             if kind == "bubble":   # 💬 AI 말풍선(2026-10-28) — 물건 하나의 글·그림 + 그 말풍선 앞 대화만, 길 고르기 없음
                 return self._bubble(req, key)
             if kind == "live":   # 「+ › 움직이는 카드」(§8 항목66 4단계) — 하나만 따로, 재료 = 고른 것의 글. 앞 답이 카드이고 고칠 말이면 그 카드 고치기
@@ -338,6 +340,32 @@ class Handler(SimpleHTTPRequestHandler):
         time.sleep(1.5)
         b1 = self._balance(key, base)
         return round(b0 - b1, 1) if b1 is not None else None
+
+    def _slides(self, req: dict, key: str):
+        """📽 발표 자료 → step plan: {"kind": "slides", "plan", "estimate", "model", "elapsed", "credits"} · step build: {"kind": "slides", "deck", "model", "elapsed", "missing", "credits"}.
+        재료 = 칠판에서 고른 것의 글(`slides.material` — 대화창이 보냄, 질문지 「재료」가 웹 검색이면 안 씀). 프레임은 칠판이 짓는다(`ed.slidesBoard`)."""
+        d = req.get("slides") if isinstance(req.get("slides"), dict) else {}
+        step, topic = d.get("step"), str(d.get("topic") or "")
+        brief = d.get("brief") if isinstance(d.get("brief"), dict) else {}
+        material = "" if brief.get("재료") == "웹 검색" else str(d.get("material") or "")[:slides.MAX_MATERIAL]
+        base = self._base()
+        b0 = self._balance(key, base)
+        try:
+            if step == "plan":
+                prev = d.get("prev") if isinstance(d.get("prev"), dict) else None
+                out = self._with("slides", slides.PLAN_MODEL, lambda m: slides.make_plan(gw._client(key, base, timeout=300), topic, brief, material=material, prev=prev, fix=str(d.get("fix") or "") if prev else "", model=m))
+                sys.stderr.write("[발표 자료 계획] %s %.1f초 %d장\n" % (out["model"], out["elapsed"], len(out["plan"]["slides"])))
+            elif step == "build":
+                plan = d.get("plan") if isinstance(d.get("plan"), dict) else {}
+                out = self._with("slides", slides.WRITER_MODEL, lambda m: slides.build(key, gw._client(key, base, timeout=600), topic, brief, plan, base_url=base, material=material, model=m))
+                sys.stderr.write("[발표 자료 만들기] %s %.1f초 %d장 출처 %d\n" % (out["model"], out["elapsed"], len(out["deck"]["slides"]), len(out["deck"]["sources"])))
+            else:
+                return self._json(400, {"error": "step"})
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        except Exception as e:
+            return self._json(502, {"error": gw.friendly_error(e)})
+        return self._json(200, {"kind": "slides", **out, "credits": self._spent(key, base, b0)})
 
     def _bubble(self, req: dict, key: str):
         """💬 AI 말풍선 — {"item": {"type", "text", "edit"?(memo·table·text), "image"?}, "messages"} → {"kind": "bubble", "content", "edit"?(고친 물건 전체), "model", "elapsed", "credits"}."""

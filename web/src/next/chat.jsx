@@ -18,7 +18,7 @@ import { siteOf } from './webcard.js'
 import { getKairosKey, KEY_RE, keyHeaders, setKairosKey } from './kairosKey.js'
 import { startMic } from './mic.js'
 import { svgPreview } from './svgin.js'
-import { DeepAsk, DeepConfirm, DeepFlip, DeepPlan, REDO_RE, briefOf, keptPlan } from './deepchat.jsx'
+import { DeepAsk, DeepConfirm, DeepFlip, DeepPlan, REDO_RE, SLIDES_QS, SlidesPlan, briefOf, keptPlan, keptSlides } from './deepchat.jsx'
 import { LIVE_CSP, LIVE_H, LIVE_W, bigPage, liveSrc } from './livecard.js'
 import { ChatSkeleton } from './skeleton.jsx'
 const LINK_CHAT = '#4f8fe8'
@@ -37,7 +37,8 @@ const KINDS = {
   icon: ['✏️ 아이콘 (SVG)', { color: '#0e7490', background: 'rgba(14,116,144,.12)' }],
   live: ['▶ 인터랙티브 HTML', { color: '#b4532f', background: 'rgba(218,119,86,.14)' }],   // 원리를 직접 만져 보는 카드(§8 항목66 4단계)   // 선을 고칠 수 있는 도형(§8 항목63)
   ask: ['❓ 확인', { color: '#da7756', background: 'rgba(218,119,86,.12)' }],   // 되묻기(§8 항목64) — 만들기 전에 버튼으로
-  deep: ['📰 Deep Mode', { color: '#b4532f', background: 'rgba(180,83,47,.12)' }],   // 한 주제 한 판(§8 항목66) — 질문지·지면 계획 카드(deepchat.jsx)
+  deep: ['📰 Deep Mode', { color: '#b4532f', background: 'rgba(180,83,47,.12)' }],
+  slides: ['📽 발표 자료', { color: '#1d4ed8', background: 'rgba(29,78,216,.10)' }],   // 프레임 여러 장(§8 항목69) — 질문지·장 계획 카드   // 한 주제 한 판(§8 항목66) — 질문지·지면 계획 카드(deepchat.jsx)
 }
 // 되묻기 버튼 — [이름, 설명]. 서버가 애매하고 비싼 갈림길에서만 길 둘을 보냄(`easycad/ai/route.py` `decide`)
 const ASK_LABEL = { image: ['🎨 이미지로', '사진·일러스트 같은 그림'], icon: ['✏️ 아이콘(SVG)으로', '선으로 된 도형 — 칠판에서 고칠 수 있어요'],
@@ -49,16 +50,17 @@ const askMemo = () => { try { return JSON.parse(localStorage.getItem(ASK_KEY) ||
 const askPrefs = () => Object.fromEntries(Object.entries(askMemo()).filter(([, v]) => Array.isArray(v) && v.length >= 2 && v.at(-1) === v.at(-2)).map(([k, v]) => [k, v.at(-1)]))
 const rememberAsk = (key, kind) => { try { const m = askMemo(); m[key] = [...(m[key] || []), kind].slice(-2); localStorage.setItem(ASK_KEY, JSON.stringify(m)) } catch { /* 기억 못 해도 그만 */ } }
 // 기다리는 동안 보일 말 — 일마다 실제로 일하는 모델(서버 /api/models `jobs`)을 같이(2026-10-20 사용자: 정돈인데 고른 gpt가 보여 헷갈림, 칠판엔 아무 표시가 없어 안 되는 줄 알았음)
-const JOB_LABEL = { live: '▶ 인터랙티브 HTML 만드는 중', report: '📄 정리 문서 만드는 중', image: '🎨 이미지 그리는 중', icon: '✏️ 아이콘(SVG) 그리는 중', 'deep-plan': '📰 지면 계획 짜는 중', 'deep-build': '📰 Deep Mode 판 만드는 중', 'deep-section': '📰 꼭지 다시 쓰는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
+const JOB_LABEL = { 'slides-plan': '📽 장 계획 짜는 중', 'slides-build': '📽 발표 자료 만드는 중', live: '▶ 인터랙티브 HTML 만드는 중', report: '📄 정리 문서 만드는 중', image: '🎨 이미지 그리는 중', icon: '✏️ 아이콘(SVG) 그리는 중', 'deep-plan': '📰 지면 계획 짜는 중', 'deep-build': '📰 Deep Mode 판 만드는 중', 'deep-section': '📰 꼭지 다시 쓰는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
 // 「+」 도구 — [길, 이름, 설명, 입력 칸 안내]. 서버는 길(`kind`)을 그대로 따름. 이름은 2026-10-25 사용자(어색한 한글 → 영어 섞어),
 // 정리 문서는 「+」에서 뺌(고르고 우클릭 「정리 문서 만들기」·「정리해 줘」 말이 맡음)
 const TOOLS = [['image', '🎨 이미지 만들기', '사진·일러스트 같은 그림', '무엇을 그릴까요? 예: 산 위 송신탑 수채화'],
   ['icon', '✏️ 아이콘 만들기 (SVG)', '선으로 된 도형 — 칠판에서 고칠 수 있어요', '무엇의 아이콘? 예: 파라볼라 안테나'],
   ['live', '▶ 인터랙티브 HTML', '원리를 직접 만져 보는 HTML 카드 하나(고른 것이 재료, 약 45크레딧)', '무엇을 움직여 볼까요? 예: 가격 × 물량 = 수출액'],
-  ['deep', '📰 Deep Mode', '한 주제로 칠판 한 판 — 질문지 → 지면 계획 → 만들기(크레딧 많이)', '어떤 주제로 한 판? 예: 신입에게 어텐션 설명']]   // 딥모드는 서버가 할 수 있을 때만(/api/models `jobs.deep`)
+  ['deep', '📰 Deep Mode', '한 주제로 칠판 한 판 — 질문지 → 지면 계획 → 만들기(크레딧 많이)', '어떤 주제로 한 판? 예: 신입에게 어텐션 설명'],
+  ['slides', '📽 발표 자료', '고른 자료나 주제로 프레임 여러 장 — 질문지 → 장 계획 → 만들기, 바로 발표', '무엇을 발표할까요? 예: 고른 점검 메모로 팀 공유 발표']]   // 딥모드는 서버가 할 수 있을 때만(/api/models `jobs.deep`)
 const CUT_MORE = '끊긴 곳부터 이어서 계속 써 줘. 앞 내용은 되풀이하지 말고 끊긴 문장부터.'   // 끊긴 답 「이어서 쓰기」(2026-10-27)
 const EMPTY_ASK = { report: '정리해 줘' }   // 이름표만 두고 빈 칸으로 보내면
-const BOARD_JOBS = new Set(['report', 'deep-build', 'deep-section'])   // 칠판을 바꾸거나 칠판 자료로 만드는 일 — 칠판 위에도 알약(main `aiBusy`)
+const BOARD_JOBS = new Set(['report', 'deep-build', 'deep-section', 'slides-build'])   // 칠판을 바꾸거나 칠판 자료로 만드는 일 — 칠판 위에도 알약(main `aiBusy`)
 // 도는 동그라미(칠판 알약·대화창 「생각 중」 공용)
 export const Spinner = () => <><style>{'@keyframes mb-spin{to{transform:rotate(360deg)}}'}</style>
   <span style={{ display: 'inline-block', flex: 'none', width: 11, height: 11, borderRadius: '50%', border: '2px solid #da7756', borderTopColor: 'transparent', animation: 'mb-spin .8s linear infinite' }} /></>
@@ -92,7 +94,7 @@ const PICKS_KEY = 'magic-board-models'  // 「모델 설정」 — 일마다 고
 // 「모델 설정」 칸 — 고를 의미가 있는 일만(2026-10-26 사용자 선택). 길 고르기·검색·받아쓰기·찾기·글 읽기는 늘 자동. [일, 이름, 종류(서버 choices), 서버 jobs 이름]
 const PICK_ROWS = [['chat', '대화 · 회의 요약', 'llm'], ['image', '이미지', 'image'], ['icon', '아이콘 (SVG)', 'llm'], ['report', '정리 문서', 'llm'], ['live', '인터랙티브 HTML', 'llm'],
   ['deep_plan', 'Deep Mode 지면 계획', 'llm'], ['deep_write', 'Deep Mode 본문', 'llm']]
-const JOB_PICK = { 'deep-plan': 'deep_plan', 'deep-build': 'deep_write', 'deep-section': 'deep_write' }   // 기다리는 일 → 그 일의 모델 칸
+const JOB_PICK = { 'slides-plan': 'slides', 'slides-build': 'slides', 'deep-plan': 'deep_plan', 'deep-build': 'deep_write', 'deep-section': 'deep_write' }   // 기다리는 일 → 그 일의 모델 칸
 const VENDOR = { gpt: 'GPT', gemini: 'Gemini', claude: 'Claude' }
 const F = "'Pretendard', sans-serif"
 const DONE = '#16a34a'   // 칠판에 붙임(끝남) = 초록 — 코랄은 할 수 있는 일 버튼(2026-10-20 사용자)
@@ -300,7 +302,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     const tg = !busy && !from && (kind === 'deep-section' || (text == null && !kind)) ? ed.current?.deepTarget?.() : null   // 판 꼭지를 고른 채 고치는 말 = 그 꼭지만 다시(5단계) — 질문은 보통 대화
     if (kind === 'deep-section' && busy) return
     if (kind === 'deep-section' || (tg && REDO_RE.test(draft.trim()))) { deepSection(tg, kind === 'deep-section' ? '' : draft.trim()); return }
-    if (text == null && !busy && deepSend(kind)) return
+    if (text == null && !busy && (deepSend(kind) || slidesSend(kind))) return
     const pend = text == null && !from && replyTo == null ? msgs.findLastIndex(m => m.role !== 'error') : -1
     if (pend >= 0 && msgs[pend].kind === 'ask' && draft.trim() && !busy) return choose(pend, kind, draft.trim())   // 되묻기에 글로 답함(§8 항목64)
     const q = (text ?? draft).trim() || (text == null ? EMPTY_ASK[kind] || '' : ''); if (!q || busy) return
@@ -308,7 +310,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     const ctx = from ? from.context || '' : contextText(sel), n = from ? from.ctxCount : sel.length
     // ↩ 이어 묻기(2026-10-20 사용자 — 특정 답을 토대로) = 그 답까지만 앞 대화로 보냄(화면 기록엔 맨 끝에 쌓임, 무엇에 이었는지 표시)
     const ri = replyTo == null ? -1 : msgs.findIndex(m => m.at === replyTo)
-    const before = (ri >= 0 ? msgs.slice(0, ri + 1) : msgs).filter(m => m.role !== 'error' && m.kind !== 'ask' && m.kind !== 'deep' && !m.deep)   // 답 안 한 되묻기·딥모드 카드는 앞 대화에 안 실음
+    const before = (ri >= 0 ? msgs.slice(0, ri + 1) : msgs).filter(m => m.role !== 'error' && m.kind !== 'ask' && m.kind !== 'deep' && !m.deep && m.kind !== 'slides' && !m.slides)   // 답 안 한 되묻기·딥모드·발표 자료 카드는 앞 대화에 안 실음
     // 바로 앞(또는 이어 묻는) 답이 그림 후보면 고칠 그림 — 「두 번째」라 하면 둘째, 아니면 칠판에 마지막으로 붙인 것, 없으면 첫째(서버가 원본 유지 고치기 — input_images, 2026-10-20 사용자)
     const lastA = before.at(-1), ims = lastA?.role === 'assistant' ? lastA.images || [] : []
     const pick = /두\s*번째|둘째|2\s*번째?|오른쪽/.test(q) ? 1 : /첫\s*번째|첫째|1\s*번째?|왼쪽/.test(q) ? 0 : lastA?.picked?.at(-1) ?? 0
@@ -366,6 +368,47 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     const r = ed.current?.deepBoard(built, null, 'calm', { topic: m.topic, brief: m.brief })   // 톤은 만든 뒤 속성 카드에서(2026-10-25 사용자 — 처음 고르기 없앰); if (!r) return
     setMsg(i, { built: r.ids[0], pages: r.pages.length, model: d.model, elapsed: d.elapsed, credits: d.credits, missing: d.missing?.length ? d.missing : undefined })   // 못 쓴 꼭지·까닭(2026-10-25 실조건 — 카드가 비었는데 까닭이 서버 창에만 있었음)
     ed.current?.showIds([r.ids[0]]); setSkipSel(String(r.ids[0]))   // 보여 주려고 고른 판은 다음 질문에 안 실음(붙이기와 같게)
+  }
+  // 📽 발표 자료(§8 항목69, 2026-10-28) — 딥모드와 같은 걸음: 「+ › 발표 자료」 + 주제 = 질문지 카드(그때 고른 것의 글을 재료로 붙잡아 둠) → 장 계획 → 「이대로 만들기」 = 칠판에 프레임 N장(`ed.slidesBoard`)
+  function slidesSend(kind) {
+    const li = msgs.findLastIndex(m => m.role !== 'error'), last = msgs[li], t = draft.trim()
+    if (last?.kind === 'slides' && last.step === 'ask' && !last.done) { slidesGo(li, t); return true }
+    if (last?.kind === 'slides' && last.step === 'plan' && !last.built && !last.stale && t && (!kind || kind === 'slides')) { slidesReplan(li, t); return true }
+    if (kind !== 'slides' || !t) return false
+    const at = Date.now(), material = contextText(sel)
+    update([...msgs.filter(m => m.role !== 'error'), { role: 'user', content: t, at, slides: true }, { role: 'assistant', kind: 'slides', step: 'ask', topic: t, brief: {}, ...(material ? { material, ctxCount: sel.length } : {}), at: at + 1 }])
+    setDraft(''); setPickTool(''); if (mic !== 'off') micStop.current?.()
+    return true
+  }
+  async function slidesCall(body, job) {
+    setBusy(Date.now()); setBusyJob(job)
+    try {
+      const r = await chatPost({ model: useModel, board: DOC_NAME, kind: 'slides', slides: body, messages: [{ role: 'user', content: body.topic }] })
+      const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
+      if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
+      return d
+    } catch (e) { setMsgs(cur => [...cur.filter(x => x.role !== 'error'), { role: 'error', content: String(e.message || e) }]); return null } finally { setBusy(null) }
+  }
+  const slidesPlanMsg = (m, d) => ({ role: 'assistant', kind: 'slides', step: 'plan', topic: m.topic, brief: m.brief, material: m.material, plan: d.plan, estimate: d.estimate, drop: [], model: d.model, elapsed: d.elapsed, credits: d.credits, at: Date.now() })
+  async function slidesGo(i, more) {
+    const m = msgs[i], brief = briefOf(m.brief, more, SLIDES_QS)
+    if (more) setDraft('')
+    const d = await slidesCall({ step: 'plan', topic: m.topic, brief, material: m.material || '' }, 'slides-plan'); if (!d) return
+    setMsgs(cur => { const next = [...cur.map((x, j) => (j === i ? { ...x, done: true, ...(more ? { more } : {}) } : x)), slidesPlanMsg({ ...m, brief }, d)]; save(next); return next })
+  }
+  async function slidesReplan(i, fix) {
+    const m = msgs[i], mine = { role: 'user', content: fix, at: Date.now(), slides: true }
+    setDraft(''); setMsgs(cur => [...cur, mine])
+    const d = await slidesCall({ step: 'plan', topic: m.topic, brief: m.brief, material: m.material || '', prev: keptSlides(m), fix }, 'slides-plan')
+    if (!d) { setMsgs(cur => cur.filter(x => x !== mine)); setDraft(fix); return }
+    setMsgs(cur => { const next = [...cur.map((x, j) => (j === i ? { ...x, stale: true } : x)), slidesPlanMsg(m, d)]; save(next); return next })
+  }
+  async function slidesBuild(i) {
+    const m = msgs[i], plan = keptSlides(m)
+    const d = await slidesCall({ step: 'build', topic: m.topic, brief: m.brief, material: m.material || '', plan }, 'slides-build'); if (!d) return
+    const r = ed.current?.slidesBoard?.(d.deck); if (!r) return
+    setMsg(i, { built: r.ids[0], frames: r.frames, model: d.model, elapsed: d.elapsed, credits: d.credits })
+    ed.current?.showIds(r.ids); setSkipSel(r.ids.join())
   }
   // 꼭지 다시 쓰기(§8 항목66 5단계) — tg = ed.deepTarget(), ask = 고칠 말(비면 「더 자세히」). 손으로 고친 판이면 크레딧 쓰기 전에 먼저 물음(덮어쓰기 확인 카드)
   function deepSection(tg, ask) {
@@ -517,7 +560,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   useEffect(() => { onBusy?.(busy && BOARD_JOBS.has(busyJob) ? busyLine : '') }, [busyLine])   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => onBusy?.(''), [])   // eslint-disable-line react-hooks/exhaustive-deps
   const feat = models?.featured || {}
-  const lastM = msgs.filter(m => m.role !== 'error').at(-1), tools = TOOLS.filter(t => (t[0] !== 'deep' && t[0] !== 'live') || models?.jobs?.[t[0]])   // 딥모드·움직이는 카드 = 서버가 할 수 있을 때만
+  const lastM = msgs.filter(m => m.role !== 'error').at(-1), tools = TOOLS.filter(t => (t[0] !== 'deep' && t[0] !== 'live' && t[0] !== 'slides') || models?.jobs?.[t[0]])   // 딥모드·움직이는 카드 = 서버가 할 수 있을 때만
   const ta = useRef(null)
   // 첨부(2026-10-28 사용자) — 대화창에 놓기·붙여넣기·「+ › 파일 올리기…」 = 칠판 빈자리에 놓고 고른 채(`ed.attachFiles`), 자료는 칠판에 남음
   const fileIn = useRef(null), [dropIn, setDropIn] = useState(false)
@@ -605,12 +648,17 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
                 ? <DeepAsk m={m} busy={busy} css={css} set={(q, v) => setMsg(i, { brief: { ...m.brief, [q]: v } })} go={() => deepGo(i, draft.trim())} />
                 : <DeepPlan m={m} busy={busy} css={css} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
                   build={() => deepBuild(i)} show={() => ed.current?.showIds([m.built]) || setGone(g => ({ ...g, [m.at + ':deep']: true }))} />)
+                : m.kind === 'slides' ? (m.step === 'ask'
+                  ? <DeepAsk m={m} busy={busy} css={css} qs={SLIDES_QS} slides set={(q, v) => setMsg(i, { brief: { ...m.brief, [q]: v } })} go={() => slidesGo(i, draft.trim())} />
+                  : <SlidesPlan m={m} busy={busy} css={css} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
+                    build={() => slidesBuild(i)} show={() => ed.current?.showIds([m.built]) || setGone(g => ({ ...g, [m.at + ':slides']: true }))} />)
                 : <Answer text={m.content} chart={m.kind === 'ask' ? null : chartAct(m)} />}
               {/* 길이 상한에 걸려 끊긴 답(2026-10-27 — 긴 연설문 등이 다 된 것처럼 보였음). 이어 쓰기는 맨 끝 답에서만(앞 답이면 「⋯ › 여기서 이어 묻기」) */}
               {m.cut && <div data-testid="answer-cut" style={{ ...css.meta, color: '#d97706', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
                 <span>답이 길어서 중간에 끊겼어요</span>
                 {i === msgs.length - 1 && <button data-testid="answer-cut-more" style={css.ghost} disabled={!!busy} onClick={() => send(CUT_MORE, 'chat')} title="끊긴 곳부터 이어서 써 달라고 보내요">이어서 쓰기</button>}
               </div>}
+              {m.kind === 'slides' && m.model && <div style={{ ...css.meta, marginTop: 6, textAlign: 'right' }}>{gone[m.at + ':slides'] ? '프레임이 지워졌어요 · ' : ''}{m.model}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · 약 ${Math.round(m.credits)}크레딧` : ''}</div>}
               {m.kind === 'deep' && (m.model || gone[m.at + ':deep']) && <div style={{ ...css.meta, marginTop: 6, textAlign: 'right' }}>{gone[m.at + ':deep'] ? '판이 지워졌어요 · ' : ''}{m.model || ''}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · 약 ${Math.round(m.credits)}크레딧` : ''}</div>}
               {m.kind === 'ask' && <div data-testid="ask-choices" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
                 {(m.choices || []).map(k => <button key={k} data-testid="ask-choice" data-kind={k} disabled={!!busy} onClick={() => choose(i, k)} title={(ASK_LABEL[k] || [])[1]}
@@ -659,7 +707,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
               {m.sources?.length > 0 && <div data-testid="answer-sources" style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {m.sources.map(s => <a key={s.n} href={s.url} target="_blank" rel="noopener noreferrer" title={s.url} onPointerDown={e => e.stopPropagation()}
                   style={{ ...css.meta, color: LINK_CHAT, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>[{s.n}] {s.title || siteOf(s.url)} · {siteOf(s.url)}</a>)}</div>}
-              {m.kind !== 'ask' && m.kind !== 'deep' && <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+              {m.kind !== 'ask' && m.kind !== 'deep' && m.kind !== 'slides' && <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
                 {!m.images?.length && !m.svgs?.length && <button style={{ ...(m.pinned ? css.done : css.pin), cursor: 'grab' }} onPointerDown={e => dragDown(e, i)} onClick={() => { if (dragged.current) { dragged.current = false; return } pin(i) }}
                   title={m.pinned ? '누르면 붙인 카드로 가기(지웠으면 다시 붙임) · 칠판으로 끌면 그 자리에 하나 더' : m.refs?.length ? '메모 + 근거가 된 칠판 도형으로 가는 점선 화살표(누르면 빈자리, 끌면 놓은 자리)' : m.sources?.length ? '요약 메모 + 출처 카드를 번호 화살표로 이어 한 묶음으로(누르면 빈자리, 끌면 놓은 자리)' : '누르면 빈자리에, 칠판으로 끌면 놓은 자리에 카드로'}>
                   {m.pinned ? '칠판에 붙임 ✓' : '칠판에 붙이기'}</button>}
@@ -687,6 +735,8 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
           {TOOLS.find(t => t[0] === pickTool)?.[1]} ✕</span>}
         <textarea ref={ta} style={css.input} rows={Math.min(8, Math.max(2, draft.split('\n').length))} value={draft} placeholder={TOOLS.find(t => t[0] === pickTool)?.[3] || (lastM?.kind === 'ask' ? '버튼을 누르거나, 원하는 걸 직접 적어 주세요'
             : lastM?.kind === 'deep' && lastM.step === 'ask' && !lastM.done ? '꼭 넣을 것·바라는 점(비워도 돼요) — Enter = 지면 계획 짜기'
+            : lastM?.kind === 'slides' && lastM.step === 'ask' && !lastM.done ? '꼭 넣을 것·바라는 점(비워도 돼요) — Enter = 장 계획 짜기'
+            : lastM?.kind === 'slides' && lastM.step === 'plan' && !lastM.built && !lastM.stale ? '계획을 고칠 점을 말하면 다시 짜요 — 예: 사례 장을 하나 더'
             : lastM?.kind === 'deep' && lastM.step === 'plan' && !lastM.built && !lastM.stale ? '계획을 고칠 점을 말하면 다시 짜요 — 예: 그래프를 하나 더'
             : deepTg ? '이 꼭지를 고칠 점을 말하면 그 꼭지만 다시 써요 — 예: 더 자세히 · 표로 바꿔 줘' : '물어보세요 (Enter 보내기 · Shift+Enter 줄바꿈)')}
           onChange={e => { if (mic === 'listen') micStop.current?.(); setDraft(e.target.value) }}

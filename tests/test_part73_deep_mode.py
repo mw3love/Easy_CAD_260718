@@ -257,6 +257,7 @@ def test_web_and_server_agree_on_shapes_and_brief():
     for sh in deep_mode.SHAPES:
         assert f"case '{sh}'" in board, sh
     chat = open(os.path.join(ROOT, "web", "src", "next", "deepchat.jsx"), encoding="utf-8").read()
+    chat = chat[chat.index("export const DEEP_QS"):chat.index("export const AUTO")]   # 딥모드 질문지만(발표 자료 SLIDES_QS는 따로 — 2026-10-28)
     qs = re.findall(r"^  \['([^']+)', \[", chat, re.M)
     assert qs == ["누구에게", "무엇에", "깊이", "꼭 넣을 것", "재료"]
     for q in qs:

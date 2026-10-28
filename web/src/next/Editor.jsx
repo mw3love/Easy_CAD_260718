@@ -149,7 +149,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, setImage, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, setImage, slidesBoard, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -887,6 +887,30 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     else if (it.type === 'text') after = { text: md.trim(), runs: undefined }
     else if (it.label) after = { label: { ...it.label, text: md.trim(), runs: undefined } }
     return after && { before: setFields(id, after), after }
+  }
+  // 📽 발표 자료(§8 항목69, 2026-10-28) — deck = { title, slides: [{ title, bullets, notes }], sources } → 16:9 프레임 N장(한 줄에 3장, 발표 순서 = 장 순서) + 장마다 아래 발표자 메모(프레임 밖 = 발표 화면엔 안 나옴)
+  // + 출처가 있으면 끝에 「출처」 장. 한 번의 commit = Ctrl+Z 한 번. { ids: 프레임 _id들, frames: 장 수 }
+  function slidesBoard(deck) {
+    const sl = (deck?.slides || []).filter(s => s?.title)
+    if (readOnly || !sl.length) return null
+    const src = (deck.sources || []).slice(0, 14), pages = src.length ? [...sl, { title: '출처', bullets: src.map(x => `[${x.n}] ${x.title || x.url} · ${siteOf(x.url)}`), notes: '', small: true }] : sl
+    const m = R.current.model, W = 1600, H = 900, GX = 160, ROW = H + 760, PER = 3, cols = Math.min(PER, pages.length), rows = Math.ceil(pages.length / PER)
+    const BW = cols * W + (cols - 1) * GX, BH = rows * ROW, c = R.current.cam, view = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
+    const at = nearSpot({ x: view.x + view.w / 2, y: view.y + view.h / 2 }, hitPool().map(it => sceneBox(it, textBox)), BW, BH, { pad: 48, step: 96 })
+    const no0 = nextFrameNo(m.items), zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, z = topZ(m.items) + 1, out = [], ids = []
+    pages.forEach((s, i) => {
+      const X = at.x + (i % PER) * (W + GX), Y = at.y + Math.floor(i / PER) * ROW, cover = i === 0
+      const fr = base([X, Y], { type: 'frame', rect: [0, 0, W, H], name: `${i + 1}. ${s.title}`, no: no0 + i, ratio: '16:9', z: zb }); out.push(fr); ids.push(fr._id)
+      out.push(base([X + 96, Y + (cover ? 300 : 80)], { type: 'text', text: s.title, color: INK, font: cover ? 54 : 40, weight: 700, bg: null, z }))
+      const lines = (s.bullets || []).filter(Boolean)
+      if (lines.length) out.push(base([X + 96, Y + (cover ? 440 : 230)], { type: 'text', text: lines.map(b => (cover || s.small ? b : `•  ${b}`)).join('\n'), color: cover ? '#ff6b6b75' : INK, font: s.small ? 15 : cover ? 26 : 28, bg: null, z }))
+      if (s.notes) { const memo = base([X, Y + H + 40], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#fffafafa', lines: [{ k: 'h3', t: `발표자 메모 · ${i + 1}장` }, { k: 'p', t: s.notes }], scale: 2, z })
+        out.push({ ...memo, rect: [0, 0, MEMO.W, memoHeight(memo)] }) }
+    })
+    commit([...m.items, ...out], ids, '발표 자료')
+    bringIn({ x: at.x, y: at.y, w: BW, h: BH }); setTool('select')
+    setStatus(`발표 자료 ${pages.length}장 — 위 막대 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모`)
+    return { ids, frames: pages.length }
   }
   function setFields(id, patch, label = 'AI 말풍선') {   // 바꾸기 전 그 칸들(물건이 없으면 null)
     const m = R.current.model, it = m.items.find(x => x._id === id); if (readOnly || !it) return null

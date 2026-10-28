@@ -12,17 +12,25 @@ export const DEEP_QS = [
   ['재료', ['웹 검색', '이 칠판', '둘 다']],
 ]
 export const AUTO = '알아서'
+// 📽 발표 자료(§8 항목69, 2026-10-28) 질문지 — 같은 카드(`DeepAsk qs=`), 답은 서버 `slides.make_plan`이 그대로 지시문에
+export const SLIDES_QS = [
+  ['장 수', ['5장', '8장', '12장']],
+  ['듣는 사람', ['처음 보는 사람', '아는 동료', '윗사람(보고)']],
+  ['발표 시간', ['5분', '10분', '20분']],
+  ['재료', ['고른 자료', '웹 검색', '둘 다']],
+]
 // 보낼 답 — 안 고른 것은 「알아서」, 여럿 고르기는 목록(없으면 「알아서」), 입력 칸 글 = 「더」
-export const briefOf = (b = {}, more = '') => ({ ...Object.fromEntries(DEEP_QS.map(([q, , multi]) => [q, multi ? (b[q]?.length ? b[q] : AUTO) : b[q] || AUTO])), ...(more ? { 더: more } : {}) })
+export const briefOf = (b = {}, more = '', qs = DEEP_QS) => ({ ...Object.fromEntries(qs.map(([q, , multi]) => [q, multi ? (b[q]?.length ? b[q] : AUTO) : b[q] || AUTO])), ...(more ? { 더: more } : {}) })
 const SOURCE = { ai: 'AI 설명', web: '웹 검색', kr: '공공 데이터', image: '그림', board: '이 칠판' }
 export const keptPlan = m => ({ ...m.plan, sections: (m.plan.sections || []).filter((_, i) => !(m.drop || []).includes(i)) })   // × 뺀 꼭지 빼고
 
 // 질문지 — m = { topic, brief, done }. set(질문, 값) · go() = 「지면 계획 짜기」(입력 칸 글을 「더」로 같이)
-export function DeepAsk({ m, set, go, busy, css }) {
+export function DeepAsk({ m, set, go, busy, css, qs = DEEP_QS, slides = false }) {
   const b = m.brief || {}, lock = !!m.done || !!busy
   return <div data-testid="deep-ask" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-    <div style={{ fontWeight: 700 }}>「{m.topic}」 — 한 판을 짜기 전에 몇 가지만</div>
-    {DEEP_QS.map(([q, opts, multi]) => { const cur = b[q], on = v => (multi ? (cur || []).includes(v) : (cur || AUTO) === v)
+    <div style={{ fontWeight: 700 }}>「{m.topic}」 — {slides ? '발표 자료를 짜기 전에 몇 가지만' : '한 판을 짜기 전에 몇 가지만'}</div>
+    {slides && m.ctxCount > 0 && <span style={css.meta}>칠판에서 고른 것 {m.ctxCount}개를 재료로 같이 보내요</span>}
+    {qs.map(([q, opts, multi]) => { const cur = b[q], on = v => (multi ? (cur || []).includes(v) : (cur || AUTO) === v)
       const pick = v => set(q, multi ? (on(v) ? (cur || []).filter(x => x !== v) : [...(cur || []), v]) : v)
       return <div key={q} data-q={q} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
         <span style={css.meta}>{q}{multi ? ' (여럿 · 안 고르면 알아서)' : ''}</span>
@@ -30,9 +38,9 @@ export function DeepAsk({ m, set, go, busy, css }) {
           {(multi ? opts : [AUTO, ...opts]).map(v => <button key={v} data-v={v} aria-pressed={on(v)} disabled={lock} onClick={() => pick(v)}
             style={{ ...(on(v) ? css.pin : css.ghost), ...(on(v) ? { background: 'rgba(218,119,86,.12)' } : null), opacity: lock && !on(v) ? 0.5 : 1, cursor: lock ? 'default' : 'pointer' }}>{v}</button>)}
         </div></div> })}
-    {m.done ? <span style={css.meta}>{m.more ? `덧붙인 말: ${m.more} · ` : ''}이 답으로 지면 계획을 짰어요</span>
-      : <><span style={css.meta}>보기에 없는 말(꼭 넣을 것·빼 줄 것)은 아래 칸에 적고 Enter — 계획만 짜요(약 40크레딧·20초, 만들기는 계획을 보고 나서)</span>
-        <button data-testid="deep-plan-go" style={{ ...css.pin, alignSelf: 'flex-start', padding: '4px 12px' }} disabled={!!busy} onClick={go}>지면 계획 짜기</button></>}
+    {m.done ? <span style={css.meta}>{m.more ? `덧붙인 말: ${m.more} · ` : ''}이 답으로 {slides ? '장 계획' : '지면 계획'}을 짰어요</span>
+      : <><span style={css.meta}>보기에 없는 말(꼭 넣을 것·빼 줄 것)은 아래 칸에 적고 Enter — 계획만 짜요({slides ? '약 10크레딧·15초' : '약 40크레딧·20초'}, 만들기는 계획을 보고 나서)</span>
+        <button data-testid="deep-plan-go" style={{ ...css.pin, alignSelf: 'flex-start', padding: '4px 12px' }} disabled={!!busy} onClick={go}>{slides ? '장 계획 짜기' : '지면 계획 짜기'}</button></>}
   </div>
 }
 
@@ -88,5 +96,31 @@ export function DeepFlip({ ed, root, last, css }) {
     <button data-testid="deep-flip" data-now={now} style={css.pin} onClick={go} title="판을 그 자리에서 다시 지어 원래 것과 바꾼 것을 번갈아 봐요(크레딧 없음)">
       {now === 'after' ? '↺ 원래대로 보기' : '↻ 바꾼 것 보기'}</button>
     <span style={css.meta}>{note || (now === 'after' ? '지금 칠판 = 바꾼 것' : '지금 칠판 = 원래 것')}</span>
+  </div>
+}
+
+// 📽 발표 자료 장 계획(§8 항목69) — m = { plan: { title, slides: [{ title, point, source }] }, drop, estimate, built, frames, stale }. drop(i) · build() · show()
+export const keptSlides = m => ({ ...m.plan, slides: (m.plan.slides || []).filter((_, i) => !(m.drop || []).includes(i)) })
+export function SlidesPlan({ m, drop, build, show, busy, css }) {
+  const sl = m.plan?.slides || [], dropped = new Set(m.drop || []), left = sl.length - dropped.size, lock = !!m.built || !!m.stale || !!busy
+  const est = m.estimate, rng = (a, u) => (Array.isArray(a) ? `${a[0]}~${a[1]}${u}` : '')
+  return <div data-testid="slides-plan" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ fontWeight: 700 }}>{m.plan?.title || '장 계획'}</div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {sl.map((s, i) => <div key={i} data-testid="slides-row" data-dropped={dropped.has(i) ? '1' : undefined} style={{ display: 'flex', gap: 6, alignItems: 'center', opacity: dropped.has(i) ? 0.4 : 1 }}>
+        <span style={{ ...css.kind, flex: 'none', minWidth: 22, textAlign: 'center' }}>{i + 1}</span>
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: dropped.has(i) ? 'line-through' : 'none' }} title={s.point || s.title}>{s.title}</span>
+        <span style={{ ...css.meta, flex: 'none' }}>{SOURCE[s.source] || ''}</span>
+        {!lock && <button data-testid="slides-x" aria-label={dropped.has(i) ? `「${s.title}」 되살리기` : `「${s.title}」 빼기`} title={dropped.has(i) ? '되살리기' : '이 장 빼기'}
+          disabled={!dropped.has(i) && left <= 2} onClick={() => drop(i)} style={{ ...css.ghost, padding: '0 6px', flex: 'none' }}>{dropped.has(i) ? '↺' : '×'}</button>}
+      </div>)}
+    </div>
+    {m.built ? <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button data-testid="slides-show" style={css.done} onClick={show}>✓ 프레임 {m.frames}장을 지었어요 — 보기</button>
+        <span style={css.meta}>위 막대 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모(발표 화면엔 안 나옴)</span></div>
+      : m.stale ? <span style={css.meta}>아래에 고친 계획이 있어요</span>
+      : <><button data-testid="slides-build" style={{ ...css.pin, alignSelf: 'flex-start', padding: '4px 12px' }} disabled={!!busy} onClick={build}>
+          이대로 만들기{est ? ` · 약 ${rng(est.credits, '크레딧')}` : ''}</button>
+        <span style={css.meta}>{est?.seconds ? `${rng(est.seconds, '초')} 걸려요(추정) · ` : ''}{left}장 · 고칠 점은 아래 칸에 말하면 계획을 다시 짜요</span></>}
   </div>
 }
