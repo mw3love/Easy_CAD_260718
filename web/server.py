@@ -390,6 +390,14 @@ class Handler(SimpleHTTPRequestHandler):
             url, el = self._save_img(name, data, ext), round(time.time() - t0, 1)
             sys.stderr.write("[말풍선 그림] %s %.1f초 · %s크레딧\n" % (out["model"], el, out.get("credits")))
             return self._json(200, {"kind": "bubble", "content": "말한 점만 고쳐서 이 그림을 바꿨어요.", "image_url": url, "model": out["model"], "elapsed": el, "credits": out.get("credits")})
+        if isinstance(item.get("slide"), dict):   # 📽 발표 자료 장(프레임 `slide`) = 그 장만 다시 씀 → 칠판이 그 장을 다시 지음(2026-10-28)
+            try:
+                out = self._with("slides", slides.WRITER_MODEL, lambda m: slides.redo_slide(gw._client(key, base, timeout=300), item["slide"], ask, text=str(item.get("text") or ""),
+                                                                                             deck=str(item.get("deck") or ""), history=msgs, model=m, images=see.clean(item.get("images"))))
+            except Exception as e:
+                return self._json(502, {"error": gw.friendly_error(e)})
+            sys.stderr.write("[장 말풍선] %s %.1f초%s\n" % (out["model"], out["elapsed"], " (고침)" if out.get("edit") else ""))
+            return self._json(200, {"kind": "bubble", **out, "credits": self._spent(key, base, b0)})
         try:
             out = self._with("bubble", req.get("model") or gw.FALLBACK_DEFAULT_MODEL, lambda m: board_bubble.reply(
                 key, {"type": str(item.get("type") or ""), "text": str(item.get("text") or ""), "edit": str(item.get("edit") or "")}, req.get("messages") or [], model=m, image=image,

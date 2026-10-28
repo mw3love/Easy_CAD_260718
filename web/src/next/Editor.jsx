@@ -874,19 +874,22 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function bubbleInfo(id) {
     const m = R.current.model, it = m.items.find(x => x._id === id); if (!it) return null
     // edit = 말풍선이 그 자리에서 고쳐 쓰는 물건(3단계 — 메모·표·글 상자·글이 있는 도형), 서버엔 글 = 'text'
-    const edit = it.type === 'memo' ? 'memo' : it.type === 'table' ? 'table' : it.type === 'text' ? 'text' : it.label?.text?.trim() ? 'label' : ''
+    const edit = it.type === 'frame' && it.slide ? 'slide' : it.type === 'memo' ? 'memo' : it.type === 'table' ? 'table' : it.type === 'text' ? 'text' : it.label?.text?.trim() ? 'label' : ''
     const ids = new Set(withContents([id])), text = edit === 'memo' ? memoMarkdown(it.lines) : edit === 'table' ? memoMarkdown([{ k: 'table', rows: it.cells || [] }])
       : edit === 'label' ? it.label.text : m.items.filter(x => ids.has(x._id)).flatMap(itemTexts).join('\n\n')
     const url = x => (x.data.startsWith('data:') ? x.data : 'data:image/png;base64,' + x.data)
     const images = it.type === 'image' ? [] : m.items.filter(x => x._id !== id && ids.has(x._id) && x.type === 'image' && x.data).slice(0, 6).map(url)   // 프레임 안 그림(2026-10-28 — 전엔 글만 봄)
     const inside = it.type === 'frame' ? ids.size - 1 : 0   // 프레임 말풍선 머리 「안 N개를 보고」 · cut = 서버 글 상한(`board_bubble.MAX_TEXT` 2만 자)을 넘어 뒤가 잘림
-    return { type: it.type, edit, box: sceneBox(it, textBox), text, image: it.type === 'image' && it.data ? url(it) : '', ...(images.length ? { images } : {}), ...(inside ? { inside, cut: text.length > 20000 } : {}) }
+    return { type: it.type, edit, box: sceneBox(it, textBox), text, image: it.type === 'image' && it.data ? url(it) : '', ...(images.length ? { images } : {}), ...(inside ? { inside, cut: text.length > 20000 } : {}),
+      ...(edit === 'slide' ? { slide: it.slide, deck: it.slide_deck || '', edited: slideEdited(it) } : {}) }   // 📽 장 = 지금 장 + 손으로 고쳤나(고쳤으면 말풍선이 적용 전에 물음)
   }
   // 말풍선이 고쳐 쓴 것(AI 답 `edit`) = 그 자리에서(Ctrl+Z 한 번) — 메모 = 마크다운 → 줄, 표 = 마크다운 표 → 칸(칸 수가 바뀌면 너비 고르게·칸 꾸밈 지움, 높이는 줄 수만큼),
   // 글 상자·도형 글 = 글(꾸밈 지움). { before, after } 칸 묶음(「원래대로 ↔ 바꾼 것」이 `setFields`로 바꿔 끼움), 못 고치면 null
   function bubbleEdit(id, md) {
-    const it = R.current.model.items.find(x => x._id === id); if (readOnly || !it || !md?.trim()) return null
+    const it = R.current.model.items.find(x => x._id === id); if (readOnly || !it || !md) return null
     let after = null
+    if (it.type === 'frame' && it.slide) { if (typeof md !== 'object') return null; const before = slideRebuild(id, md); return before && { before: { slide: before }, after: { slide: md } } }   // 장 = 다시 지음
+    if (typeof md !== 'string' || !md.trim()) return null
     if (it.type === 'memo') after = { lines: memoFromAnswer(md) }
     else if (it.type === 'table') { const rows = memoFromAnswer(md).find(l => l.k === 'table')?.rows; if (!rows?.length) return null
       const cols = Math.max(...rows.map(r => r.length)), cells = rows.map(r => Array.from({ length: cols }, (_, c) => r[c] || ''))
@@ -906,43 +909,66 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const BW = cols * W + (cols - 1) * GX, BH = rows * ROW, c = R.current.cam, view = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
     const at = nearSpot({ x: view.x + view.w / 2, y: view.y + view.h / 2 }, hitPool().map(it => sceneBox(it, textBox)), BW, BH, { pad: 48, step: 96 })
     const no0 = nextFrameNo(m.items), zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, z = topZ(m.items) + 1, out = [], ids = []
-    // 장 모양(2단계 — 서버 `slides.LAYOUTS`): 표지 = 왼쪽 코랄 띠 + 큰 제목 · 글머리·마무리 = 제목 밑 코랄 줄 + 줄 글 · 숫자 = 큰 숫자 칸 2~3개 · 단계 = 번호 붙은 둥근 줄 · 한마디 = 큰 한 문장
-    const CORAL = '#ffda7756', SOFT = '#fffdf1ec', GRAY = '#fff4f4f5', MUTE = '#ff6b6b75'
-    const box = (x, y, w, h, fill, r = 0) => base([x, y], { type: 'rect', rect: [0, 0, w, h], fill, pen: fill, width: 1, style: 0, ...(r ? { radius: r } : {}), z })
-    const txt = (x, y, text, font, extra = {}) => base([x, y], { type: 'text', text, color: INK, font, bg: null, z, ...extra })
     pages.forEach((s, i) => {
-      const X = at.x + (i % PER) * (W + GX), Y = at.y + Math.floor(i / PER) * ROW, kind = s.small ? '출처' : s.layout || (i === 0 ? '표지' : '글머리'), L = X + 96, CW = W - 192
-      const fr = base([X, Y], { type: 'frame', rect: [0, 0, W, H], name: `${i + 1}. ${s.title}`, no: no0 + i, ratio: '16:9', z: zb }); out.push(fr); ids.push(fr._id)
-      const lines = (s.bullets || []).filter(Boolean)
-      if (kind === '표지') {
-        const cv = i === 0 && deck.cover?.data && deck.cover.w ? deck.cover : null, dy = cv ? 200 : 0   // 표지 그림(3단계) = 오른쪽 위, 제목은 그 밑으로
-        if (cv) { const iw = 560, ih = Math.min(400, iw * cv.h / cv.w); out.push(base([X + W - 96 - iw, Y + 64], { type: 'image', rect: [0, 0, iw, ih], data: cv.data, z, alt: `표지 그림 — ${deck.title || s.title}` })) }
-        out.push(box(X, Y, 28, H, CORAL), box(L + 24, Y + 300 + dy, 120, 10, CORAL, 5), txt(L + 24, Y + 340 + dy, s.title, cv ? 48 : 56, { weight: 700 }))
-        if (lines.length) out.push(txt(L + 24, Y + 450 + dy, lines.join('\n'), 26, { color: MUTE }))
-      } else {
-        out.push(txt(L, Y + 72, s.title, 40, { weight: 700 }), box(L, Y + 150, 96, 8, CORAL, 4))
-        if (kind === '숫자' && s.numbers?.length) {
-          const n = s.numbers.length, g = 48, tw = (CW - (n - 1) * g) / n
-          s.numbers.forEach((v, k) => { const x = L + k * (tw + g)
-            out.push(box(x, Y + 250, tw, 380, SOFT, 28), txt(x + 48, Y + 320, v.value, 76, { weight: 800, color: CORAL }), txt(x + 48, Y + 500, v.label, 22)) })
-        } else if (kind === '단계' && s.steps?.length) {
-          s.steps.forEach((t, k) => { const y = Y + 220 + k * 118
-            out.push(box(L, y, CW, 96, GRAY, 48), txt(L + 40, y + 24, String(k + 1), 30, { weight: 800, color: CORAL }), txt(L + 120, y + 26, t, 26)) })
-        } else if (kind === '한마디' && s.message) {
-          out.push(box(L, Y + 330, 14, 220, CORAL, 7), txt(L + 64, Y + 380, s.message, s.message.length > 20 ? 40 : 52, { weight: 700 }))
-          if (lines.length) out.push(txt(L + 64, Y + 520, lines[0], 24, { color: MUTE }))
-        } else if (lines.length) out.push(txt(L, Y + 230, lines.map(b => (kind === '출처' ? b : `${kind === '마무리' ? '→' : '•'}  ${b}`)).join('\n'), kind === '출처' ? 15 : 30))
-      }
-      if (s.notes) { const memo = base([X, Y + H + 40], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#fffafafa', lines: [{ k: 'h3', t: `발표자 메모 · ${i + 1}장` }, { k: 'p', t: s.notes }], scale: 2, z })
-        out.push({ ...memo, rect: [0, 0, MEMO.W, memoHeight(memo)] }) }
+      const X = at.x + (i % PER) * (W + GX), Y = at.y + Math.floor(i / PER) * ROW, spec = { ...s, layout: s.small ? '출처' : s.layout || (i === 0 ? '표지' : '글머리') }
+      const cv = i === 0 && deck.cover?.data && deck.cover.w ? { data: deck.cover.data, w: deck.cover.w, h: deck.cover.h, alt: `표지 그림 — ${deck.title || s.title}` } : null
+      const fr = base([X, Y], { type: 'frame', rect: [0, 0, W, H], name: `${i + 1}. ${s.title}`, no: no0 + i, ratio: '16:9', z: zb, slide: slideSpec(spec), slide_n: i + 1, ...(deck.title ? { slide_deck: deck.title } : {}) })   // 장을 적어 둠 = 말풍선이 그 장만 고쳐 다시 지음(2026-10-28)
+      const pcs = slidePieces(spec, i, X, Y, z, cv).map(p => ({ ...p, slide_of: fr._id }))
+      out.push({ ...fr, slide_sig: slideSig(pcs, X, Y) }, ...pcs); ids.push(fr._id)
     })
     commit([...m.items, ...out], ids, '발표 자료')
     bringIn({ x: at.x, y: at.y, w: BW, h: BH }); setTool('select')
     setStatus(`발표 자료 ${pages.length}장 — 위 막대 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모`)
     return { ids, frames: pages.length }
   }
+  // 장 하나 그리기(발표 자료 2단계 모양 — 서버 `slides.LAYOUTS`): 표지 = 왼쪽 코랄 띠 + 큰 제목 · 글머리·마무리 = 제목 밑 코랄 줄 + 줄 글 · 숫자 = 큰 숫자 칸 2~3개 · 단계 = 번호 붙은 둥근 줄 · 한마디 = 큰 한 문장.
+  // s = 장(`slide`, layout 정해진 것), i = 몇째 장(0부터 — 발표자 메모 머리), X·Y = 프레임 왼쪽 위, cv = 표지 그림 { data, w, h, alt }. 프레임 밖 아래 = 발표자 메모
+  function slidePieces(s, i, X, Y, z, cv = null) {
+    const W = 1600, H = 900, L = X + 96, CW = W - 192, kind = s.layout, lines = (s.bullets || []).filter(Boolean), out = []
+    const CORAL = '#ffda7756', SOFT = '#fffdf1ec', GRAY = '#fff4f4f5', MUTE = '#ff6b6b75'
+    const box = (x, y, w, h, fill, r = 0) => base([x, y], { type: 'rect', rect: [0, 0, w, h], fill, pen: fill, width: 1, style: 0, ...(r ? { radius: r } : {}), z })
+    const txt = (x, y, text, font, extra = {}) => base([x, y], { type: 'text', text, color: INK, font, bg: null, z, ...extra })
+    if (kind === '표지') {
+      const dy = cv ? 200 : 0   // 표지 그림(3단계) = 오른쪽 위, 제목은 그 밑으로
+      if (cv) { const iw = 560, ih = Math.min(400, iw * cv.h / cv.w); out.push(base([X + W - 96 - iw, Y + 64], { type: 'image', rect: [0, 0, iw, ih], data: cv.data, z, alt: cv.alt, slide_role: 'cover' })) }
+      out.push(box(X, Y, 28, H, CORAL), box(L + 24, Y + 300 + dy, 120, 10, CORAL, 5), txt(L + 24, Y + 340 + dy, s.title, cv ? 48 : 56, { weight: 700 }))
+      if (lines.length) out.push(txt(L + 24, Y + 450 + dy, lines.join('\n'), 26, { color: MUTE }))
+    } else {
+      out.push(txt(L, Y + 72, s.title, 40, { weight: 700 }), box(L, Y + 150, 96, 8, CORAL, 4))
+      if (kind === '숫자' && s.numbers?.length) {
+        const n = s.numbers.length, g = 48, tw = (CW - (n - 1) * g) / n
+        s.numbers.forEach((v, k) => { const x = L + k * (tw + g)
+          out.push(box(x, Y + 250, tw, 380, SOFT, 28), txt(x + 48, Y + 320, v.value, 76, { weight: 800, color: CORAL }), txt(x + 48, Y + 500, v.label, 22)) })
+      } else if (kind === '단계' && s.steps?.length) {
+        s.steps.forEach((t, k) => { const y = Y + 220 + k * 118
+          out.push(box(L, y, CW, 96, GRAY, 48), txt(L + 40, y + 24, String(k + 1), 30, { weight: 800, color: CORAL }), txt(L + 120, y + 26, t, 26)) })
+      } else if (kind === '한마디' && s.message) {
+        out.push(box(L, Y + 330, 14, 220, CORAL, 7), txt(L + 64, Y + 380, s.message, s.message.length > 20 ? 40 : 52, { weight: 700 }))
+        if (lines.length) out.push(txt(L + 64, Y + 520, lines[0], 24, { color: MUTE }))
+      } else if (lines.length) out.push(txt(L, Y + 230, lines.map(b => (kind === '출처' ? b : `${kind === '마무리' ? '→' : '•'}  ${b}`)).join('\n'), kind === '출처' ? 15 : 30))
+    }
+    if (s.notes) { const memo = base([X, Y + H + 40], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#fffafafa', lines: [{ k: 'h3', t: `발표자 메모 · ${i + 1}장` }, { k: 'p', t: s.notes }], scale: 2, z })
+      out.push({ ...memo, rect: [0, 0, MEMO.W, memoHeight(memo)] }) }
+    return out
+  }
+  // 프레임에 적어 두는 장(말풍선이 고칠 재료) · 지은 모습 지문(프레임 기준 자리 — 프레임째 옮기면 그대로, 손으로 고치면 달라짐 → 다시 짓기 전에 물음)
+  const slideSpec = s => Object.fromEntries(['title', 'layout', 'bullets', 'numbers', 'steps', 'message', 'notes', 'small'].filter(k => s[k] != null).map(k => [k, s[k]]))
+  const slideSig = (pcs, X, Y) => JSON.stringify(pcs.map(p => [p.type, Math.round(p.pos[0] - X), Math.round(p.pos[1] - Y), p.rect?.map(Math.round), p.text, p.lines, p.fill, p.font, p.data?.length]))
+  const slideEdited = fr => { const pcs = R.current.model.items.filter(it => it.slide_of === fr._id); return !!fr.slide_sig && slideSig(pcs, fr.pos[0], fr.pos[1]) !== fr.slide_sig }
+  // 장 다시 짓기(발표 자료 말풍선, 2026-10-28) — 그 장 조각(`slide_of`)만 지우고 새 장으로(표지 그림은 그대로 다시 씀), 프레임 이름 「N. 제목」도. Ctrl+Z 한 번. 바꾸기 전 장(없으면 null)
+  function slideRebuild(id, spec, label = 'AI 말풍선') {
+    const m = R.current.model, fr = m.items.find(x => x._id === id); if (readOnly || !fr?.slide || !spec?.title) return null
+    const old = m.items.filter(it => it.slide_of === id), cov = old.find(it => it.slide_role === 'cover')
+    const cv = cov && spec.layout === '표지' ? { data: cov.data, w: cov.rect[2], h: cov.rect[3], alt: cov.alt } : null
+    const [X, Y] = fr.pos, z = old.length ? Math.max(...old.map(it => it.z ?? 0)) : topZ(m.items) + 1
+    const pcs = slidePieces({ ...spec, layout: spec.layout || '글머리' }, (fr.slide_n || 1) - 1, X, Y, z, cv).map(p => ({ ...p, slide_of: id }))
+    const name = /^\d+\.\s/.test(fr.name || '') ? fr.name.replace(/^(\d+\.\s).*$/, `$1${spec.title}`) : fr.name
+    commit([...m.items.filter(it => it.slide_of !== id).map(it => (it._id === id ? { ...it, slide: slideSpec(spec), slide_sig: slideSig(pcs, X, Y), name } : it)), ...pcs], R.current.sel, label)
+    return fr.slide
+  }
   function setFields(id, patch, label = 'AI 말풍선') {   // 바꾸기 전 그 칸들(물건이 없으면 null)
     const m = R.current.model, it = m.items.find(x => x._id === id); if (readOnly || !it) return null
+    if (patch.slide && it.type === 'frame' && it.slide) { const before = slideRebuild(id, patch.slide, label); return before && { slide: before } }   // 장 = 다시 지음(원래대로 ↔ 바꾼 것도)
     commit(m.items.map(x => (x._id === id ? { ...x, ...patch } : x)), R.current.sel, label)
     return Object.fromEntries(Object.keys(patch).map(k => [k, it[k]]))
   }

@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 import time
 
 from easycad.ai import deep_mode, gateway as gw, see
@@ -133,19 +134,58 @@ def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: st
     slides, missing = [], []
     for i, s in enumerate(plan["slides"]):   # 제목이 조금 바뀌어 와도 차례로 맞춤
         g = got[i] if i < len(got) and isinstance(got[i], dict) else {}
-        bullets = [str(b).strip() for b in g.get("bullets") or [] if str(b).strip()][:5]
-        if not bullets:
+        one = clean_slide(g, s["title"], s.get("point") or "", first=i == 0, last=i == len(plan["slides"]) - 1)
+        if one.pop("_empty", False):
             missing.append(s["title"])
-        one = {"title": str(g.get("title") or s["title"]).strip()[:60], "bullets": bullets or [s.get("point") or ""], "notes": str(g.get("notes") or "").strip()}
-        layout = str(g.get("layout") or "")
-        nums = [{"value": str(x.get("value") or "").strip()[:14], "label": str(x.get("label") or "").strip()[:60]} for x in g.get("numbers") or [] if isinstance(x, dict) and str(x.get("value") or "").strip()][:3]
-        steps = [str(x).strip()[:60] for x in g.get("steps") or [] if str(x).strip()][:5]
-        msg = str(g.get("message") or "").strip()[:80]
-        if i == 0:
-            layout = "표지"
-        elif layout == "숫자" and len(nums) < 2 or layout == "단계" and len(steps) < 2 or layout == "한마디" and not msg or layout not in LAYOUTS:
-            layout = "마무리" if i == len(plan["slides"]) - 1 else "글머리"   # 그 모양에 쓸 것이 없으면 글머리로
-        one["layout"] = layout
-        one.update({"numbers": nums} if layout == "숫자" else {"steps": steps} if layout == "단계" else {"message": msg} if layout == "한마디" else {})
         slides.append(one)
     return {"deck": {"title": plan["title"], "slides": slides, "sources": mat["sources"]}, "model": model, "elapsed": round(time.time() - t0, 1), "missing": missing}
+
+
+def clean_slide(g: dict, title: str = "", point: str = "", *, first: bool = False, last: bool = False) -> dict:
+    """모델이 쓴 장 하나 → 칠판이 그리는 장(`Editor.slidePieces`). 모양에 쓸 것이 없으면 글머리로, 첫 장 = 표지. `_empty` = 화면 글이 없었음."""
+    g = g if isinstance(g, dict) else {}
+    bullets = [str(b).strip() for b in g.get("bullets") or [] if str(b).strip()][:5]
+    one = {"title": str(g.get("title") or title).strip()[:60], "bullets": bullets or [point], "notes": str(g.get("notes") or "").strip(), **({"_empty": True} if not bullets else {})}
+    layout = str(g.get("layout") or "")
+    nums = [{"value": str(x.get("value") or "").strip()[:14], "label": str(x.get("label") or "").strip()[:60]} for x in g.get("numbers") or [] if isinstance(x, dict) and str(x.get("value") or "").strip()][:3]
+    steps = [str(x).strip()[:60] for x in g.get("steps") or [] if str(x).strip()][:5]
+    msg = str(g.get("message") or "").strip()[:80]
+    if first:
+        layout = "표지"
+    elif layout == "숫자" and len(nums) < 2 or layout == "단계" and len(steps) < 2 or layout == "한마디" and not msg or layout not in LAYOUTS:
+        layout = "마무리" if last else "글머리"   # 그 모양에 쓸 것이 없으면 글머리로
+    one["layout"] = layout
+    one.update({"numbers": nums} if layout == "숫자" else {"steps": steps} if layout == "단계" else {"message": msg} if layout == "한마디" else {})
+    return one
+
+
+REDO_SLIDE = """너는 발표 자료의 **장 하나**를 고치는 사람이다. 아래 [지금 장](JSON)과 사용자 말을 보고 답한다. 오늘: {today}.
+- JSON 하나만: {{"reply": "말풍선에 보일 짧은 답", "slide": 고친 장 전체 또는 null}}
+- 고쳐·바꿔·줄여·늘려·더해·쉽게·모양 바꿔 달라는 말이면 slide에 **고친 장 전체**(모양은 지금 장과 같은 칸: title, layout, bullets, numbers?, steps?, message?, notes). 말하지 않은 곳은 그대로.
+  layout = 표지|글머리|숫자|단계|한마디|마무리 — 숫자 = numbers 2~3개({{"value": "8자 안팎", "label"}}) · 단계 = steps 3~5줄 · 한마디 = message 25자 안팎 · 어느 모양이든 bullets도(2~4줄, 25자 안팎).
+  지금 장·[장 안 글]에 없는 숫자·사실은 지어내지 않는다(출처 번호 [n]은 그대로 둠). 그때 reply는 무엇을 바꿨는지 한 문장.
+- 묻는 말이면 slide는 null, reply에 답(짧게, 결론 먼저).
+- 그림이 함께 오면 그 그림도 장 안의 재료다."""
+
+
+def redo_slide(client, slide: dict, ask: str, *, text: str = "", deck: str = "", history=None, model: str = WRITER_MODEL, images=None) -> dict:
+    """장 하나 고치기(발표 자료 말풍선, 2026-10-28) — 지금 장(`slide`, 칠판 프레임에 적어 둔 것) + 말 → {"content", "edit"?(고친 장 — `clean_slide`), "model", "elapsed"}.
+    text = 그 프레임 안의 글(손으로 고친 것까지), history = 그 말풍선 앞 대화."""
+    t0 = time.time()
+    first, last = slide.get("layout") == "표지", slide.get("layout") == "마무리"
+    turns = [{"role": m["role"], "content": str(m.get("content", ""))} for m in history or [] if isinstance(m, dict) and m.get("role") in ("user", "assistant")][-8:-1]
+    user = (f"[발표] {deck}\n" if deck else "") + "[지금 장]\n" + json.dumps({k: v for k, v in slide.items() if k != "small"}, ensure_ascii=False)[:6000] + (
+        f"\n\n[장 안 글 — 손으로 고친 것 포함]\n{text[:6000]}" if text.strip() else "") + see.note(len(images or [])) + f"\n\n[사용자]\n{ask[:1000]}"
+    r = client.chat.completions.create(model=model, max_tokens=3000, messages=see.attach(
+        [{"role": "system", "content": REDO_SLIDE.format(today=deep_mode.today())}] + turns + [{"role": "user", "content": user}], images))
+    d = deep_mode.parse_json(r.choices[0].message.content or "")
+    if not isinstance(d, dict):
+        return {"content": (r.choices[0].message.content or "").strip(), "model": model, "elapsed": round(time.time() - t0, 1)}
+    out = {"content": str(d.get("reply") or "").strip(), "model": model, "elapsed": round(time.time() - t0, 1)}
+    if isinstance(d.get("slide"), dict):
+        new = clean_slide(d["slide"], slide.get("title") or "", (slide.get("bullets") or [""])[0], first=first, last=last)
+        new.pop("_empty", None)
+        if slide.get("small"):
+            new["small"] = True
+        out["edit"], out["content"] = new, out["content"] or "이 장을 고쳤어요."
+    return out

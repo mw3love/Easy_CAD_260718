@@ -118,3 +118,36 @@ def test_build_draws_cover_beside_writing_and_survives_failure():
         raise RuntimeError("quota")
     out = slides.build("k", fake_client(ans, []), "점검", {}, plan, model="w", image=boom)
     assert "cover" not in out["deck"] and "quota" in out["cover_error"] and len(out["deck"]["slides"]) == 2
+
+
+SLIDE = {"title": "연료 점검", "layout": "글머리", "bullets": ["발전기 연료 70% [1]", "다음 주 보충"], "notes": "연료는 넉넉해요."}
+
+
+def test_redo_slide_edits_one_slide_or_just_answers():
+    """장 말풍선(2026-10-28) — 고쳐 달라면 고친 장 전체(`clean_slide` — 모양에 쓸 것이 없으면 글머리), 물으면 답만."""
+    sent = []
+    ans = json.dumps({"reply": "숫자 칸으로 바꿨어요", "slide": {"title": "연료 점검", "layout": "숫자", "numbers": [{"value": "70%", "label": "연료 [1]"}, {"value": "8시간", "label": "버팀"}], "bullets": ["연료 70%"], "notes": "n"}}, ensure_ascii=False)
+    out = slides.redo_slide(fake_client(ans, sent), SLIDE, "숫자 칸으로", text="연료 점검\n• 발전기 연료 70%", deck="송신소 점검",
+                            history=[{"role": "user", "content": "앞 질문"}, {"role": "assistant", "content": "앞 답"}, {"role": "user", "content": "숫자 칸으로"}], model="m")
+    assert out["content"] == "숫자 칸으로 바꿨어요" and out["edit"]["layout"] == "숫자" and len(out["edit"]["numbers"]) == 2 and "_empty" not in out["edit"]
+    msgs = sent[-1]["messages"]
+    assert [m["role"] for m in msgs] == ["system", "user", "assistant", "user"]                    # 앞 대화 + 지금 장
+    assert "[지금 장]" in msgs[-1]["content"] and "송신소 점검" in msgs[-1]["content"] and "숫자 칸으로" in msgs[-1]["content"]
+    bad = json.dumps({"reply": "단계로", "slide": {"title": "연료 점검", "layout": "단계", "steps": ["하나"], "bullets": ["a"]}}, ensure_ascii=False)
+    assert slides.redo_slide(fake_client(bad, []), SLIDE, "단계로")["edit"]["layout"] == "글머리"   # 단계가 하나뿐 = 글머리
+    cover = slides.redo_slide(fake_client(bad, []), {**SLIDE, "layout": "표지"}, "x")["edit"]
+    assert cover["layout"] == "표지"                                                               # 표지는 표지로
+    q = slides.redo_slide(fake_client('{"reply": "연료는 70%예요", "slide": null}', []), SLIDE, "연료 몇 %?")
+    assert q["content"] == "연료는 70%예요" and "edit" not in q
+    assert slides.redo_slide(fake_client("그냥 글", []), SLIDE, "?")["content"] == "그냥 글"
+
+
+def test_server_slide_bubble_goes_to_redo_slide(server, monkeypatch):
+    import server as srv
+    calls = []
+    monkeypatch.setattr(srv.slides, "redo_slide", lambda client, slide, ask, **kw: calls.append((slide, ask, kw)) or {"content": "고쳤어요", "edit": {**slide, "title": "새"}, "model": kw["model"], "elapsed": 0.1})
+    monkeypatch.setattr(srv.board_bubble, "reply", lambda *a, **k: pytest.fail("장은 장 다시 쓰기로"))
+    out = _post(server, {"kind": "bubble", "board": "b", "item": {"type": "frame", "text": "장 글", "edit": "slide", "slide": SLIDE, "deck": "점검"}, "messages": [{"role": "user", "content": "더 짧게"}]})
+    assert out["kind"] == "bubble" and out["edit"]["title"] == "새" and out["content"] == "고쳤어요"
+    slide, ask, kw = calls[-1]
+    assert slide == SLIDE and ask == "더 짧게" and kw["text"] == "장 글" and kw["deck"] == "점검" and kw["model"] == slides.WRITER_MODEL
