@@ -156,7 +156,7 @@ const MiniFaces = ({ list, myId, me }) => { if (!list?.length) return null
   return <span data-testid="board-people" style={{ display: 'flex', alignItems: 'center', paddingLeft: 4, flex: 'none' }}>
     {shown.map(p => { const nm = p.id === myId ? me || '나' : p.name; return <span key={p.id} style={{ ...dot, background: personColor(p.id), color: '#fff' }}>{[...(nm || '?')][0]}</span> })}
     {more > 0 && <span style={{ ...dot, background: C.group, color: C.ink, fontSize: 8 }}>+{more}</span>}</span> }
-// 「＋ 새 칠판 ▾」 메뉴(2026-10-28 사용자 — 노션 왼쪽 위 「페이지·채팅·데이터베이스」처럼 새로 시작하는 길을 한곳에) — 우클릭 메뉴(`ctxmenu.jsx`)와 같은 모양
+// 「＋ 새 칠판 ▾」 메뉴(2026-10-28 사용자 — 노션 왼쪽 위 「페이지·채팅·데이터베이스」처럼 새로 시작하는 길을 한곳에, 「새 칠판」은 바로 옆 큰 단추라 메뉴엔 뺌) — 우클릭 메뉴(`ctxmenu.jsx`)와 같은 모양
 const MENU_BOX = { position: 'fixed', zIndex: 40, minWidth: 190, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 4, boxShadow: '0 6px 18px rgba(0,0,0,.22)', font: "400 12.5px 'Pretendard', sans-serif", color: C.ink }
 const MENU_ROW = { all: 'unset', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '5px 10px', borderRadius: 5, cursor: 'pointer' }
 const menuHover = { onMouseEnter: e => { e.currentTarget.style.background = 'rgba(218,119,86,.14)' }, onMouseLeave: e => { e.currentTarget.style.background = 'transparent' } }
@@ -254,7 +254,6 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, children }) { 
     </div>
     {newMenu && <div ref={menuRef} data-testid="board-new-menu" style={{ ...MENU_BOX, left: newMenu.x, top: newMenu.y, width: 200 }}>
       {!codeOn ? <>
-        <button onClick={startNew} style={MENU_ROW} {...menuHover}><span style={{ width: 14, textAlign: 'center' }}>＋</span>새 칠판</button>
         <button data-testid="board-code-open" onClick={() => setCodeOn(true)} style={MENU_ROW} {...menuHover} title="받은 칠판 코드(QR 밑 8자)나 칠판 주소를 넣어 그 칠판으로"><span style={{ width: 14, textAlign: 'center' }}>#</span>칠판 코드로 열기</button>
         <button data-testid="board-file-new" onClick={() => fileRef.current?.click()} style={MENU_ROW} {...menuHover} title=".ecad 파일을 새 칠판으로 열어요(지금 칠판은 그대로)"><span style={{ width: 14, textAlign: 'center' }}>↥</span>파일로 새 칠판</button>
       </> : <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 6 }}>
