@@ -20,5 +20,16 @@
   <script>/* 첫 화면부터 맞는 색(깜빡임 없이) — 고른 값이 없으면 시스템 설정을 따름 */
     try { const t = localStorage.getItem('mb.theme'); document.documentElement.dataset.theme = t || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') } catch { document.documentElement.dataset.theme = 'light' }</script>
 </head>
-<body><div id="root"></div><script type="module" src="/src/next/main.jsx"></script></body>
+<body><div id="root"></div>
+  <script>/* 앱이 그려지기 전(글꼴·로그인 확인을 기다리는 0.0x초) 빈 틀 — 하얀 화면이 한 번 번쩍였음(2026-10-28 사용자 「새 칠판 누르면 살짝 깜빡」, 녹화 4번 중 1번).
+    위 막대·왼쪽 판·대화창 자리를 이 브라우저가 기억한 폭 그대로 칠함(main.jsx `mb-dock`·`mb-dock-w`·`mb-chat-open`·`mb-chat-w`, 위 막대 높이 = 넓은 창 54·좁은 창 39). React가 그리면 통째로 바뀜 */
+    try { const q = new URLSearchParams(location.search), W = innerWidth, phone = matchMedia('(pointer: coarse)').matches && W < 700
+      if (!q.get('view') && !phone) { const g = (k, d) => { const v = localStorage.getItem(k); return v == null ? d : v }, narrow = W < 1440, top = narrow ? 39 : 54
+        const dock = g('mb-dock', narrow ? '' : 'shape'), dw = Math.max(192, Math.min(400, +g('mb-dock-w', 192) || 192)), chat = g('mb-chat-open', '1') !== '0', cw = Math.max(320, Math.min(720, +g('mb-chat-w', 360) || 360))
+        const box = s => `<div style="position:absolute;box-sizing:border-box;${s}"></div>`, bar = 'background:var(--mb-bar);border:0 solid var(--mb-line);'
+        document.getElementById('root').innerHTML = `<div style="position:relative;height:100%;background:var(--mb-board)">` + box(`${bar}left:0;top:0;right:0;height:${top}px;border-bottom-width:1px`)
+          + box(`${bar}left:0;top:${top}px;bottom:0;width:${dock ? 41 + dw + 1 : 40}px;border-right-width:1px`) + (dock ? box(`left:40px;top:${top}px;bottom:0;border-left:1px solid var(--mb-line)`) : '')
+          + (chat ? (narrow ? box(`${bar}right:12px;top:${top + 12}px;bottom:12px;width:${cw + 2}px;border-width:1px;border-radius:12px`) : box(`${bar}right:0;top:${top}px;bottom:0;width:${cw + 1}px;border-left-width:1px`)) : '') + '</div>' }
+    } catch { /* 못 그려도 앱은 그대로 */ }</script>
+  <script type="module" src="/src/next/main.jsx"></script></body>
 </html>

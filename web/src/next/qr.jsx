@@ -21,7 +21,7 @@ export function QrBig({ link, code = '', title = '', view = false, pop, onClose 
       <QrSvg text={link} size="min(64vh, 80vw)" />
       {code && <div data-testid="qr-code" style={{ font: "700 max(22px, 5vmin) ui-monospace, Consolas, monospace", letterSpacing: '.18em' }}>{code.slice(0, 4)} {code.slice(4)}</div>}
       <div style={{ font: "400 max(12px, 1.8vmin) 'Pretendard', sans-serif", color: '#52525b', textAlign: 'center' }}>
-        휴대폰 카메라로 비추면 열려요{code ? ' · 또는 칠판 판 「칠판 코드로 열기」에 이 코드' : view ? ' · 보기만 돼요(고치기·대화 없음)' : ''}</div>
+        휴대폰 카메라로 비추면 열려요{code ? ' · 또는 칠판 판 「새 칠판 ▾ › 칠판 코드로 열기」에 이 코드' : view ? ' · 보기만 돼요(고치기·대화 없음)' : ''}</div>
       <div style={{ font: "400 max(11px, 1.4vmin) 'Pretendard', sans-serif", color: '#a1a1aa', wordBreak: 'break-all', textAlign: 'center' }}>{link} · 누르거나 Esc = 닫기</div>
     </div></div>, document.body)
 }

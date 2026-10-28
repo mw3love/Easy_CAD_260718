@@ -28,11 +28,15 @@ export function boardFromText(text) {
   return new RegExp(`^[${ABC}]{${CODE_LEN}}$`, 'i').test(name) ? { code: name.toLowerCase() } : { board: name }
 }
 
-export const myBoards =() => (Array.isArray(read(LIST, null)) ? read(LIST, []) : []).filter(b => b && typeof b.name === 'string')   // [{ name, t(마지막으로 연 때) }] 목록 순서 그대로
+// [{ name, t(마지막으로 연 때), c(처음 연 때 — 이름 없는 칠판 구별), title·ok(지난번 서버 답 — 다시 열 때 그 모습부터 그려 깜빡이지 않게) }] 목록 순서 그대로
+export const myBoards =() => (Array.isArray(read(LIST, null)) ? read(LIST, []) : []).filter(b => b && typeof b.name === 'string')
 export const isMyBoard = name => myBoards().some(b => b.name === name)
 // 순서 = 사용자가 정함(2026-10-28 사용자: 누를 때마다 맨 위로 올라갈 필요 없음, 끌어서 바꾸기) — 처음 보는 칠판만 맨 위에, 있던 칠판은 그 자리
-export function rememberBoard(name) { if (!name) return; const my = myBoards(), i = my.findIndex(b => b.name === name)
-  write(LIST, i < 0 ? [{ name, t: Date.now() }, ...my].slice(0, MAX) : my.map((b, j) => (j === i ? { ...b, t: Date.now() } : b))); write(LAST, name) }
+export function rememberBoard(name) { if (!name) return; const my = myBoards(), i = my.findIndex(b => b.name === name), now = Date.now()
+  write(LIST, i < 0 ? [{ name, t: now, c: now }, ...my].slice(0, MAX) : my.map((b, j) => (j === i ? { ...b, t: now } : b))); write(LAST, name) }
+// 서버 답을 기억(칠판 판·위 막대가 다음에 열릴 때 「불러오는 중…」·「Magic Board」 없이 그 모습부터 — 2026-10-28 사용자: 새 칠판을 누르면 화면이 살짝 깜빡임)
+export function noteBoards(info) { const at = new Map(info.map(x => [x.name, x])); write(LIST, myBoards().map(b => (at.has(b.name) ? { ...b, ...at.get(b.name) } : b))) }
+export const knownTitle = name => myBoards().find(b => b.name === name)?.title || ''
 export function moveBoard(name, before) { const my = myBoards(), it = my.find(b => b.name === name); if (!it || name === before) return   // before = 이 칠판 앞으로(없으면 맨 끝)
   const rest = my.filter(b => b.name !== name), i = rest.findIndex(b => b.name === before); rest.splice(i < 0 ? rest.length : i, 0, it); write(LIST, rest) }
 export function forgetBoard(name) { write(LIST, myBoards().filter(b => b.name !== name)); if (read(LAST, '') === name) write(LAST, myBoards()[0]?.name || '') }

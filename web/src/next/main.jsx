@@ -13,7 +13,7 @@ import { Palette, useLibrary } from './palette.jsx'
 import { useMySymbols, mergeLib } from './mysym.js'
 import { Layers, layersOf, layerIdOf } from './layers.jsx'
 import { Frames } from './frames.jsx'
-import { UNTITLED, boardFromText, boardLabel, boardTitle, forgetBoard, isMyBoard, moveBoard, myBoards, newBoardName, rememberBoard } from './myboards.js'
+import { UNTITLED, boardFromText, boardLabel, boardTitle, forgetBoard, isMyBoard, knownTitle, moveBoard, myBoards, newBoardName, noteBoards, rememberBoard } from './myboards.js'
 import { FloatMenu } from './ctxmenu.jsx'
 import { QrBig } from './qr.jsx'
 import { Minimap } from './minimap.jsx'
@@ -145,8 +145,10 @@ const ago = s => { const d = Date.now() / 1000 - s; return d < 60 ? '방금' : d
 // 샘플 열기는 개발 시험용이라 뺌(서버 없을 때 위 막대에만), 「저장」은 위 막대·Ctrl+S와 겹쳐 뺌(서버는 저절로 저장) — 아래는 파일 열기·내려받기만
 // 같은 날 밤(사용자: Excalidraw처럼 — 처음엔 빈 칠판, 공유한 순간부터 남이 들어옴): 목록 = 「내 칠판」(이 브라우저가 만들거나 열어 본 것, `myboards.js`).
 // 비밀번호 없는 서버(open)는 「＋ 새 칠판」 = 바로 칠판 코드만인 새 주소(2026-10-28 사용자 — 이름은 나중에 두 번 눌러, 문서 `title`) · 비밀번호·팀 서버는 전처럼 정한 이름 그대로 + 「이 서버의 칠판」(관리자 = 전부, 팀 = 그 팀 것)
-const BoardName = ({ name, title, bold }) => { const { code } = boardLabel(name)
-  return <span data-testid="board-name" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: bold ? 700 : 500 }}>{boardTitle(name, title)}{code && <span style={{ marginLeft: 4, fontWeight: 400, fontSize: 10.5, color: C.muted }}>·{code}</span>}</span> }
+// 칠판 코드는 줄에 안 보임(2026-10-28 사용자 「깔끔한 게 좋아」 — 코드가 필요한 건 알려 주는 사람이라 QR 화면·공유 창에, 줄은 툴팁에만). 이름 없는 칠판은 만든 때로 구별
+const when = ms => { const d = new Date(ms), p = n => String(n).padStart(2, '0'); return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}` }
+const BoardName = ({ name, title, at, bold }) => { const t = boardTitle(name, title)
+  return <span data-testid="board-name" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: bold ? 700 : 500 }}>{t}{t === UNTITLED && at > 0 && <span style={{ marginLeft: 4, fontWeight: 400, fontSize: 10.5, color: C.muted }}>· {when(at)}</span>}</span> }
 // 줄마다 지금 접속자(2026-10-28 사용자 — 개수 대신: 남이 들어왔는지·나는 어디서 작업 중인지) — 위 막대 동그라미를 작게, 3칸까지(넘치면 2명 + 「+N」)
 const MiniFaces = ({ list, myId, me }) => { if (!list?.length) return null
   const shown = list.slice(0, list.length > 3 ? 2 : 3), more = list.length - shown.length
@@ -154,14 +156,21 @@ const MiniFaces = ({ list, myId, me }) => { if (!list?.length) return null
   return <span data-testid="board-people" style={{ display: 'flex', alignItems: 'center', paddingLeft: 4, flex: 'none' }}>
     {shown.map(p => { const nm = p.id === myId ? me || '나' : p.name; return <span key={p.id} style={{ ...dot, background: personColor(p.id), color: '#fff' }}>{[...(nm || '?')][0]}</span> })}
     {more > 0 && <span style={{ ...dot, background: C.group, color: C.ink, fontSize: 8 }}>+{more}</span>}</span> }
-function BoardForm({ onClose, docked, open, myId, me, children }) {   // docked = 왼쪽 판 「칠판」 칸(2026-10-23 — 위 막대 팝업에서 옮김), open = 비밀번호 없는 서버, myId·me = 내 접속 이름표(줄 동그라미의 「나」), children = 아래 파일 단추들
-  const [list, setList] = useState(null), [mine, setMine] = useState(null), [name, setName] = useState(''), [all, setAll] = useState(false), [making, setMaking] = useState(false), [why, setWhy] = useState(''), [menu, setMenu] = useState(null)
-  const [codeOn, setCodeOn] = useState(false), [codeText, setCodeText] = useState(''), [codeWhy, setCodeWhy] = useState('')   // 칠판 코드로 열기(2026-10-28 — QR 밑 코드·받은 주소)
+// 「＋ 새 칠판 ▾」 메뉴(2026-10-28 사용자 — 노션 왼쪽 위 「페이지·채팅·데이터베이스」처럼 새로 시작하는 길을 한곳에) — 우클릭 메뉴(`ctxmenu.jsx`)와 같은 모양
+const MENU_BOX = { position: 'fixed', zIndex: 40, minWidth: 190, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 4, boxShadow: '0 6px 18px rgba(0,0,0,.22)', font: "400 12.5px 'Pretendard', sans-serif", color: C.ink }
+const MENU_ROW = { all: 'unset', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '5px 10px', borderRadius: 5, cursor: 'pointer' }
+const menuHover = { onMouseEnter: e => { e.currentTarget.style.background = 'rgba(218,119,86,.14)' }, onMouseLeave: e => { e.currentTarget.style.background = 'transparent' } }
+function BoardForm({ onClose, docked, open, myId, me, onDownload, children }) {   // docked = 왼쪽 판 「칠판」 칸(2026-10-23 — 위 막대 팝업에서 옮김), open = 비밀번호 없는 서버, myId·me = 내 접속 이름표(줄 동그라미의 「나」), onDownload = 지금 칠판 내려받기, children = 서버 없을 때 파일 단추들
+  // 처음엔 지난번 서버 답으로 그림(「불러오는 중…」 → 목록으로 바뀌며 아래가 출렁였음 — 2026-10-28 사용자 「새 칠판 누르면 살짝 깜빡」)
+  const cached = () => myBoards().filter(b => b.ok !== false || b.name === DOC_NAME).map(b => ({ name: b.name, title: b.title, mtime: b.mtime || 0, c: b.c || b.t }))
+  const [list, setList] = useState(null), [mine, setMine] = useState(cached), [name, setName] = useState(''), [all, setAll] = useState(false), [making, setMaking] = useState(false), [why, setWhy] = useState(''), [menu, setMenu] = useState(null)
+  const [newMenu, setNewMenu] = useState(null), [codeOn, setCodeOn] = useState(false), [codeText, setCodeText] = useState(''), [codeWhy, setCodeWhy] = useState(''), menuRef = useRef(null), moreRef = useRef(null), fileRef = useRef(null)
   const [people, setPeople] = useState({}), [renaming, setRenaming] = useState(null), [renameText, setRenameText] = useState(''), [hov, setHov] = useState(null), [drag, setDrag] = useState(null), [over, setOver] = useState(null), clickT = useRef(null)
   // 서버가 아는 칠판만(+ 지금 것) — 빈 칠판도 남음: 열 때 서버에 빈 칠판을 바로 만듦(App, 2026-10-28 사용자: 칠판을 먼저 여러 개 만들고 작업할 수도).
   // 서버에 없는 이름 = 지운 칠판·팀 서버에서 우리 팀 것이 아닌 칠판(옛 기본 main 등)이라 빼야 함
   const loadMine = () => { const my = myBoards(); api.boardInfo(my.map(b => b.name)).then(info => { const at = new Map(info.map(b => [b.name, b]))
-    setMine(my.filter(b => at.has(b.name) || b.name === DOC_NAME).map(b => at.get(b.name) || { name: b.name, mtime: 0, fresh: true })) }) }
+    noteBoards(my.map(b => (at.has(b.name) ? { name: b.name, ok: true, title: at.get(b.name).title || '', mtime: at.get(b.name).mtime } : { name: b.name, ok: false })))
+    setMine(my.filter(b => at.has(b.name) || b.name === DOC_NAME).map(b => ({ ...(at.get(b.name) || { name: b.name, mtime: 0, fresh: true }), c: b.c || b.t }))) }) }
   useEffect(() => { loadMine(); if (!open) api.boards().then(setList); else setList([]) }, [open])   // eslint-disable-line react-hooks/exhaustive-deps
   const boardUrl = n => `${location.pathname}?board=${encodeURIComponent(n)}`, goTo = n => { location.href = boardUrl(n) }
   const clean = name.trim().replace(/[^\w\-가-힣]/g, '').slice(0, 64), taken = !open && !!list?.some(b => b.name === clean)
@@ -169,12 +178,22 @@ function BoardForm({ onClose, docked, open, myId, me, children }) {   // docked 
     if (!clean) return
     if (!taken && (await api.session(clean)).board_ok === false) { setWhy('다른 팀이 쓰는 이름이에요 — 다른 이름으로 지어 주세요'); return }   // 팀 서버(§8 항목67) — 목록엔 우리 팀 것만 보여서 겹침을 모름
     goTo(clean) }
+  const startNew = () => { setNewMenu(null); if (open) make(); else setMaking(true) }
+  const closeMenu = () => { setNewMenu(null); setCodeOn(false); setCodeText(''); setCodeWhy('') }
+  useEffect(() => { if (!newMenu) return   // 바깥 누르기 = 닫힘(▾ 다시 누르기는 ▾가 맡음)
+    const down = e => { if (!menuRef.current?.contains(e.target) && !moreRef.current?.contains(e.target)) closeMenu() }
+    window.addEventListener('pointerdown', down, true); return () => window.removeEventListener('pointerdown', down, true) }, [newMenu])   // eslint-disable-line react-hooks/exhaustive-deps
   const openCode = async () => { const r = boardFromText(codeText); setCodeWhy('')
     if (r.view) { location.href = `${location.pathname}?view=${r.view}`; return }
     if (r.board) { goTo(r.board); return }
     if (!r.code) return
     const hit = await api.boardByCode(r.code); if (hit.length) { goTo(hit[0].name); return }
     setCodeWhy('그 코드의 칠판이 없어요 — 글자를 다시 확인해 주세요') }
+  // 파일로 새 칠판(2026-10-28 — 옛 「파일 열기」는 지금 칠판을 그 내용으로 통째로 바꿨음, 실수 한 번에 쓰던 칠판이 덮임) = 새 주소에 올리고 옮겨 감, 이름 = 파일 이름
+  const fileNew = async e => { const f = e.target.files?.[0]; e.target.value = ''; closeMenu(); if (!f) return
+    let doc; try { doc = parseDoc(await f.text()) } catch (err) { setWhy(`파일을 못 읽었어요 — ${err.message}`); return }
+    const n = newBoardName(), body = doc.title ? doc : { ...doc, title: f.name.replace(/\.(ecad|json)$/i, '').slice(0, 60) }
+    if (await api.putDoc(n, body)) goTo(n); else setWhy('새 칠판에 못 올렸어요 — 서버 연결을 확인해 주세요') }
   const myNames = new Set((mine || []).map(b => b.name))
   const others = (list || []).filter(b => !myNames.has(b.name)), shown = others.filter(b => all || !TEST_BOARD.test(b.name)), hidden = others.length - shown.length
   // 접속자 = 판이 열린 동안 3초마다(서버는 기억만 읽음 — 신호는 각 칠판 창이 보냄)
@@ -186,8 +205,12 @@ function BoardForm({ onClose, docked, open, myId, me, children }) {   // docked 
   const startRename = n => { clearTimeout(clickT.current); setMenu(null); const t = boardTitle(n, findB(n)?.title); setRenameText(t === UNTITLED ? '' : t); setRenaming(n) }
   const commitRename = async () => { const n = renaming; if (!n) return; setRenaming(null)
     const t = renameText.trim().slice(0, 60), b = findB(n); if (t === (b?.title || '') || (!b?.title && t === boardLabel(n).title)) return
-    const put = xs => xs?.map(x => (x.name === n ? { ...x, title: t } : x)); setMine(put); setList(put)
+    const put = xs => xs?.map(x => (x.name === n ? { ...x, title: t } : x)); setMine(put); setList(put); noteBoards([{ name: n, title: t }])
     if (!(await api.setTitle(n, t))) loadMine() }   // 못 바꿨으면 원래 이름으로
+  // 내려받기(2026-10-28 — 판 아래 단추에서 줄 메뉴로): 지금 칠판 = 화면 그대로(아직 안 보낸 것까지), 다른 칠판 = 서버 것
+  const download = async n => { setMenu(null); if (n === DOC_NAME) { onDownload?.(); return }
+    const text = await api.getDoc(n); if (!text) return
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = `${boardTitle(n, findB(n)?.title)}.ecad`; a.click(); URL.revokeObjectURL(a.href) }
   // 줄 누르기 = 그 칠판으로 — 두 번 누르기(이름 바꾸기)와 가르려고 잠깐 기다림(어차피 페이지를 다시 엶)
   const onRow = n => { if (renaming) return; clearTimeout(clickT.current); if (n === DOC_NAME) { onClose(); return } clickT.current = setTimeout(() => goTo(n), 230) }
   // 끌어서 순서 바꾸기(2026-10-28 사용자 — 누를 때마다 맨 위로 올라가던 것 대신) — 내 칠판만(이 브라우저 목록), 놓은 줄의 위·아래 절반으로 앞·뒤
@@ -195,9 +218,9 @@ function BoardForm({ onClose, docked, open, myId, me, children }) {   // docked 
     const names = (mine || []).map(b => b.name).filter(x => x !== d), i = names.indexOf(o.name), before = o.after ? names[i + 1] : o.name
     moveBoard(d, before); setMine(m => { const at = new Map((m || []).map(b => [b.name, b])); return myBoards().map(b => at.get(b.name)).filter(Boolean) }) }
   const menuAt = (n, x, y) => setMenu({ name: n, mine: myNames.has(n), x, y })
-  const row = b => { const cur = b.name === DOC_NAME, isMine = myNames.has(b.name), ppl = people[b.name] || [], edit = renaming === b.name, lit = cur ? 'rgba(218,119,86,.18)' : hov === b.name ? C.group : 'transparent'
-    const tip = `${boardTitle(b.name, b.title)} — 두 번 누르면 이름 바꾸기${isMine ? ' · 끌어서 순서 바꾸기' : ''}\n${b.fresh ? '아직 빈 칠판' : b.mtime ? `${ago(b.mtime)} 고침` : ''}${ppl.length ? ` · 지금 ${ppl.map(p => (p.id === myId ? `${me || '나'} (나)` : p.name)).join(', ')}` : ''}`
-    return <div key={b.name} data-testid="board-row" role="button" tabIndex={0} title={edit ? '' : tip} draggable={isMine && !edit}
+  const row = b => { const cur = b.name === DOC_NAME, isMine = myNames.has(b.name), ppl = people[b.name] || [], edit = renaming === b.name, lit = cur ? 'rgba(218,119,86,.18)' : hov === b.name ? C.group : 'transparent', code = boardLabel(b.name).code
+    const tip = `${boardTitle(b.name, b.title)}${code ? ` · 칠판 코드 ${code}` : ''} — 두 번 누르면 이름 바꾸기${isMine ? ' · 끌어서 순서 바꾸기' : ''}\n${b.fresh ? '아직 빈 칠판' : b.mtime ? `${ago(b.mtime)} 고침` : ''}${ppl.length ? ` · 지금 ${ppl.map(p => (p.id === myId ? `${me || '나'} (나)` : p.name)).join(', ')}` : ''}`
+    return <div key={b.name} data-testid="board-row" data-board={b.name} role="button" tabIndex={0} title={edit ? '' : tip} draggable={isMine && !edit}
       onClick={() => onRow(b.name)} onDoubleClick={() => startRename(b.name)} onKeyDown={e => { if (edit) return; if (e.key === 'Enter') onRow(b.name); if (e.key === 'F2') startRename(b.name) }}
       onContextMenu={e => { e.preventDefault(); menuAt(b.name, e.clientX, e.clientY) }} onMouseEnter={() => setHov(b.name)} onMouseLeave={() => setHov(h => (h === b.name ? null : h))}
       onDragStart={e => { setDrag(b.name); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('application/x-mb-board', b.name) }}   // 칠판 위 놓기(파일·주소)와 안 섞이게 따로 종류
@@ -209,40 +232,54 @@ function BoardForm({ onClose, docked, open, myId, me, children }) {   // docked 
           onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}
           onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setRenameText(boardTitle(b.name, b.title)); setRenaming(null) } }}
           style={{ flex: 1, minWidth: 0, height: 22, boxSizing: 'border-box', border: '1px solid #da7756', borderRadius: 5, background: C.card, color: C.ink, padding: '0 6px', font: "500 12px 'Pretendard', sans-serif" }} />
-        : <BoardName name={b.name} title={b.title} bold={cur} />}
+        : <BoardName name={b.name} title={b.title} at={b.c || (b.mtime || 0) * 1000} bold={cur} />}
       {!edit && <MiniFaces list={ppl} myId={myId} me={me} />}
-      {!edit && <button data-testid="board-more" aria-label="칠판 메뉴" title="이름 바꾸기·새 탭·주소 복사·목록에서 빼기" onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); menuAt(b.name, r.left, r.bottom + 2) }}
+      {!edit && <button data-testid="board-more" aria-label="칠판 메뉴" title="이름 바꾸기·새 탭·주소 복사·내려받기·목록에서 빼기" onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); menuAt(b.name, r.left, r.bottom + 2) }}
         onDoubleClick={e => e.stopPropagation()}
         style={{ all: 'unset', cursor: 'pointer', flex: 'none', width: 18, textAlign: 'center', borderRadius: 4, color: C.muted, fontWeight: 700, lineHeight: '18px', visibility: hov === b.name || menu?.name === b.name ? 'visible' : 'hidden' }}>⋯</button>}
     </div> }
   const ok = open || !!clean
-  return <div data-testid="board-form" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }} style={{ ...(docked ? { padding: '8px 10px' } : { position: 'absolute', top: 48, left: 0, zIndex: 20, width: 280, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, boxShadow: '0 4px 14px rgba(0,0,0,.18)' }), display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif", color: C.ink }}>
+  const accent = { all: 'unset', cursor: 'pointer', background: '#da7756', color: '#fff', fontWeight: 600 }
+  return <div data-testid="board-form" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') { if (newMenu) closeMenu(); else onClose() } }} style={{ ...(docked ? { padding: '8px 10px' } : { position: 'absolute', top: 48, left: 0, zIndex: 20, width: 280, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, boxShadow: '0 4px 14px rgba(0,0,0,.18)' }), display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif", color: C.ink }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
       <span style={{ flex: 1, font: docked ? "700 15px 'Pretendard', sans-serif" : "700 13px 'Pretendard', sans-serif" }}>칠판</span>
-      {!making && <button data-testid="board-new" onClick={() => (open ? make() : setMaking(true))} title={open ? '새 칠판 만들기 — 누르면 바로 새 칠판으로 옮겨 가요(이름은 나중에 목록에서 두 번 눌러서)' : '새 칠판 만들기 — 이름을 정하면 그 칠판으로 옮겨 가요'}
-        style={{ all: 'unset', cursor: 'pointer', padding: '3px 10px', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>＋ 새 칠판</button>}
+      {!making && <div style={{ display: 'flex' }}>   {/* 갈라진 단추(2026-10-28 사용자 고름) — 왼쪽 = 바로 새 칠판(한 번), ▾ = 칠판 코드로 열기·파일로 새 칠판 */}
+        <button data-testid="board-new" onClick={startNew} title={open ? '새 칠판 만들기 — 누르면 바로 새 칠판으로 옮겨 가요(이름은 나중에 목록에서 두 번 눌러서)' : '새 칠판 만들기 — 이름을 정하면 그 칠판으로 옮겨 가요'}
+          style={{ ...accent, padding: '3px 8px 3px 10px', borderRadius: '6px 0 0 6px' }}>＋ 새 칠판</button>
+        <button ref={moreRef} data-testid="board-new-more" aria-label="새 칠판 메뉴" aria-expanded={!!newMenu} title="칠판 코드로 열기 · 파일로 새 칠판"
+          onClick={e => { if (newMenu) { closeMenu(); return } const r = e.currentTarget.getBoundingClientRect(); setNewMenu({ x: Math.max(RAIL_W + 4, r.right - 200), y: r.bottom + 4 }) /* 아이콘 줄은 안 덮게 */ }}
+          style={{ ...accent, padding: '3px 6px', borderRadius: '0 6px 6px 0', borderLeft: '1px solid rgba(255,255,255,.45)', fontSize: 10 }}>▾</button>
+      </div>}
     </div>
+    {newMenu && <div ref={menuRef} data-testid="board-new-menu" style={{ ...MENU_BOX, left: newMenu.x, top: newMenu.y, width: 200 }}>
+      {!codeOn ? <>
+        <button onClick={startNew} style={MENU_ROW} {...menuHover}><span style={{ width: 14, textAlign: 'center' }}>＋</span>새 칠판</button>
+        <button data-testid="board-code-open" onClick={() => setCodeOn(true)} style={MENU_ROW} {...menuHover} title="받은 칠판 코드(QR 밑 8자)나 칠판 주소를 넣어 그 칠판으로"><span style={{ width: 14, textAlign: 'center' }}>#</span>칠판 코드로 열기</button>
+        <button data-testid="board-file-new" onClick={() => fileRef.current?.click()} style={MENU_ROW} {...menuHover} title=".ecad 파일을 새 칠판으로 열어요(지금 칠판은 그대로)"><span style={{ width: 14, textAlign: 'center' }}>↥</span>파일로 새 칠판</button>
+      </> : <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 6 }}>
+        <span style={{ fontSize: 11, color: C.muted }}>받은 칠판 코드(QR 밑 8자)나 주소</span>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input data-testid="board-code" autoFocus value={codeText} onChange={e => { setCodeText(e.target.value); setCodeWhy('') }} placeholder="예: k7p2 qx9m"
+            onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') openCode(); if (e.key === 'Escape') closeMenu() }}
+            style={{ flex: 1, minWidth: 0, height: 26, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: 'inherit' }} />
+          <button disabled={!codeText.trim()} onClick={openCode} style={{ ...accent, cursor: codeText.trim() ? 'pointer' : 'default', opacity: codeText.trim() ? 1 : 0.5, padding: '4px 10px', borderRadius: 6 }}>열기</button>
+        </div>
+        {codeWhy && <span data-testid="board-code-why" style={{ fontSize: 11, color: '#d44c47' }}>{codeWhy}</span>}
+      </div>}
+    </div>}
+    <input ref={fileRef} data-testid="board-file-input" type="file" accept=".ecad,application/json" hidden onChange={fileNew} />
     {making && <div style={{ display: 'flex', gap: 6 }}>
       <input autoFocus value={name} onChange={e => { setName(e.target.value); setWhy('') }} placeholder="새 칠판 이름 (예: 송신소점검)" onKeyDown={e => { if (e.key === 'Enter') make(); if (e.key === 'Escape') { e.stopPropagation(); setMaking(false); setName('') } }}
         style={{ flex: 1, minWidth: 0, height: 26, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: 'inherit' }} />
-      <button disabled={!ok} onClick={make} style={{ all: 'unset', cursor: ok ? 'pointer' : 'default', opacity: ok ? 1 : 0.5, padding: '4px 10px', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>{taken ? '열기' : '만들기'}</button>
+      <button disabled={!ok} onClick={make} style={{ ...accent, cursor: ok ? 'pointer' : 'default', opacity: ok ? 1 : 0.5, padding: '4px 10px', borderRadius: 6 }}>{taken ? '열기' : '만들기'}</button>
     </div>}
     {making && clean && clean !== name.trim() && <span style={{ fontSize: 11, color: C.muted }}>이름은 「{clean}」(글자·숫자·_·- 만)</span>}
-    {making && why && <span data-testid="board-new-why" style={{ fontSize: 11, color: '#d44c47' }}>{why}</span>}
+    {why && <span data-testid="board-new-why" style={{ fontSize: 11, color: '#d44c47' }}>{why}</span>}
     {/* 「내 칠판」(2026-10-28 사용자 — 「— 이 브라우저」는 마우스 올리면 설명으로만) */}
     <span style={{ color: C.muted }} title="이 브라우저에서 만들거나 열어 본 칠판이에요 — 다른 PC·다른 브라우저엔 안 보여요(칠판 코드나 주소로 열면 그쪽 목록에도 들어가요)">내 칠판</span>
     <div data-testid="my-boards" onDragOver={e => { if (drag) e.preventDefault() }} onDrop={e => { e.preventDefault(); dropRow() }} style={{ display: 'flex', flexDirection: 'column', maxHeight: 300, overflowY: 'auto', margin: '-4px -4px 0' }}>
-      {mine === null ? <span style={{ color: C.muted, padding: 4 }}>불러오는 중…</span> : mine.map(row)}
+      {mine.map(row)}
     </div>
-    {!codeOn ? <button data-testid="board-code-open" onClick={() => setCodeOn(true)} title="받은 칠판 코드(QR 밑 8자)나 칠판 주소를 넣어 그 칠판으로"
-      style={{ all: 'unset', cursor: 'pointer', alignSelf: 'flex-start', color: C.muted, fontSize: 11.5, textDecoration: 'underline', textUnderlineOffset: 2 }}>칠판 코드로 열기</button>
-    : <div style={{ display: 'flex', gap: 6 }}>
-      <input data-testid="board-code" autoFocus value={codeText} onChange={e => { setCodeText(e.target.value); setCodeWhy('') }} placeholder="칠판 코드 8자 또는 주소"
-        onKeyDown={e => { if (e.key === 'Enter') openCode(); if (e.key === 'Escape') { e.stopPropagation(); setCodeOn(false); setCodeText(''); setCodeWhy('') } }}
-        style={{ flex: 1, minWidth: 0, height: 26, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: 'inherit' }} />
-      <button disabled={!codeText.trim()} onClick={openCode} style={{ all: 'unset', cursor: codeText.trim() ? 'pointer' : 'default', opacity: codeText.trim() ? 1 : 0.5, padding: '4px 10px', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>열기</button>
-    </div>}
-    {codeWhy && <span data-testid="board-code-why" style={{ fontSize: 11, color: '#d44c47' }}>{codeWhy}</span>}
     {!open && (list === null || others.length > 0) && <>
       <span style={{ color: C.muted }}>이 서버의 칠판</span>
       <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 300, overflowY: 'auto', margin: '-4px -4px 0' }}>
@@ -252,7 +289,7 @@ function BoardForm({ onClose, docked, open, myId, me, children }) {   // docked 
     {children}
     {/* 줄 메뉴 = 우클릭·⋯(2026-10-28 — 우클릭을 모르면 못 찾음). 이름 바꾸기 = 문서 이름만(주소 그대로), 지우기는 없음(남과 같이 쓰는 칠판일 수 있음) — 「목록에서 빼기」 = 이 브라우저 목록에서만(칠판은 그대로) */}
     {menu && <FloatMenu at={menu} onClose={() => setMenu(null)} entries={[['이름 바꾸기', 'F2', () => startRename(menu.name)], ['새 탭에서 열기', '', () => { setMenu(null); window.open(boardUrl(menu.name), '_blank', 'noopener') }],
-      ['주소 복사', '', () => { setMenu(null); navigator.clipboard?.writeText(location.origin + boardUrl(menu.name)) }],
+      ['주소 복사', '', () => { setMenu(null); navigator.clipboard?.writeText(location.origin + boardUrl(menu.name)) }], ['내려받기 (.ecad)', '', () => download(menu.name)],
       ...(menu.mine && menu.name !== DOC_NAME ? ['-', ['목록에서 빼기', '', () => { setMenu(null); forgetBoard(menu.name); loadMine() }]] : [])]} />}
   </div>
 }
@@ -380,7 +417,8 @@ function ShareForm({ onClose, people = [], title = '' }) {   // people = [{ id, 
       <div style={{ color: C.muted }}>같이 고칠 사람에게 보내는 링크예요. 들어오면 이름만 적고 바로 편집해요.</div>
       {inv === undefined ? <span style={{ color: C.muted }}>확인 중…</span> : !inv.password ? <>
         <div data-testid="share-open">이 주소가 곧 열쇠예요 — 받은 사람은 처음 한 번 이름만 적고 바로 같이 고쳐요. 주소를 모르는 사람은 이 칠판을 찾을 수 없어요.</div>{linkBox(board)}
-        <div style={{ display: 'flex', gap: 6 }}><button style={b('#da7756')} onClick={() => copy(board)}>주소 복사</button>{qrBtn(board)}</div></>
+        <div style={{ display: 'flex', gap: 6 }}><button style={b('#da7756')} onClick={() => copy(board)}>주소 복사</button>{qrBtn(board)}</div>
+        {boardLabel(DOC_NAME).code && <div data-testid="share-code" style={{ fontSize: 11.5, color: C.muted }}>칠판 코드 <b style={{ font: "700 13px ui-monospace, Consolas, monospace", letterSpacing: '.12em', color: C.ink }}>{boardLabel(DOC_NAME).code.slice(0, 4)} {boardLabel(DOC_NAME).code.slice(4)}</b> — 말로 알려 줄 때(받은 사람은 칠판 판 「▾ › 칠판 코드로 열기」)</div>}</>
       : inv.token ? <>{linkBox(editLink)}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <button style={b('#da7756')} onClick={() => copy(editLink)}>링크 복사</button>{qrBtn(editLink)}
@@ -443,7 +481,9 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
   useEffect(() => { const on = () => setFull(!!document.fullscreenElement); document.addEventListener('fullscreenchange', on); return () => document.removeEventListener('fullscreenchange', on) }, [])
   const toggleFull = () => { try { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen() } catch { /* 막힌 환경이면 그대로 */ } }
   const toggleDark = () => setDark(d => { try { localStorage.setItem('mb.theme', d ? 'light' : 'dark') } catch { /* 기억 못 해도 그만 */ } return !d })
-  const [server, setServer] = useState(false)
+  const [server, setServer] = useState(false), [srvKnown, setSrvKnown] = useState(false)
+  // 서버 답 전(첫 0.1초)에도 서버 있는 모습으로 그림 — 「Magic Board」·흐린 공유·동그라미 없음 → 바뀌며 위 막대가 좌우로 밀렸음(2026-10-28 사용자 「새 칠판 누르면 살짝 깜빡」)
+  const live = server || !srvKnown
   const [me, setMe] = useState(() => { try { return localStorage.getItem('mb.name') || '' } catch { return '' } }), [others, setOthers] = useState([]), [shareOpen, setShareOpen] = useState(false)
   const sync = useRef({ base: null, rev: 0, busy: false, again: false, id: Math.random().toString(36).slice(2, 10) }), modelRef = useRef(model); modelRef.current = model
   const box = useRef(null), size = useSize(box), file = useRef(null), ed = useRef(null), saveT = useRef(null)
@@ -520,7 +560,7 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
     // 받아 오기를 켜기 전에 만들어야 함 — 고치기 시작한 뒤에 도착하면 남의 변경처럼 합쳐져 되돌리기가 어긋났음(flow35)
     loadServerDoc().then(async r => { const fresh = r.server && !r.doc, rev = fresh ? await api.patch({ upsert: [], delete: [] }) : null
       if (typeof rev === 'number') r = { ...r, doc: { ...emptyDoc(), rev } }
-      setServer(r.server); if (r.doc) open(r.doc, `서버 「${DOC_NAME}」`, true, true); else if (r.server) { const m = modelRef.current; sync.current.base = snapshotModel(m); sync.current.rev = 0 }
+      setServer(r.server); setSrvKnown(true); if (r.doc) open(r.doc, `서버 「${DOC_NAME}」`, true, true); else if (r.server) { const m = modelRef.current; sync.current.base = snapshotModel(m); sync.current.rev = 0 }
       if (fresh || !r.server) setStatus(r.server ? `서버 「${DOC_NAME}」 · 새 칠판` : '서버 없음 — 파일로 열고 저장') }) }, [])   // eslint-disable-line
 
   // 카드 버튼: 클릭 = 그리기 도구, 6px 넘게 끌면 도형을 칠판에 바로 놓기(데스크톱 `_PaletteButton._DRAG_THRESH`)
@@ -582,13 +622,14 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
   // 접속자 = 나 + 다른 창(id마다 — 이름으로 세면 이름이 같은 사람(로그인 없는 서버는 다 「이름 없음」)이 한 명으로 줄었음, 2026-10-27 사용자: 셋인데 1)
   const crowd = [{ id: sync.current.id, name: me || '나', me: true }, ...others]
   // 칠판 이름 = 문서 `title`(2026-10-28 — 칠판 판에서 바꾸면 받아 오기로 따라옴), 없으면 주소에서 · 브라우저 탭 제목도(칠판 여러 개를 탭으로 열면 다 「Magic Board」였음)
-  const title = boardTitle(DOC_NAME, model.title)
-  useEffect(() => { document.title = server ? `${title} — Magic Board` : 'Magic Board' }, [server, title])
+  const title = boardTitle(DOC_NAME, srvKnown ? model.title : knownTitle(DOC_NAME))   // 서버 답 전 = 지난번 이름(깜빡임)
+  useEffect(() => { document.title = live ? `${title} — Magic Board` : 'Magic Board' }, [live, title])
+  useEffect(() => { if (server) noteBoards([{ name: DOC_NAME, title: model.title || '' }]) }, [server, model.title])   // 다음에 열 때 첫 모습
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
       {phone && <div data-testid="phone-top" style={{ touchAction: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>   {/* 휴대폰 위 = 칠판 이름·사람 수·밝기만 */}
-        <span style={{ flex: 1, minWidth: 0, font: "700 15px 'Pretendard', sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{server ? `「${title}」` : 'Magic Board'}{server && team && <span style={{ marginLeft: 6, font: "600 12px 'Pretendard', sans-serif", color: C.muted }}>{team}</span>}</span>
-        {server && <span data-testid="people-count" title={crowd.map(p => p.name).join(', ')} style={{ fontSize: 13, color: C.muted, whiteSpace: 'nowrap' }}>👥 {crowd.length}</span>}
+        <span style={{ flex: 1, minWidth: 0, font: "700 15px 'Pretendard', sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{live ? `「${title}」` : 'Magic Board'}{live && team && <span style={{ marginLeft: 6, font: "600 12px 'Pretendard', sans-serif", color: C.muted }}>{team}</span>}</span>
+        {live && <span data-testid="people-count" title={crowd.map(p => p.name).join(', ')} style={{ fontSize: 13, color: C.muted, whiteSpace: 'nowrap' }}>👥 {crowd.length}</span>}
         <button onClick={toggleDark} title="밝게 / 어둡게" style={{ all: 'unset', cursor: 'pointer', fontSize: 18, padding: '2px 4px' }}>{dark ? '☀️' : '🌙'}</button></div>}
       <Narrow.Provider value={narrow}>
       <div style={{ display: phone ? 'none' : 'flex', flexWrap: narrow ? 'wrap' : 'nowrap', rowGap: 4, alignItems: 'center', gap: narrow ? 4 : 8, padding: '4px 8px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>   {/* 좁은 PC 창(반 화면)은 두 줄로 — 한 줄이면 칠판 이름·공유·KAIROS가 잘렸음(2026-10-27 저녁) */}
@@ -596,8 +637,8 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
         <button data-testid="board-title" onClick={() => setDockTab(dockTab === 'board' ? '' : 'board')} title={server ? `칠판 「${DOC_NAME}」 — 누르면 새 칠판·최근 칠판·파일` : '새 칠판·최근 칠판·파일'}
           style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: narrow ? 110 : 180, padding: '4px 8px', borderRadius: 6, font: "700 14px 'Pretendard', sans-serif", color: C.ink, background: dockTab === 'board' ? 'rgba(218,119,86,.22)' : 'transparent' }}
           onMouseEnter={e => { if (dockTab !== 'board') e.currentTarget.style.background = 'rgba(218,119,86,.12)' }} onMouseLeave={e => { e.currentTarget.style.background = dockTab === 'board' ? 'rgba(218,119,86,.22)' : 'transparent' }}>
-          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{server ? title : 'Magic Board'}</span><span aria-hidden style={{ fontSize: 10, color: C.muted }}>▾</span></button>
-        {server && team && <span data-testid="team-badge" title={team === '관리자' ? '관리자 — 모든 팀의 칠판이 보여요' : `「${team}」 칠판만 보여요 · KAIROS 크레딧도 ${team} 것`}
+          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{live ? title : 'Magic Board'}</span><span aria-hidden style={{ fontSize: 10, color: C.muted }}>▾</span></button>
+        {live && team && <span data-testid="team-badge" title={team === '관리자' ? '관리자 — 모든 팀의 칠판이 보여요' : `「${team}」 칠판만 보여요 · KAIROS 크레딧도 ${team} 것`}
           style={{ flexShrink: 0, marginLeft: -4, padding: '2px 8px', borderRadius: 10, background: C.group, color: C.muted, font: "600 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap' }}>{team}</span>}
         <Group>
  {/* 칠판·열기·내려받기는 왼쪽 판 「칠판」 칸으로(2026-10-23 사용자) */}
@@ -635,8 +676,8 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
         </Group>
         {!narrow && !server && <SampleSelect onPick={openSample} />}
         <div style={{ marginLeft: 'auto' }} />   {/* 오른쪽 이름·배율 뺌(2026-10-27 사용자 — 이름은 왼쪽 끝, 배율은 미니맵 %와 겹침) */}
-        <div data-pop="share" style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, opacity: server ? 1 : 0.4 }}>   {/* 서버가 없으면 숨기지 않고 흐리게 — 안 보이면 왜 없는지 몰랐음(2026-10-20 사용자) */}
-          {server && <Faces list={crowd.map(p => ({ ...p, color: personColor(p.id) }))} onClick={() => setShareOpen(o => !o)} />}
+        <div data-pop="share" style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, opacity: live ? 1 : 0.4 }}>   {/* 서버가 없으면 숨기지 않고 흐리게 — 안 보이면 왜 없는지 몰랐음(2026-10-20 사용자) */}
+          {live && <Faces list={crowd.map(p => ({ ...p, color: personColor(p.id) }))} onClick={() => setShareOpen(o => !o)} />}
           <Btn icon="share" label="공유" on={shareOpen} onClick={() => (server ? setShareOpen(o => !o) : setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 공유·KAIROS를 쓸 수 있어요'))} title={server ? '게시 — 로그인 없이 보기·발표만 되는 링크(큰 TV 발표용)' : '서버에 연결 안 됨 — python web/server.py를 켜면 공유할 수 있어요'} />
           {server && shareOpen && <ShareForm people={crowd} title={title} onClose={() => setShareOpen(false)} />}
         </div>
@@ -649,12 +690,12 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
       </Narrow.Provider>
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>   {/* 왼쪽 판 + 작업공간 + 오른쪽 KAIROS 대화창(좁은 창은 대화창만 칠판 위에 뜸) */}
       {!phone && <Dock tab={dockTab} setTab={setDockTab} width={dockW} setWidth={setDockW} help={helpOpen} onHelp={() => setHelpOpen(o => !o)} mini={w => <Minimap docked width={w} items={mapItems} cam={cam} size={size} setCam={setCam} dark={dark} />} panes={{
-        board: <BoardForm docked open={openServer} myId={sync.current.id} me={me} onClose={() => {}}>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderTop: `1px solid ${C.line}`, paddingTop: 8 }}>
+        board: <BoardForm docked open={openServer} myId={sync.current.id} me={me} onDownload={saveFile} onClose={() => {}}>
+          {!live && <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderTop: `1px solid ${C.line}`, paddingTop: 8 }}>
             {[['open', '파일 열기', () => file.current.click(), '.ecad 파일 열기(지금 칠판을 그 내용으로 바꿈)'], ['download', '내려받기', saveFile, '.ecad 파일로 내려받기']].map(([ic, l, f, t]) =>
               <button key={l} onClick={f} title={t} style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px 4px 7px', borderRadius: 6, border: `1px solid ${C.line}`, font: "500 12px 'Pretendard', sans-serif" }}>
                 <span aria-hidden style={{ width: 16, height: 16, display: 'block', color: 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ICONS[ic].replace('<svg ', '<svg width="16" height="16" ') }} />{l}</button>)}
-          </div></BoardForm>,
+          </div>}</BoardForm>,
         shape: <Palette docked lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} mine={{ mine: mySyms, api: myApi }} say={setStatus} />,
         frame: orderedFrames(model.items).length ? <Frames docked items={model.items} sel={selKey ? selKey.split(',') : []} onReorder={ids => ed.current?.reorderFrames(ids)} onRename={(id, n) => ed.current?.renameFrame(id, n)} onGo={id => ed.current?.goFrame(id)} onPresent={id => ed.current?.startPresent(id)}
           onExport={id => { ed.current?.setSel([id]); setTimeout(() => setExportOpen(true)) /* 내보내기 창은 열 때 고른 것을 읽음 — 고른 것이 바뀐 다음에 열기 */ }} onRemove={id => ed.current?.removeFrame(id)} dark={dark} />
