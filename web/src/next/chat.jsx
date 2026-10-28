@@ -76,7 +76,7 @@ async function deepImgs(secs) {
 }
 
 // 칠판 그림 → 보낼 크기(긴 변 1536px JPEG) — 칠판 그림은 PNG 몇 MB라 그대로면 요청이 무거움(KAIROS 본문 상한 25MB)
-async function shrinkImage(src) {
+export async function shrinkImage(src) {
   const im = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = src })
   const k = Math.min(1, 1536 / Math.max(im.naturalWidth, im.naturalHeight)), cv = document.createElement('canvas')
   cv.width = Math.round(im.naturalWidth * k); cv.height = Math.round(im.naturalHeight * k)
@@ -519,11 +519,20 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   const feat = models?.featured || {}
   const lastM = msgs.filter(m => m.role !== 'error').at(-1), tools = TOOLS.filter(t => (t[0] !== 'deep' && t[0] !== 'live') || models?.jobs?.[t[0]])   // 딥모드·움직이는 카드 = 서버가 할 수 있을 때만
   const ta = useRef(null)
+  // 첨부(2026-10-28 사용자) — 대화창에 놓기·붙여넣기·「+ › 파일 올리기…」 = 칠판 빈자리에 놓고 고른 채(`ed.attachFiles`), 자료는 칠판에 남음
+  const fileIn = useRef(null), [dropIn, setDropIn] = useState(false)
+  const attach = async fs => { if (fs.length) { await ed.current?.attachFiles?.(fs); ta.current?.focus() } }
+  const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files')   // 대화창 그림 후보 끌기(주소)는 아님
   const focused = useRef(null)   // 대화창이 막 열리면 모델 목록(그 길을 할 수 있나)이 늦게 와서 — 목록이 온 뒤 한 번만
   useEffect(() => { if (!focus || focused.current === focus.id || (focus.tool && !models)) return; focused.current = focus.id
     if (focus.tool && tools.some(t => t[0] === focus.tool)) setPickTool(focus.tool); ta.current?.focus() }, [focus, models])   // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <aside style={full ? { ...css.panel, position: 'fixed', inset: 0, zIndex: 50, width: '100%', borderLeft: 0, touchAction: 'pan-y' } : { ...(floating ? { ...css.panel, ...css.float } : css.panel), width }} aria-label="KAIROS 대화" onPointerDown={e => e.stopPropagation()}>
+    <aside style={full ? { ...css.panel, position: 'fixed', inset: 0, zIndex: 50, width: '100%', borderLeft: 0, touchAction: 'pan-y' } : { ...(floating ? { ...css.panel, ...css.float } : css.panel), width }} aria-label="KAIROS 대화" onPointerDown={e => e.stopPropagation()}
+      onDragOver={e => { if (!hasFiles(e)) return; e.preventDefault(); if (!dropIn) setDropIn(true) }}   // 막지 않으면 브라우저가 그 파일로 떠남
+      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDropIn(false) }}
+      onDrop={e => { if (!hasFiles(e)) return; e.preventDefault(); setDropIn(false); attach([...e.dataTransfer.files]) }}>
+      {dropIn && <div data-testid="chat-drop" style={{ position: 'absolute', inset: 8, zIndex: 20, borderRadius: 12, border: '2px dashed #da7756', background: 'rgba(218,119,86,.08)', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 20, font: `600 14px/1.6 ${F}`, color: '#da7756', pointerEvents: 'none' }}>
+        <span>여기에 놓으면 칠판 빈자리에 놓고 골라 둬요</span><span style={{ fontWeight: 400, fontSize: 12.5 }}>그림·PDF·녹음(회의록)·md·txt·HTML</span></div>}
       {/* 폭 조절 — 왼쪽 경계 끌기(320~720, 화면 절반까지), 두 번 누르면 기본 폭(왼쪽 판 `dock-resize`와 같은 손맛) */}
       {setWidth && !full && <div data-testid="chat-resize" title="끌어서 대화창 폭 조절 · 두 번 누르면 기본 폭" onDoubleClick={() => setWidth(CHAT_W)}
         onPointerDown={e => { e.preventDefault(); const x0 = e.clientX, w0 = width, el = e.currentTarget; el.setPointerCapture(e.pointerId)
@@ -579,7 +588,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
           무엇이든 물어보세요. 남길 답은 「칠판에 붙이기」나 끌어다 놓기로 메모가 됩니다.<br />칠판에서 메모나 글을 고른 채 물으면 그 내용을 같이 보냅니다.</div>}
         {msgs.map((m, i) => m.role === 'user'
           ? <div key={i} style={css.me}>{m.addTo ? <span style={css.ctx}>위 질문에 덧붙여</span> : null}{m.reply_to ? <span style={css.ctx}>↩ 「{replyLabel(m.reply_to)}」에 이어서</span> : null}
-            {m.ctxCount ? <span style={css.ctx}>칠판에서 고른 것 {m.ctxCount}개와 함께</span> : null}{m.imgCount ? <span style={css.ctx}>칠판에서 고른 그림 {m.imgCount}장을 고쳐 달라고</span> : null}{m.content}</div>
+            {m.ctxCount ? <span style={css.ctx}>칠판에서 고른 것 {m.ctxCount}개와 함께</span> : null}{m.imgCount ? <span style={css.ctx}>칠판에서 고른 그림 {m.imgCount}장과 함께</span> : null}{m.content}</div>
           : m.role === 'error'
             ? <div key={i} style={css.err}>{m.content}<div style={{ marginTop: 6, display: 'flex', gap: 6 }}>{m.content.startsWith('🔑') && !myKey && <button style={css.pin} onClick={() => setKeyOpen(true)}>🔑 키 넣기</button>}<button style={css.ghost} onClick={retry}>질문 다시 고치기</button></div></div>
             : <div key={i} style={css.ai}>
@@ -681,16 +690,22 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
             : lastM?.kind === 'deep' && lastM.step === 'plan' && !lastM.built && !lastM.stale ? '계획을 고칠 점을 말하면 다시 짜요 — 예: 그래프를 하나 더'
             : deepTg ? '이 꼭지를 고칠 점을 말하면 그 꼭지만 다시 써요 — 예: 더 자세히 · 표로 바꿔 줘' : '물어보세요 (Enter 보내기 · Shift+Enter 줄바꿈)')}
           onChange={e => { if (mic === 'listen') micStop.current?.(); setDraft(e.target.value) }}
+          onPaste={e => { const fs = [...(e.clipboardData?.files || [])]; if (fs.length && !e.clipboardData.getData('text/plain').trim()) { e.preventDefault(); attach(fs) } }}   // 그림 복사 → Ctrl+V = 첨부(글이 있으면 글 붙여넣기)
           onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>   {/* 모델 고르기 = 입력 칸 옆(2026-10-20 사용자 — Gemini·Claude·ChatGPT처럼 묻는 자리에서) */}
           <span data-plus-menu style={{ position: 'relative' }}>
             <button data-testid="plus" style={{ ...css.ghost, padding: '2px 9px', ...(plusOpen || pickTool ? { color: '#da7756', borderColor: '#da7756' } : null) }} aria-expanded={plusOpen} onClick={() => setPlusOpen(o => !o)}
-              title="도구 고르기 — 이미지·아이콘(SVG)·인터랙티브 HTML·Deep Mode(안 고르면 앱이 말을 보고 골라요 — 최신 정보가 필요하면 웹 검색도 알아서)">＋</button>
+              title="도구 고르기 — 이미지·아이콘(SVG)·인터랙티브 HTML·Deep Mode(안 고르면 앱이 말을 보고 골라요 — 최신 정보가 필요하면 웹 검색도 알아서) · 파일 올리기">＋</button>
             {plusOpen && <div role="menu" style={{ ...css.menu, minWidth: 250 }}><style>{'.mb-mi:hover:not(:disabled){background:var(--mb-seg)}'}</style>
               {tools.map(([k, label, tip]) => <button key={k} role="menuitemradio" aria-checked={pickTool === k} className="mb-mi" style={{ ...css.item, display: 'flex', flexDirection: 'column', gap: 1, whiteSpace: 'normal' }}
                 onClick={() => { setPickTool(t => (t === k ? '' : k)); setPlusOpen(false) }}>
                 <span>{label}{pickTool === k ? ' ✓' : ''}</span><span style={{ ...css.meta, fontWeight: 400 }}>{tip}</span></button>)}
+              <div style={{ borderTop: `1px solid ${C.line}`, margin: '4px 0' }} />
+              <button data-testid="attach" role="menuitem" className="mb-mi" style={{ ...css.item, display: 'flex', flexDirection: 'column', gap: 1, whiteSpace: 'normal' }}
+                onClick={() => { setPlusOpen(false); fileIn.current?.click() }}>
+                <span>📎 파일 올리기…</span><span style={{ ...css.meta, fontWeight: 400 }}>칠판 빈자리에 놓고 골라 둬요 — 대화창에 끌어 놓아도 돼요</span></button>
             </div>}
+            <input ref={fileIn} data-testid="attach-input" type="file" multiple hidden onChange={e => { const fs = [...e.target.files]; e.target.value = ''; attach(fs) }} />
           </span>
           <button data-testid="mic" onClick={toggleMic} disabled={!server || mic === 'wait' || mic === 'stopping'} aria-pressed={mic === 'listen'}
             title={mic === 'listen' ? '듣는 중 — 다시 누르면 멈춰요(보내도 멈춤)' : '말로 입력 — 말하는 동안 글자가 바로 떠요(KAIROS 실시간 받아쓰기, 말한 1분에 약 2크레딧)'}

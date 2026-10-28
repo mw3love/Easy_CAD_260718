@@ -42,7 +42,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXAMPLES, EXAMPLE = os.path.join(HERE, "examples"), "intro"   # 예시 칠판 원본(2026-10-28) — `examples/intro/intro.ecad`·`.chat.json`·`.img/`
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_chat, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, model_pick, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_bubble, board_chat, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, model_pick, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
@@ -77,11 +77,11 @@ class Handler(SimpleHTTPRequestHandler):
         """칠판 문서(`/api/doc/<이름>` → `<이름>.ecad`)·대화 기록(`/api/chatlog/<이름>` → `<이름>.chat.json`)·
         「🎙 회의」 받아 적는 글 사본(`/api/meetdraft/<이름>` → `<이름>.meet.json`, 2026-10-23 — 브라우저가 죽어도 남게) 파일 자리.
         API 경로가 아니면 None, 이름이 나쁘면 ""."""
-        m = re.match(r"^/api/(chatlog|doc|meetdraft)/([^/?#]+)$", self.path)
+        m = re.match(r"^/api/(chatlog|doc|meetdraft|threads)/([^/?#]+)$", self.path)
         if not m:
             return None
         name = self._name(m.group(2))   # 팀 검사도 여기서(§8 항목67)
-        ext = {"chatlog": ".chat.json", "doc": ".ecad", "meetdraft": ".meet.json"}[m.group(1)]
+        ext = {"chatlog": ".chat.json", "doc": ".ecad", "meetdraft": ".meet.json", "threads": ".threads.json"}[m.group(1)]   # threads = 💬 말풍선 대화(물건 _uid마다, 2026-10-28)
         return os.path.join(self.data_dir, name + ext) if name else ""
 
     def _json(self, code: int, obj):
@@ -165,6 +165,8 @@ class Handler(SimpleHTTPRequestHandler):
             kind = req.get("kind") or ""
             if kind == "deep":   # 딥모드(§8 항목66) — 대화창 질문지·계획 카드가 단계(`deep.step`)를 정해 보냄, 길 고르기 없음
                 return self._deep(req, key)
+            if kind == "bubble":   # 💬 AI 말풍선(2026-10-28) — 물건 하나의 글·그림 + 그 말풍선 앞 대화만, 길 고르기 없음
+                return self._bubble(req, key)
             if kind == "live":   # 「+ › 움직이는 카드」(§8 항목66 4단계) — 하나만 따로, 재료 = 고른 것의 글. 앞 답이 카드이고 고칠 말이면 그 카드 고치기
                 t = str(last.get("content", ""))
                 fix = str(req.get("prev_html") or "") if req.get("prev_kind") == "live" and live_card.FOLLOW_WORDS.search(t) else ""
@@ -182,7 +184,10 @@ class Handler(SimpleHTTPRequestHandler):
                 kind = "icon"   # 그림 고치기보다 먼저 — 「이 그림 아이콘으로 바꿔 줘」는 그림을 보고 아이콘(§8 항목63)
             if kind == "icon":
                 return self._icon(text, key, base_svg if follow_svg else "", "" if follow_svg else (bimgs[0] if bimgs else ""))
-            if not kind and (fu or bimgs) and (board_image.FOLLOW_WORDS.search(str(last.get("content", ""))) or board_chat._IMAGE_WORDS.search(str(last.get("content", "")))):
+            img_say = board_chat.image_intent(text) if bimgs else ""
+            if not kind and img_say == "ask":
+                kind = "chat"   # 그림을 고른 채 「이 사진 설명해 줘」 = 그림을 보고 답(대화창 첨부, 2026-10-28 — 전엔 「사진」 낱말로 그림 고치기)
+            if not kind and ((fu and board_image.FOLLOW_WORDS.search(text)) or img_say == "edit" or ((fu or bimgs) and board_chat._IMAGE_WORDS.search(text))):
                 kind = "image"   # 그림 뒤·그림을 고른 채 「날짜도 넣어 줘」 = 그 그림 고치기(판단 모델은 앞 대화·고른 그림을 안 봄)
             if not kind:   # 길 고르기 = 판단 모델 jev + 낱말 규칙 바닥(`easycad/ai/route.py`, 2026-10-20 사용자 선택)
                 prefs = req.get("ask_pref") if isinstance(req.get("ask_pref"), dict) else {}
@@ -253,7 +258,7 @@ class Handler(SimpleHTTPRequestHandler):
                 out["sources"] = kr_tools.sources(found)
             else:
                 out = board_chat.chat(key, msgs, model=req.get("model") or gw.FALLBACK_DEFAULT_MODEL,
-                                      context=ctx, kind=kind, board_refs=refs, base_url=self._base())
+                                      context=ctx, kind=kind, board_refs=refs, base_url=self._base(), **({"images": bimgs} if bimgs and kind in ("chat", "board") else {}))
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         except Exception as e:   # 게이트웨이 오류는 대화창에 그대로 보여 준다(갈아타는 건 「모델 없음」일 때만, 답에 「대신」으로 — `model_pick`)
@@ -333,6 +338,23 @@ class Handler(SimpleHTTPRequestHandler):
         time.sleep(1.5)
         b1 = self._balance(key, base)
         return round(b0 - b1, 1) if b1 is not None else None
+
+    def _bubble(self, req: dict, key: str):
+        """💬 AI 말풍선 — {"item": {"type", "text", "image"?}, "messages"} → {"kind": "bubble", "content", "memo"?(고친 메모 마크다운), "model", "elapsed", "credits"}."""
+        item = req.get("item") if isinstance(req.get("item"), dict) else {}
+        image = str(item.get("image") or "")
+        image = image if image.startswith("data:image/") else ""
+        base = self._base()
+        b0 = self._balance(key, base)
+        try:
+            out = self._with("bubble", req.get("model") or gw.FALLBACK_DEFAULT_MODEL, lambda m: board_bubble.reply(
+                key, {"type": str(item.get("type") or ""), "text": str(item.get("text") or "")}, req.get("messages") or [], model=m, image=image, base_url=base))
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        except Exception as e:
+            return self._json(502, {"error": gw.friendly_error(e)})
+        sys.stderr.write("[말풍선] %s %.1f초%s\n" % (out["model"], out["elapsed"], " (메모 고침)" if out.get("memo") else ""))
+        return self._json(200, {"kind": "bubble", **out, "credits": self._spent(key, base, b0)})
 
     def _live(self, ask: str, material: str, key: str, prev_html: str = ""):
         """움직이는 카드 하나 → {"kind": "live", "content", "title", "html", "model", "elapsed"} — 칠판에 붙이면 문서 카드 `live`(스크립트만 켠 칸).

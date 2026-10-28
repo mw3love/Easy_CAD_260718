@@ -1,7 +1,7 @@
 // 메모(§8 항목61 4-b ⑤ 1차, 2026-10-18) — 답 → 줄, 줄 ↔ 편집기 문서, 번호, 쉬운 글
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { docToLines, linesToDoc, memoBlocks, memoFromAnswer, memoText, olNumbers } from '../src/next/memo.js'
+import { docToLines, linesToDoc, memoBlocks, memoFromAnswer, memoMarkdown, memoText, olNumbers } from '../src/next/memo.js'
 
 const ANS = '# 회의 정리\n\n**결론**: 로그는 `30`일.\n\n## 할 일\n- [ ] 견적 비교\n- [x] 서버 신청\n- 메모\n  - 하위 항목\n1. 첫째\n2. 둘째\n> 하루 1회\n```\nx = 1\n  y = 2\n```'
 
@@ -121,4 +121,11 @@ test('답 속 표 → 메모 안 표 줄(자리 그대로·굵게 표시 뺌·�
   const back = docToLines(custom)
   assert.deepEqual(back[1], { k: 'table', t: '', rows: [['항목', '내일 날씨 설명'], ['기온', '10~20℃']], header: true, cw: [0.5, 0.5] })
   assert.equal(memoText(L), '요약\n항목 | 내일 날씨 설명\n기온 | 9~18℃\n끝')
+})
+
+test('💬 말풍선 — 줄 → 마크다운 → 줄이 같은 모양(제목·목록 깊이·번호·할 일·인용·표·구분선, 2026-10-28)', () => {
+  const L = memoFromAnswer('# 점검\n- 안테나\n  - 급전선\n1. 첫째\n2. 둘째\n- [ ] 교체\n- [x] 연료\n> 주의\n\n| 항목 | 상태 |\n|---|---|\n| 발전기 | 70% |\n\n---\n끝')
+  const back = memoFromAnswer(memoMarkdown(L))
+  assert.deepEqual(back.map(l => [l.k, l.t, l.done || false, l.lv || 0, l.rows || null]), L.map(l => [l.k, l.t, l.done || false, l.lv || 0, l.rows || null]))
+  assert.ok(!memoMarkdown(L).includes('•'))
 })

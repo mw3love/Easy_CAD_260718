@@ -44,7 +44,7 @@ import { answerTable, freeSpot, nearSpot, sourceLine } from '../chatFormat.js'
 import { LIVE_H, LIVE_W, bigPage, isLive, liveFits } from './livecard.js'
 import { DOC_SLEEP_PX, WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { isLegendLine, legendEntries, restyleLegendRow, syncLegends } from './legend.js'
-import { HANDLE_MIN_Z, LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
+import { HANDLE_MIN_Z, LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoMarkdown, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
 import { htmlPlan, looksMarkdown, textKind, tsvRows } from './clipin.js'
 import { looksSvg, svgFits, svgItems } from './svgin.js'
@@ -97,7 +97,7 @@ const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0]
 // 뜬 대화창 폭(좁은 창 — main.jsx가 칠판 칸에 `--mb-right-inset`으로 적음) — 「다 보기」·프레임으로 가기·AI 답 자리는 그만큼 오른쪽을 뺌(2026-10-19)
 export const rightInset = el => (el ? parseFloat(getComputedStyle(el).getPropertyValue('--mb-right-inset')) || 0 : 0)
 
-export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, onAddSymbol, onFit, onDark, onHelp, onAsk, onMeet, marks = [], readOnly = false, phone = false, keepTool = false, onKeepTool }, ref) {   // keepTool = 「도구 유지」(그린 뒤에도 그 도구 — 2026-10-27 사용자, Excalidraw 자물쇠)   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
+export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, onAddSymbol, onFit, onDark, onHelp, onAsk, onMeet, onBubble, marks = [], readOnly = false, phone = false, keepTool = false, onKeepTool }, ref) {   // keepTool = 「도구 유지」(그린 뒤에도 그 도구 — 2026-10-27 사용자, Excalidraw 자물쇠)   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
   const [sel, setSel] = useState([])
   useEffect(() => { if (phone && sel.length) setSel([]) }, [phone, sel])   // 휴대폰 = 고치기 없음 — 답을 붙인 뒤 고른 표시·속성 카드가 남지 않게(2026-10-27)
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
@@ -149,7 +149,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, setMemoLines, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -864,6 +864,18 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (it.type === 'pdf') out.push(`[PDF] ${it.name || ''}\n${it.text || ''}`.trim())   // 올릴 때 서버가 뽑은 글
     if (it.type === 'image' && it.alt) out.push(`[그림] ${it.alt}`)
     return out
+  }
+  // 💬 AI 말풍선(2026-10-28) — 물건 하나의 자리(칠판 좌표)·글(프레임은 안의 것까지)·그림. 없으면 null
+  function bubbleInfo(id) {
+    const m = R.current.model, it = m.items.find(x => x._id === id); if (!it) return null
+    const ids = new Set(withContents([id])), text = it.type === 'memo' ? memoMarkdown(it.lines) : m.items.filter(x => ids.has(x._id)).flatMap(itemTexts).join('\n\n')
+    return { type: it.type, box: sceneBox(it, textBox), text, image: it.type === 'image' && it.data ? (it.data.startsWith('data:') ? it.data : 'data:image/png;base64,' + it.data) : '' }
+  }
+  // 말풍선이 고친 메모 = 그 자리에서 줄만 바꿈(Ctrl+Z 한 번). 바꾸기 전 줄(메모가 없으면 null)
+  function setMemoLines(id, lines, label = 'AI 말풍선') {
+    const m = R.current.model, it = m.items.find(x => x._id === id); if (readOnly || !it || it.type !== 'memo') return null
+    commit(m.items.map(x => (x._id === id ? { ...x, lines } : x)), R.current.sel, label)
+    return it.lines
   }
   // 여러 도형이 한눈에 들어오게(딥모드 판 보기 등) — 없으면 false
   function showIds(ids) {
@@ -1802,9 +1814,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const AUDIO_RE = /\.(mp3|m4a|wav|webm|ogg|aac|flac|mp4)$/i
   const TEXT_FILE_RE = /\.(md|markdown|txt)$/i   // 글 파일 = 그 글을 붙여넣은 것과 같게(2026-10-21 사용자 — md는 AI가 많이 쓰는 문서)
   const FILE_FOLD_N = 30   // 글 파일 메모가 이보다 길면 접어서 넣음(칠판을 덮지 않게 — 회의록 전문과 같게)
-  async function dropFiles(files, e) {   // e 없음 = 붙여넣기(커서 자리, 화면 밖이면 가운데)
+  async function dropFiles(files, e, at) {   // e 없음 = 붙여넣기(커서 자리, 화면 밖이면 가운데) · at = 놓을 자리(대화창 첨부)
     if (readOnly) return
-    const p = e ? toSceneP(e) : pasteAt(); R.current.mouse = p
+    const p = at || (e ? toSceneP(e) : pasteAt()); R.current.mouse = p
     for (const f of files) {
       if (/\.svg$/i.test(f.name) || f.type === 'image/svg+xml') { if (!insertSvg(await f.text(), p, f.name, f.name.replace(/\.svg$/i, ''))) { await insertImage(f); setStatus(`${f.name} — 도형으로 못 읽는 부분(옮기기·그라디언트 등)이 있어 그림으로 넣었어요`) } }
       else if (/^image\//.test(f.type)) await insertImage(f)
@@ -1814,6 +1826,20 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       else if (TEXT_FILE_RE.test(f.name) || /^text\/(plain|markdown)$/.test(f.type)) { if (!pasteOutside(await f.text(), '', { at: p, file: f.name })) setStatus(`${f.name} — 빈 파일이에요`) }
       else setStatus(`${f.name} — 칠판엔 그림·녹음·PDF·HTML·md·txt 파일을 놓을 수 있어요(.ecad는 「열기」)`)
     }
+  }
+  // 대화창 첨부(놓기·붙여넣기·「+ › 파일 올리기…」, 2026-10-28 사용자: 대화창에 첨부할 곳이 없음) — 칠판이 곧 첨부함: 보이는 곳 빈자리에 놓고
+  // 놓은 것을 다 고른 채로 → 대화창 「N개 선택됨」 = 다음 질문의 재료. 놓은 개수(녹음 = 회의록 일감이라 0)
+  async function attachFiles(files) {
+    if (readOnly || !files.length) return 0
+    const before = new Set(R.current.model.items.map(it => it._id)), s = 1 / R.current.cam.z
+    for (const f of files) {
+      if (/^image\//.test(f.type) && !/svg/.test(f.type)) { await insertImage(f, { free: true }); continue }
+      const b = spotNear(PDF_W * s, PDF_W * 1.414 * s)   // 자리 어림 = PDF 카드 크기(글 파일은 `center`로 제 크기를 다시 잼)
+      await dropFiles([f], null, { x: b.x + PDF_W * s / 2, y: b.y + PDF_W * 0.707 * s, center: true })
+    }
+    const ids = R.current.model.items.filter(it => !before.has(it._id)).map(it => it._id)
+    if (ids.length) { setSel(ids); setStatus(`${ids.length}개를 칠판에 놓고 골라 뒀어요 — 이제 물어보면 같이 읽어요`) }
+    return ids.length
   }
   // SVG → 고칠 수 있는 도형(§8 항목63) — 데스크톱 `_insert_svgs_at`과 같게: 긴 변 160·가운데 = at, 펜 = 지금 그리기색·채움 없음(글자는 제 색),
   // 묶음 하나로(2026-10-25 사용자: 모여 있어야 뜻이 있음 — 끌어 고르기도 하나만 걸리면 통째, 낱개로 고치려면 Ctrl+Shift+G. 옛 2026-08-04 「묶지 않음」을 뒤집음). 못 읽는 모양이면 false
@@ -2493,6 +2519,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           if (onAddSymbol && !card && selIt.every(it => !NOT_SYMBOL.has(it.type))) out.push(['내 심볼에 추가…', '', act(() => addToMySymbols())])   // 2026-10-27 사용자 — KAIROS 아이콘 등을 심볼 칸에(이 브라우저). 메모·표는 그림 조각이 아니라 뺌(전수조사)
           if (selIt.some(it => isLegendLine(it))) out.push(['범례 넣기', '', act(insertLegend)])   // 선·화살표를 고르고 우클릭(2026-10-27 실검증 — 「표」 창 안에만 있으면 못 찾음, 표 창 단추도 그대로)
           out.push('-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
+          if (onBubble && ids.length === 1) out.push(['AI 말풍선 (KAIROS)', '', act(() => onBubble(ids[0]))])   // 이 물건만의 작은 대화창(2026-10-28 사용자)
           if (onAsk && (selTexts().length || selImages().length)) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])   // 「정리해 줘」 ① — 고른 것이 재료
         }
         // 빈 곳 = 붙여넣기만(2026-10-25 사용자: 빈 곳 메뉴는 없어도 됨 — 전체 선택은 Ctrl+A, 칠판 전체 정리 문서는 전체 선택 뒤 우클릭, 도움말은 왼쪽 「?」).

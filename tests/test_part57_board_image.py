@@ -186,3 +186,46 @@ def test_server_board_images_are_edited_and_not_logged(server, monkeypatch):
     prompt, kw = calls[-1]
     assert out["kind"] == "image" and kw["input_images"] == [img] and kw["n"] == 1 and "그대로 유지" in prompt and "칠판에서 고른 그림 1장" in out["content"]
     assert board_image.edit_prompt("둘을 합쳐 줘", 2).startswith("넣은 이미지 2장")
+
+
+def test_image_intent_ask_vs_edit():
+    """대화창 첨부(2026-10-28) — 고른 그림 + 묻는 말 = 그림을 보고 답, 고치는 말 = 그림 고치기, 둘 다 아니면 길 고르기에."""
+    for t in ("이 사진 설명해 줘", "이 그림 속 글자 뭐라고 써 있어?", "무슨 색이야?", "이 장비 이름 알려 줘", "사진 요약해 줘"):
+        assert board_chat.image_intent(t) == "ask", t
+    for t in ("날짜 넣어 줘", "색 더 밝게", "사람 빼 줘", "제목 바꿔 줘", "뭐가 빠졌는지 보고 추가해 줘"):
+        assert board_chat.image_intent(t) == "edit", t
+    assert board_chat.image_intent("이걸로 보고서 정리") == ""
+
+
+def test_chat_puts_images_on_last_user_turn():
+    """고른 그림은 마지막 질문에만 image_url 조각으로(검색은 글만이라 안 붙임)."""
+    sent = {}
+
+    class Client:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    sent.update(kw)
+                    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="송신탑이에요"), finish_reason="stop")])
+
+    img = "data:image/png;base64,AAAA"
+    out = board_chat.chat("k", [{"role": "user", "content": "앞 질문"}, {"role": "assistant", "content": "앞 답"}, {"role": "user", "content": "이 사진 뭐야?"}],
+                          model="m", kind="chat", client=Client, images=[img])
+    first, last = sent["messages"][1], sent["messages"][-1]["content"]
+    assert out["content"] == "송신탑이에요" and first["content"] == "앞 질문"
+    assert last[0]["type"] == "text" and "이 사진 뭐야?" in last[0]["text"] and last[1] == {"type": "image_url", "image_url": {"url": img}}
+
+
+def test_server_board_image_question_goes_to_chat_with_image(server, monkeypatch):
+    """고른 그림 + 「이 사진 설명해 줘」 = 대화 모델이 그림을 보고 답(전엔 「사진」 낱말로 그림 고치기 — 새 그림 22크레딧)."""
+    base, _ = server
+    import server as srv
+    seen = []
+    monkeypatch.setattr(srv.board_image, "generate", lambda *a, **k: pytest.fail("그림 고치기로 가면 안 됨"))
+    monkeypatch.setattr(srv.board_chat, "chat", lambda key, msgs, **kw: seen.append(kw) or {"content": "송신탑 사진이에요", "model": "m", "elapsed": 0.1, "kind": kw.get("kind")})
+    img = "data:image/jpeg;base64,/9j/AAAA"
+    body = json.dumps({"board": "그림", "board_images": [img], "messages": [{"role": "user", "content": "이 사진 설명해 줘"}]}).encode()
+    with urllib.request.urlopen(urllib.request.Request(base + "/api/chat", data=body, method="POST", headers={"Content-Type": "application/json"})) as r:
+        out = json.loads(r.read())
+    assert out["content"] == "송신탑 사진이에요" and seen[-1]["kind"] == "chat" and seen[-1]["images"] == [img]

@@ -21,6 +21,7 @@ import { ChatPanel, CHAT_W, chatClamp, Spinner } from './chat.jsx'
 import { HelpCard } from './help.jsx'
 import { EmptyGuide } from './guide.jsx'
 import { FindBar } from './find.jsx'
+import { Bubble, BubbleBadge } from './bubble.jsx'
 
 const ZMIN = 0.02, ZMAX = 40, LEFT_CARDS = 24   // LEFT_CARDS = 맞출 때 왼쪽 여백 — 카드가 칠판 위에 떠 있던 때는 220(2026-10-23 왼쪽 판으로 붙이며 칠판 밖으로 나감)
 // 화면 색은 next.html의 CSS 변수(밝은/어두운 화면 — 어두운 쪽은 데스크톱과 같은 값)
@@ -499,6 +500,14 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
   const toggleFull = () => { try { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen() } catch { /* 막힌 환경이면 그대로 */ } }
   const toggleDark = () => setDark(d => { try { localStorage.setItem('mb.theme', d ? 'light' : 'dark') } catch { /* 기억 못 해도 그만 */ } return !d })
   const [server, setServer] = useState(false), [srvKnown, setSrvKnown] = useState(false)   // srvKnown = 서버 답을 받음(대화창도 그 뒤에 — 처음 방문의 예시 대화가 복사된 뒤 읽게, 2026-10-28)
+  // 💬 AI 말풍선(2026-10-28) — 열린 말풍선(물건 _id)·물건마다 대화(서버 `<칠판>.threads.json`, 통째 저장 — 한 사람이 쓰는 기준)
+  const [bubbles, setBubbles] = useState([]), [threads, setThreads] = useState({}), threadsRef = useRef({})
+  const THREADS_URL = `/api/threads/${encodeURIComponent(DOC_NAME)}`
+  useEffect(() => { if (!server) return
+    fetch(THREADS_URL, { cache: 'no-store' }).then(r => (r.ok ? r.json() : {})).then(d => { if (d && typeof d === 'object' && !Array.isArray(d)) { threadsRef.current = d; setThreads(d) } }).catch(() => {}) }, [server])   // eslint-disable-line react-hooks/exhaustive-deps
+  const setThread = (id, msgs) => { const next = { ...threadsRef.current, [id]: msgs }; threadsRef.current = next; setThreads(next)
+    if (server) fetch(THREADS_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) }).catch(() => setStatus('말풍선 대화를 저장하지 못했어요')) }
+  const openBubble = id => setBubbles(bs => (bs.includes(id) ? bs : [...bs, id]))
   // 서버 답 전(첫 0.1초)에도 서버 있는 모습으로 그림 — 「Magic Board」·흐린 공유·동그라미 없음 → 바뀌며 위 막대가 좌우로 밀렸음(2026-10-28 사용자 「새 칠판 누르면 살짝 깜빡」)
   const live = server || !srvKnown
   const [me, setMe] = useState(() => { try { return localStorage.getItem('mb.name') || '' } catch { return '' } }), [others, setOthers] = useState([]), [shareOpen, setShareOpen] = useState(false)
@@ -733,7 +742,11 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
           if (fs.length) return ed.current?.dropFiles(fs, e)
           const u = (e.dataTransfer?.getData('text/uri-list') || '').split(/\r?\n/).find(x => x && !x.startsWith('#')); if (u) ed.current?.dropUrl(u, e.dataTransfer.getData('text/x-mb-caption') || '', e) }}
         style={{ flex: 1, position: 'relative', overflow: 'hidden', '--mb-right-inset': narrow && chatOpen ? `${chatW + 12}px` : '0px' }}>
-        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} phone={phone} keepTool={keepTool} onKeepTool={toggleKeep} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onAddSymbol={(items, name, folder) => setSymAdd({ items, name, folder })} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onAsk={(text, kind) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind }) }} />
+        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} phone={phone} keepTool={keepTool} onKeepTool={toggleKeep} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onAddSymbol={(items, name, folder) => setSymAdd({ items, name, folder })} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onBubble={phone ? undefined : openBubble} onAsk={(text, kind) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind }) }} />
+        {!phone && Object.entries(threads).filter(([id, t]) => t?.length && !bubbles.includes(id)).map(([id, t]) => { const info = ed.current?.bubbleInfo(id)
+          return info && <BubbleBadge key={'bb' + id} id={id} info={info} cam={cam} count={t.filter(m => m.role === 'user').length} onOpen={() => openBubble(id)} /> })}
+        {!phone && bubbles.map(id => <Bubble key={'b' + id} id={id} info={ed.current?.bubbleInfo(id)} cam={cam} size={size} thread={threads[id] || []} onThread={msgs => setThread(id, msgs)}
+          onClose={() => setBubbles(bs => bs.filter(x => x !== id))} onMemo={lines => ed.current?.setMemoLines(id, lines)} onStatus={setStatus} />)}
         {gone && <div data-testid="gone-banner" style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 25, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 10, background: '#d44c47', color: '#fff', font: "600 13px 'Pretendard', sans-serif", boxShadow: '0 4px 14px rgba(0,0,0,.2)' }}>
           이 칠판은 다른 창에서 지워졌어요 — 고친 것은 저장되지 않아요
           <button onClick={saveFile} style={{ all: 'unset', cursor: 'pointer', padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,.22)' }}>내려받기</button>

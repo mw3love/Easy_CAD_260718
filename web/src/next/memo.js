@@ -78,6 +78,14 @@ export function memoText(lines) {
   return (lines || []).map((ln, i) => (ln.k === 'hr' ? '────────' : ln.k === 'table' ? (ln.rows || []).map(r => r.join(' | ')).join('\n') : '  '.repeat(ln.lv || 0) + ({ h1: '# ', h2: '## ', h3: '### ', ul: '• ', ol: `${nums[i]}. `, todo: ln.done ? '☑ ' : '☐ ', quote: '│ ' }[ln.k] || '') + ln.t)).join('\n')
 }
 
+// 줄 → 마크다운(💬 말풍선이 AI에게 보냄 — 고친 답을 `memoFromAnswer`로 되읽게, 2026-10-28: 쉬운 글의 「•」를 AI가 그대로 돌려줘 목록이 글줄이 됐음). 글자 꾸밈은 안 실음
+export function memoMarkdown(lines) {
+  const nums = olNumbers(lines)
+  const table = ln => (ln.rows || []).map((r, k) => `| ${r.join(' | ')} |` + (k === 0 ? `\n|${r.map(() => '---').join('|')}|` : '')).join('\n')
+  return (lines || []).map((ln, i) => (ln.k === 'hr' ? '---' : ln.k === 'table' ? table(ln) : ln.k === 'code' ? '```\n' + ln.t + '\n```'
+    : '  '.repeat(ln.lv || 0) + ({ h1: '# ', h2: '## ', h3: '### ', ul: '- ', ol: `${nums[i]}. `, todo: ln.done ? '- [x] ' : '- [ ] ', quote: '> ' }[ln.k] || '') + ln.t)).join('\n')
+}
+
 // ── 줄 ↔ TipTap 문서(고치기) ──
 const para = ln => ({ ...runsToRichText(ln.t || '', ln.runs).content[0] })
 export function linesToDoc(lines) {

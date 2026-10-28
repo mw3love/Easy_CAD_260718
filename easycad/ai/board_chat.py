@@ -43,6 +43,19 @@ _DIAGRAM_WORDS = re.compile(r"흐름도|순서도|플로우|도면|계통도|구
 _ICON_WORDS = re.compile(r"svg|벡터|선\s*그림|라인\s*아트|고칠\s*수\s*있", re.I)
 _MAKE_WORDS = re.compile(r"그려|그리|만들|생성|디자인|바꿔|바꾸|으로\s*(줘|해)")
 _HOWTO_WORDS = re.compile(r"방법|어떻게|하는\s*법|드는\s*법|뭐야|뭔가요|무엇|어디|알려|종류|추천")
+# 칠판에서 고른 그림 + 말(대화창 첨부, 2026-10-28) — 묻는 말이면 그림을 보고 답(대화), 고치는 말이면 그림 고치기(`board_image`).
+# 전엔 고른 그림이 있으면 「사진·그림」 낱말만으로도 고치기로 가서(`board_image.FOLLOW_WORDS`) 「이 사진 설명해 줘」가 새 그림이 됐음
+_IMG_ASK = re.compile(r"뭐|무엇|무슨|설명|알려|읽어|요약|분석|어떤|어디|왜|몇|누구|맞[아나는]|\?")
+_IMG_FIX = re.compile(r"넣어|넣으|반영|바꿔|바꾸|추가|빼|지워|없애|고쳐|그려")   # 묻는 말에 섞여도 고치기
+_IMG_EDIT = re.compile(r"넣어|넣으|반영|바꿔|바꾸|추가|빼|지워|없애|고쳐|그려|크게|작게|밝게|어둡게|색|날짜|제목|분위기|느낌|다시")
+
+
+def image_intent(text: str) -> str:
+    """고른 그림을 두고 한 말 → "ask"(그림을 보고 답) | "edit"(그림 고치기) | ""(모름 — 길 고르기에 맡김)."""
+    t = text or ""
+    if _IMG_ASK.search(t) and not _IMG_FIX.search(t):
+        return "ask"
+    return "edit" if _IMG_EDIT.search(t) else ""
 
 
 def is_icon(text: str) -> bool:
@@ -178,7 +191,7 @@ def build_messages(history: list, context: str = "", system: str = SYSTEM) -> li
 
 
 def chat(api_key: str, history: list, *, model: str, context: str = "", kind: str = "", board_refs=None, base_url: str = gw.BASE_URL,
-         timeout: float = 180.0, client=None, data: str = "", http=None) -> dict:
+         timeout: float = 180.0, client=None, data: str = "", http=None, images=None) -> dict:
     """한 차례 답 → {"content", "model", "elapsed", "kind", "sources"?, "refs"?}. `client`·`http`는 시험용(가짜 클라이언트·가짜 Exa).
     `kind` = "search"·"chat"·"board"(대화창에서 바꿔 다시 물을 때), 비면 마지막 질문으로 짐작. 검색은 Exa(`SEARCH_MODEL`), 안 되면 `SEARCH_FALLBACK`.
     "board"는 서버가 칠판에서 찾은 글(`board_refs` — `board_find.find` 결과)을 근거로 붙여 묻고, 답에 쓰인 [칠판 n]을 `refs`로 돌려준다."""
@@ -191,6 +204,9 @@ def chat(api_key: str, history: list, *, model: str, context: str = "", kind: st
     messages = build_messages(history, context, SEARCH_SYSTEM if search else BOARD_SYSTEM if board else SYSTEM)
     if data:   # 공공 데이터 도구 결과(`kr_tools` — 기상청·천문연·법령·통계 등, 2026-10-20) — 숫자는 이것만, 출처 번호는 서버가 단 순서([1] 기상청 …)
         messages[-1] = {"role": "user", "content": f"[공공 데이터 — 숫자·날짜는 여기 것만 쓰고, 근거 문장 끝에 자료 머리의 번호를 [1]처럼. 출처 목록은 따로 쓰지 않는다(앱이 붙인다)]\n{data[:12000]}\n\n{messages[-1]['content']}"}
+    if images and not search:   # 칠판에서 고른 그림을 보고 답(대화창 첨부, 2026-10-28) — 검색(Exa)은 글만 받아 안 붙임, 기록엔 안 남음(장수만)
+        messages[-1] = {"role": "user", "content": [{"type": "text", "text": messages[-1]["content"]}]
+                        + [{"type": "image_url", "image_url": {"url": u}} for u in list(images)[:4]]}
     t0 = time.time()
     if search:   # 오늘 날짜 + 「내일」→ 날짜(검색 답이 어제 기사의 「내일」을 옮기지 않게)
         messages[0] = {"role": "system", "content": f"{SEARCH_SYSTEM}\n- 오늘은 {_day(time.time())}."}
