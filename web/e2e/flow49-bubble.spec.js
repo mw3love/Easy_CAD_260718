@@ -80,3 +80,30 @@ test('말풍선 여럿을 같이 — 그림 말풍선은 그 그림을 보내고
   await expect(imgBub.getByTestId('bubble-flip')).toHaveCount(0)                           // 그림 = 메모를 안 고침
   expect((await memoOf(page)).lines).toEqual(lines)
 })
+
+test('그림 말풍선 2단계 — 「배경 밝게」 = 그 자리 그림을 바꿈(폭 그대로·새 비율) · 원래대로 ↔ 바꾼 것 · 묻는 말은 답만', async ({ page }) => {
+  const name = boardName('bubble3'), seen = []
+  const RED = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=='   // 1×1(원본 4×3과 비율이 다름)
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
+  await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); seen.push(b); const fix = /밝게/.test(b.messages.at(-1).content)
+    return r.fulfill({ json: fix ? { kind: 'bubble', content: '말한 점만 고쳐서 이 그림을 바꿨어요.', image_url: `/api/img/${name}/9_abcdef.png`, model: 'img-m', elapsed: 1 } : { kind: 'bubble', content: '빨간 점이에요.', model: 'fake-model', elapsed: 0.1 } }) })
+  await page.route('**/api/img/**', r => r.fulfill({ body: Buffer.from(RED, 'base64'), contentType: 'image/png' }))
+  await openBoard(page, name); await setCam(page)
+  await page.evaluate(async b64 => { const f = new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], 'a.png', { type: 'image/png' }); await window.__mb.ed.attachFiles([f]) }, PNG)
+  await expect.poll(async () => (await liveDoc(page)).items.length).toBe(1)
+  const img0 = (await liveDoc(page)).items[0]
+  const c = await page.evaluate(id => { const b = window.__mb.ed.bubbleInfo(id).box; return { x: b.x + b.w / 2, y: b.y + b.h / 2 } }, img0.uid)
+  const p = await toPage(page, c.x, c.y)
+  await page.mouse.click(p.x, p.y, { button: 'right' }); await page.getByText('AI 말풍선 (KAIROS)').click()
+  const bub = page.getByTestId('bubble'), input = bub.getByTestId('bubble-input')
+  await input.fill('배경을 밝게 해 줘'); await input.press('Enter')
+  await expect(bub.getByTestId('bubble-flip')).toHaveText('원래대로')
+  let now = (await liveDoc(page)).items[0]
+  expect(now.data).not.toBe(img0.data); expect(now.rect[2]).toBeCloseTo(img0.rect[2]); expect(now.rect[3]).toBeCloseTo(img0.rect[2])   // 폭 그대로, 높이 = 1:1
+  await bub.getByTestId('bubble-flip').click()
+  now = (await liveDoc(page)).items[0]; expect(now.data).toBe(img0.data); expect(now.rect[3]).toBeCloseTo(img0.rect[3])
+  await bub.getByTestId('bubble-flip').click(); expect((await liveDoc(page)).items[0].rect[3]).toBeCloseTo(img0.rect[2])
+  await input.fill('이거 뭐야?'); await input.press('Enter')
+  await expect(bub.getByTestId('bubble-a')).toHaveCount(2); await expect(bub.getByTestId('bubble-a').last()).toHaveText(/빨간 점이에요/)
+  expect(seen[0].item.image).toMatch(/^data:image\/jpeg;base64,/)
+})

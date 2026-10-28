@@ -12,7 +12,7 @@ const F = "'Pretendard', sans-serif"
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', seg: 'var(--mb-seg)' }
 export const BUBBLE_W = 300
 const KIND = { memo: '메모', image: '그림', text: '글', table: '표', pdf: 'PDF', doc: '정리 문서', web: '웹 카드', frame: '프레임', titleblock: '프레임' }
-const HINT = { memo: '이 메모를 어떻게 할까요? 예: 할 일만 뽑아 아래에 · 쉬운 말로', image: '이 그림에 대해 물어보세요', frame: '이 프레임 안의 것에 대해 물어보세요' }
+const HINT = { memo: '이 메모를 어떻게 할까요? 예: 할 일만 뽑아 아래에 · 쉬운 말로', image: '묻거나 고쳐 달라고 하세요 — 예: 배경을 밝게', frame: '이 프레임 안의 것에 대해 물어보세요' }
 export const bubbleKind = t => KIND[t] || '도형'
 
 // 화면 자리 — 물건 오른쪽(모자라면 왼쪽), 칠판 영역 안으로
@@ -22,9 +22,16 @@ export function bubblePos(box, cam, size, h = 320) {
   return { x, y: Math.max(8, Math.min(t, size.h - h - 8)) }
 }
 
-export function Bubble({ id, info, cam, size, thread = [], onThread, onClose, onMemo, onStatus }) {
+// 서버 그림 주소 → 칠판 그림 칸(PNG base64 — 붙여넣은 그림과 같게) + 비율(높이/폭)
+async function pngOf(url) {
+  const im = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = url })
+  const cv = document.createElement('canvas'); cv.width = im.naturalWidth; cv.height = im.naturalHeight; cv.getContext('2d').drawImage(im, 0, 0)
+  return { data: cv.toDataURL('image/png').split(',')[1], aspect: im.naturalHeight / im.naturalWidth }
+}
+
+export function Bubble({ id, info, cam, size, thread = [], onThread, onClose, onMemo, onImage, onStatus }) {
   const [draft, setDraft] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState('')
-  const list = useRef(null), ta = useRef(null)
+  const list = useRef(null), ta = useRef(null), swaps = useRef({})   // swaps = 답 번호 → 그림 { before, after }(이 창에만)
   useEffect(() => { ta.current?.focus() }, [])
   useEffect(() => { list.current?.scrollTo(0, list.current.scrollHeight) }, [thread.length, busy])
   if (!info) return null
@@ -42,11 +49,19 @@ export function Bubble({ id, info, cam, size, thread = [], onThread, onClose, on
       if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
       const a = { role: 'assistant', content: d.content || '', at: Date.now(), model: d.model, ...(d.credits ? { credits: d.credits } : {}) }
       if (d.memo && info.type === 'memo') { const after = memoFromAnswer(d.memo), before = onMemo(after); if (before) a.memo = { before, after, on: true } }
+      if (d.image_url && info.type === 'image') {   // 2단계 — 고친 그림을 그 자리에(원래 그림은 이 창에만 기억 — 대화 파일이 커지지 않게, 새로 열면 Ctrl+Z로)
+        const after = await pngOf(d.image_url), before = onImage(after.data, after.aspect)
+        if (before) { swaps.current[next.length] = { before, after }; a.img = { url: d.image_url, on: true } }
+      }
       onThread([...next, a])
     } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
   }
-  function flip(i) {   // 원래대로 ↔ 바꾼 것 — 그 답의 고친 메모를 칠판에서 바꿔 끼움(Ctrl+Z 한 칸)
-    const m = thread[i]; if (!m?.memo) return
+  function flip(i) {   // 원래대로 ↔ 바꾼 것 — 그 답의 고친 메모·그림을 칠판에서 바꿔 끼움(Ctrl+Z 한 칸)
+    const m = thread[i]
+    if (m?.img) { const s = swaps.current[i]; if (!s) return; const on = !m.img.on, v = on ? s.after : s.before
+      if (!onImage(v.data, v.aspect)) return
+      onThread(thread.map((x, k) => (k === i ? { ...x, img: { ...x.img, on } } : x))); onStatus?.(on ? '바꾼 그림으로' : '원래 그림으로'); return }
+    if (!m?.memo) return
     const on = !m.memo.on; if (!onMemo(on ? m.memo.after : m.memo.before)) return
     onThread(thread.map((x, k) => (k === i ? { ...x, memo: { ...x.memo, on } } : x))); onStatus?.(on ? '바꾼 메모로' : '원래 메모로')
   }
@@ -69,6 +84,10 @@ export function Bubble({ id, info, cam, size, thread = [], onThread, onClose, on
           {m.memo && <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4 }}>
             <button data-testid="bubble-flip" style={btn} onClick={() => flip(i)} title="칠판의 메모를 바꿔 끼워요">{m.memo.on ? '원래대로' : '바꾼 것으로'}</button>
             <span style={{ font: `400 11px ${F}`, color: C.muted }}>{m.memo.on ? '메모를 고쳤어요' : '원래 메모예요'}</span></div>}
+          {m.img && <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4 }}>
+            <img src={m.img.url} alt="" style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 6, border: `1px solid ${C.line}` }} />
+            {swaps.current[i] ? <button data-testid="bubble-flip" style={btn} onClick={() => flip(i)} title="칠판의 그림을 바꿔 끼워요">{m.img.on ? '원래대로' : '바꾼 것으로'}</button>
+              : <span style={{ font: `400 11px ${F}`, color: C.muted }}>되돌리기는 칠판 Ctrl+Z</span>}</div>}
           {m.model && <div style={{ font: `400 10.5px ${F}`, color: C.muted, marginTop: 2 }}>{m.model}{m.credits ? ` · 약 ${Math.round(m.credits * 10) / 10}크레딧` : ''}</div>}
         </div>)}
       {busy && <div data-testid="bubble-busy" style={{ display: 'flex', alignItems: 'center', gap: 6, color: C.muted, fontSize: 12.5 }}><Spinner />생각 중…</div>}

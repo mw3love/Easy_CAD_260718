@@ -89,3 +89,20 @@ def test_server_bubble_kind_and_threads_file(server, monkeypatch):
     assert _req(base, "/api/threads/" + urllib.parse.quote("칠판"), th, method="PUT")["ok"] is True
     assert _req(base, "/api/threads/" + urllib.parse.quote("칠판"), method="GET") == th
     assert os.path.exists(os.path.join(data, "칠판.threads.json"))
+
+
+def test_server_image_bubble_edit_saves_picture(server, monkeypatch):
+    """그림 말풍선 2단계 — 고치는 말 = 원본 유지 그림 고치기(input_images 1장) → 칠판 그림 폴더에 저장한 주소, 묻는 말 = 답만."""
+    base, data = server
+    import server as srv
+    gen = []
+    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, base_url="", **kw: gen.append((prompt, kw)) or {"images": [(b"\x89PNGx", "png")], "model": "img-m", "credits": 12.0})
+    monkeypatch.setattr(srv.board_bubble, "reply", lambda key, item, msgs, **kw: {"content": "빨간 점", "model": "m", "elapsed": 0.1})
+    img = "data:image/jpeg;base64,/9j/AAAA"
+    out = _req(base, "/api/chat", {"kind": "bubble", "board": "그림판", "item": {"type": "image", "text": "", "image": img}, "messages": [{"role": "user", "content": "배경을 밝게 해 줘"}]})
+    prompt, kw = gen[-1]
+    assert kw["input_images"] == [img] and kw["n"] == 1 and "배경을 밝게" in prompt and "그대로 유지" in prompt
+    assert out["kind"] == "bubble" and out["image_url"].startswith("/api/img/") and "memo" not in out
+    assert any(f.endswith(".png") for f in os.listdir(os.path.join(data, "그림판.img")))
+    out = _req(base, "/api/chat", {"kind": "bubble", "board": "그림판", "item": {"type": "image", "text": "", "image": img}, "messages": [{"role": "user", "content": "이 그림 뭐야?"}]})
+    assert out["content"] == "빨간 점" and "image_url" not in out and len(gen) == 1

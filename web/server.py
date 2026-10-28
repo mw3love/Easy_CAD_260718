@@ -346,6 +346,20 @@ class Handler(SimpleHTTPRequestHandler):
         image = image if image.startswith("data:image/") else ""
         base = self._base()
         b0 = self._balance(key, base)
+        msgs = req.get("messages") or []
+        ask = str(next((m.get("content", "") for m in reversed(msgs) if isinstance(m, dict) and m.get("role") == "user"), ""))
+        name = self._name(str(req.get("board") or ""))
+        if image and name and item.get("type") == "image" and (board_chat.image_intent(ask) == "edit" or board_chat._IMAGE_WORDS.search(ask)):
+            # 그림 말풍선 「배경 밝게」 = 그 그림 고치기(원본 유지 `input_images`, 2026-10-28 2단계) → 칠판이 그 자리 그림을 바꿈
+            t0 = time.time()
+            try:
+                out = self._with("image", board_image.IMAGE_MODEL, lambda m: board_image.generate(key, board_image.edit_prompt(ask, 1), base_url=base, model=m, input_images=[image], n=1))
+            except Exception as e:
+                return self._json(502, {"error": f"그림 고치기 실패: {gw.friendly_error(e)}"})
+            data, ext = out["images"][0]
+            url, el = self._save_img(name, data, ext), round(time.time() - t0, 1)
+            sys.stderr.write("[말풍선 그림] %s %.1f초 · %s크레딧\n" % (out["model"], el, out.get("credits")))
+            return self._json(200, {"kind": "bubble", "content": "말한 점만 고쳐서 이 그림을 바꿨어요.", "image_url": url, "model": out["model"], "elapsed": el, "credits": out.get("credits")})
         try:
             out = self._with("bubble", req.get("model") or gw.FALLBACK_DEFAULT_MODEL, lambda m: board_bubble.reply(
                 key, {"type": str(item.get("type") or ""), "text": str(item.get("text") or "")}, req.get("messages") or [], model=m, image=image, base_url=base))
