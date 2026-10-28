@@ -293,7 +293,8 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, children }) { 
       '-', ...(menu.mine && menu.name !== DOC_NAME ? [['목록에서 빼기', '', () => { setMenu(null); forgetBoard(menu.name); loadMine() }]] : []), ['칠판 지우기…', '', () => { setMenu(null); setDel({ name: menu.name }) }]]} />}
     {/* 칠판 지우기(2026-10-28 사용자) — 앱 안 확인 창(브라우저 confirm은 칠판 조작을 막음), 지금 들어와 있는 사람을 보여 줌. 서버 휴지통으로 옮김 */}
     {del && (() => { const t = boardTitle(del.name, findB(del.name)?.title), here = (people[del.name] || []).filter(p => p.id !== myId)
-      const go = async () => { setDel(null); if (!(await api.deleteBoard(del.name))) { setWhy('지우지 못했어요 — 서버 연결을 확인해 주세요'); return }
+    const ring = { onFocus: e => { e.currentTarget.style.outline = '2px solid #d44c47' }, onBlur: e => { e.currentTarget.style.outline = 'none' } }   // all: unset이 초점 테두리를 지움
+    const go = async () => { setDel(null); if (!(await api.deleteBoard(del.name))) { setWhy('지우지 못했어요 — 서버 연결을 확인해 주세요'); return }
         forgetBoard(del.name); if (del.name === DOC_NAME) location.href = location.pathname; else loadMine() }   // 지금 칠판을 지웠으면 쓰던(마지막) 칠판으로
       return <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onPointerDown={e => { if (e.target === e.currentTarget) setDel(null) }}>
         <div data-testid="board-delete" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') setDel(null) }} style={{ width: 320, display: 'flex', flexDirection: 'column', gap: 10, padding: 18, borderRadius: 12, background: C.card, border: `1px solid ${C.line}`, boxShadow: '0 8px 28px rgba(0,0,0,.25)', font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
@@ -301,8 +302,9 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, children }) { 
           <div style={{ color: C.muted, fontSize: 12, lineHeight: 1.55 }}>같이 쓰는 사람도 이 칠판을 더는 못 열어요(대화·그림·PDF 포함). 서버 휴지통으로 옮겨서, 서버를 맡은 사람은 되살릴 수 있어요.</div>
           {here.length > 0 && <div data-testid="board-delete-here" style={{ fontSize: 12, color: '#d44c47', fontWeight: 600 }}>지금 {here.map(p => p.name).join(', ')} 님이 이 칠판에 있어요</div>}
           <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-            <button autoFocus onClick={() => setDel(null)} style={{ all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 6, border: `1px solid ${C.line}` }}>취소</button>
-            <button data-testid="board-delete-ok" onClick={go} style={{ all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 6, background: '#d44c47', color: '#fff', fontWeight: 600 }}>지우기</button>
+            {/* 엔터 = 지우기(2026-10-28 사용자 — 두 번 일부러 눌러 온 창이고 휴지통으로 감), 초점 테두리로 엔터가 누를 단추를 보여 줌 · Esc·바깥 = 취소 */}
+            <button onClick={() => setDel(null)} {...ring} style={{ all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 6, border: `1px solid ${C.line}`, outlineOffset: 2 }}>취소</button>
+            <button data-testid="board-delete-ok" autoFocus onClick={go} {...ring} style={{ all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 6, background: '#d44c47', color: '#fff', fontWeight: 600, outline: '2px solid #d44c47', outlineOffset: 2 }}>지우기</button>
           </div></div></div> })()}
   </div>
 }

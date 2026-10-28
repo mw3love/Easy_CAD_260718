@@ -118,3 +118,18 @@ test('칠판 지우기 — 확인 창(지금 있는 사람) · 휴지통으로 �
   expect(savedDoc(a)).toBeNull()
   await c2.close()
 })
+
+test('칠판 지우기 확인 창 — 엔터 = 지우기(초점이 지우기), Esc = 취소', async ({ page }) => {
+  const a = `보드E${Date.now().toString(36)}`, b = `보드G${Date.now().toString(36)}`
+  await openBoard(page, b); await openBoard(page, a)
+  await page.getByTestId('dock-board').click()
+  const row = n => page.getByTestId('board-form').locator(`[data-board="${n}"]`), item = page.locator('div[style*="z-index: 30"] > div > button', { hasText: '칠판 지우기…' })
+  await row(b).click({ button: 'right' }); await item.click()
+  await expect(page.getByTestId('board-delete-ok')).toBeFocused()
+  await page.keyboard.press('Escape'); await expect(page.getByTestId('board-delete')).toHaveCount(0)
+  await expect.poll(() => savedDoc(b)).not.toBeNull()                                   // Esc = 그대로
+  await row(b).click({ button: 'right' }); await item.click()
+  await page.keyboard.press('Enter')
+  await expect(row(b)).toHaveCount(0)
+  await expect.poll(() => savedDoc(b)).toBeNull()                                       // 엔터 = 지움(휴지통으로)
+})
