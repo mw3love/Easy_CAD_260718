@@ -30,14 +30,17 @@ test('레이어 판엔 「선택 → 그리는 중」 단추 없음 · 우클릭
   expect((await page.locator('div[style*="z-index: 30"] > div > button').allInnerTexts()).some(n => n.startsWith('레이어로 이동'))).toBe(true)
 })
 
-test('칠판 칸 — 처음엔 이름 칸 없음 · 「＋ 새 칠판」 → 이름 칸 · Esc = 닫힘', async ({ page }) => {
-  await openBoard(page, boardName('newboard'))
+test('칠판 칸 — 이름 칸 없음 · 「＋ 새 칠판」 = 바로 새 칠판(비밀번호 없는 서버, 2026-10-28)', async ({ page }) => {
+  const name = boardName('newboard')
+  await openBoard(page, name)
   await page.getByTestId('board-title').click()
-  const form = page.getByTestId('board-form'), inp = form.getByPlaceholder('새 칠판 이름', { exact: false })
-  await expect(inp).toHaveCount(0)
-  await form.getByTestId('board-new').click(); await expect(inp).toBeFocused()
-  await inp.press('Escape'); await expect(inp).toHaveCount(0); await expect(form.getByTestId('board-new')).toBeVisible()
+  const form = page.getByTestId('board-form')
+  await expect(form.getByPlaceholder('새 칠판 이름', { exact: false })).toHaveCount(0)
   await expect(form.getByRole('button', { name: '파일 열기' })).toBeVisible()
+  await form.getByTestId('board-new').click()
+  await expect(page).toHaveURL(/board=[a-z2-9]{8}$/)
+  await expect(form.getByPlaceholder('새 칠판 이름', { exact: false })).toHaveCount(0)
+  await expect(form.getByTestId('board-row').filter({ hasText: name })).toBeVisible()   // 아무것도 안 그린 앞 칠판도 남음
 })
 
 test('접속자 = 동그라미 — 5명이면 3명 + 「+2」, 누르면 공유 창(전체 목록)', async ({ page, browser }) => {

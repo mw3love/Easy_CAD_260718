@@ -74,3 +74,20 @@ def test_server_key_switch_needs_my_key(server):
     assert h._key() == "sk-mykey-123456"
     h.headers = {}
     assert h._key() == ""
+
+
+def test_board_title_is_separate_from_address_and_people_per_board(server):
+    """2026-10-28 사용자 — 칠판 이름 = 문서 `title`(주소 그대로라 남에게 준 링크가 안 끊김), 칠판 판 줄마다 지금 접속자(개수 대신)."""
+    base, _, _ = server
+    n = "k7p2qx9m"
+    assert _req(f"{base}/api/patch/{n}", "POST", {"upsert": [], "delete": []})[0] == 200               # 열 때 빈 칠판을 바로 만듦(App) — 칠판 코드로도 찾힘
+    assert [b["name"] for b in _req(base + "/api/boards?code=" + n)[1]["boards"]] == [n]
+    assert _req(f"{base}/api/patch/{n}", "POST", {"meta": {"title": "송신소 점검"}})[0] == 200          # 이름 바꾸기 = 문서 이름만
+    b = _req(base + "/api/boards?names=" + n)[1]["boards"][0]
+    assert b["title"] == "송신소 점검" and b["items"] == 0
+    assert _req(base + "/api/session?board=" + n)[1]["title"] == "송신소 점검"                        # 받은 링크의 이름 묻는 창 머리
+    assert _req(f"{base}/api/doc/{n}", "PUT", DOC)[0] == 200                                           # 통째 저장(파일 열기·데스크톱 올리기) = 내용만 — 이름은 그대로
+    assert _req(base + "/api/boards?names=" + n)[1]["boards"][0]["title"] == "송신소 점검"
+    assert _req(f"{base}/api/presence/{n}", "POST", {"id": "c1", "name": "가"})[0] == 200
+    ppl = _req(base + "/api/people?names=" + ",".join([n, "zzzzzzzz"]))[1]["people"]
+    assert ppl == {n: [{"id": "c1", "name": "가"}], "zzzzzzzz": []}

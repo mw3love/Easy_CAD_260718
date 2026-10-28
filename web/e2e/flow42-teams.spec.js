@@ -30,7 +30,7 @@ async function boardList(page) {
   await page.getByTestId('board-title').click()
   await expect(page.getByTestId('board-form')).toBeVisible()
   await expect(page.getByTestId('board-row').first()).toBeVisible()
-  const rows = await page.getByTestId('board-row').locator('span:first-child').allInnerTexts()
+  const rows = await page.getByTestId('board-row').getByTestId('board-name').allInnerTexts()
   await page.getByTestId('board-title').click()
   return rows.sort()
 }

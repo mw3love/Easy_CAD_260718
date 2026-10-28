@@ -88,6 +88,8 @@ export const api = {
   join: async token => { try { return (await post('/api/join', { board: B, token })).ok } catch { return false } },
   boards: async () => { try { const r = await fetch('/api/boards', { cache: 'no-store' }); return r.ok ? (await r.json()).boards || [] : [] } catch { return [] } },   // 칠판 목록(최근 고친 것부터) — 비밀번호 없는 서버는 빈 목록(전체 목록 = 남의 비밀 주소)
   boardByCode: async code => { try { const r = await fetch(`/api/boards?code=${encodeURIComponent(code)}`, { cache: 'no-store' }); return r.ok ? (await r.json()).boards || [] : [] } catch { return [] } },   // 칠판 코드 → 그 코드로 끝나는 칠판(「칠판 코드로 열기」, 최근 고친 것부터)
+  people: async names => { if (!names.length) return {}; try { const r = await fetch(`/api/people?names=${names.map(encodeURIComponent).join(',')}`, { cache: 'no-store' }); return r.ok ? (await r.json()).people || {} : {} } catch { return {} } },   // 칠판마다 지금 접속자 { 이름: [{ id, name }] }(칠판 판 줄 동그라미, 2026-10-28)
+  setTitle: async (name, title) => { try { return (await post(`/api/patch/${encodeURIComponent(name)}`, { meta: { title } })).ok } catch { return false } },   // 칠판 이름 바꾸기 = 문서 `title`만(주소 그대로 — 남에게 준 링크가 안 끊김, 2026-10-28). 지금 칠판은 받아 오기로 따라옴
   boardInfo: async names => { if (!names.length) return []; try { const r = await fetch(`/api/boards?names=${names.map(encodeURIComponent).join(',')}`, { cache: 'no-store' }); return r.ok ? (await r.json()).boards || [] : [] } catch { return [] } },   // 아는 이름만 — 「내 칠판」의 개수·고친 때(없는 칠판 = 아직 저장 안 한 새 칠판은 빠짐)
   pub: async (token, rev = -1, wait = 0) => { const r = await fetch(`/api/pub/${token}?rev=${rev}${wait ? `&wait=${wait}` : ''}`, { cache: 'no-store' }); if (r.status === 204) return { same: true }; if (!r.ok) return { gone: true }; const d = parseDoc(await r.text()); return { doc: d } },
 }

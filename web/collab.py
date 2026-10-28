@@ -123,6 +123,11 @@ class Presence:
             del b[c]
         return sorted({v[0] for v in b.values()})
 
+    def people(self, board: str, now: float | None = None) -> list:
+        """지금 접속자 [{ id, name }] — 칠판 판 줄마다 동그라미(2026-10-28, 신호를 보내지 않고 읽기만)"""
+        now = time.time() if now is None else now
+        return [{"id": c, "name": v[0]} for c, v in sorted(self.boards.get(board, {}).items()) if now - v[1] <= self.ttl]
+
     def leave(self, board: str, client: str) -> None:
         """창을 닫음 = 바로 뺌(2026-10-26 실검증 — ttl만 기다리면 이름이 20초쯤 남았음)"""
         self.boards.get(board, {}).pop(client, None)

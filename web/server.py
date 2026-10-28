@@ -654,8 +654,15 @@ class Handler(SimpleHTTPRequestHandler):
         path = self._doc_path(name)
         if not os.path.exists(path):
             return None
-        with open(path, "rb") as f:
-            doc = json.loads(f.read())
+        for i in range(20):   # 다른 요청이 바꿔치기(os.replace)하는 그 순간엔 Windows가 읽기를 막음 — 받아 오기(롱 폴링)가 죽었음(2026-10-28, 쓰기 `safe_write._replace`와 같게 잠깐 다시)
+            try:
+                with open(path, "rb") as f:
+                    doc = json.loads(f.read())
+                break
+            except PermissionError:
+                if i == 19:
+                    raise
+                time.sleep(0.05)
         if collab.ensure_uids(doc):
             self._doc_save(name, doc)
         return doc
@@ -714,6 +721,13 @@ class Handler(SimpleHTTPRequestHandler):
             if q.get("board") and out["ok"]:   # 이 칠판이 서버에 있나 — 남이 준 링크로 처음 열면 이름을 한 번 물음(main.jsx Gate)
                 nm = self._name(q["board"][0])
                 out["exists"] = bool(nm) and os.path.exists(self._doc_path(nm))
+                if out["exists"]:   # 칠판 이름(2026-10-28 — 주소와 따로, 문서 `title`) — 받은 링크의 이름 묻는 창 머리에
+                    try:
+                        title = str((self._doc_load(nm) or {}).get("title") or "")
+                    except (OSError, ValueError):
+                        title = ""
+                    if title:
+                        out["title"] = title
             if out["ok"] and self._teams().exists:
                 t = self._team()
                 out["team"] = t["name"] if t else None
@@ -767,11 +781,15 @@ class Handler(SimpleHTTPRequestHandler):
                 p = os.path.join(self.data_dir, fn)
                 try:
                     with open(p, encoding="utf-8") as f:
-                        n = len(json.load(f).get("items") or [])
+                        d = json.load(f)
+                    n, title = len(d.get("items") or []), str(d.get("title") or "")
                 except (OSError, ValueError):
                     continue
-                out.append({"name": name, "mtime": int(os.path.getmtime(p)), "items": n})
+                out.append({"name": name, "mtime": int(os.path.getmtime(p)), "items": n, "title": title})   # title = 칠판 이름(2026-10-28 — 주소와 따로, 바꿔도 링크 그대로)
             return self._json(200, {"boards": sorted(out, key=lambda b: -b["mtime"])})
+        if path == "/api/people":   # 칠판마다 지금 접속자(2026-10-28 사용자 — 칠판 판 줄 오른쪽 동그라미, 개수 대신) — 아는 이름만(주소 = 열쇠), 판이 열린 동안 몇 초마다
+            names = [n for n in (q.get("names") or [""])[0].split(",") if n][:200]
+            return self._json(200, {"people": {n: self.presence.people(n) for n in names if NAME_RE.match(n) and self._name(n)}})
         m = re.match(r"^/api/(?:meeting|trace)/([^/]+)/([0-9a-f]{12})$", path)   # 일감 확인(회의록·베끼기 같은 방식)
         if m:
             return self._meeting_status(self._name(m.group(1)), m.group(2))
@@ -942,6 +960,8 @@ class Handler(SimpleHTTPRequestHandler):
             with self.lock:
                 old = self._doc_load(name) or {}
                 collab.ensure_uids(doc)
+                if not doc.get("title") and old.get("title"):   # 칠판 이름은 그대로(파일 열기·데스크톱 올리기 = 내용만 바꿈, 2026-10-28)
+                    doc["title"] = old["title"]
                 doc["rev"] = int(old.get("rev") or 0) + 1
                 self._doc_save(name, doc)
             return self._json(200, {"ok": True, "rev": doc["rev"]})

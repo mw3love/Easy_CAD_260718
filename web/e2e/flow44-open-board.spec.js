@@ -16,7 +16,7 @@ test('처음 = 새 비밀 주소의 빈 칠판 · 다시 오면 그 칠판 · �
   await expect(a).toHaveURL(CODE)                                                       // 주소창이 그 칠판으로(그대로 복사해 공유)
   await expect(a.getByText('· 새 칠판', { exact: false }).first()).toBeVisible()
   await expect(a.getByRole('button', { name: '들어가기' })).toHaveCount(0)               // 비밀번호·이름 안 물음
-  await expect(a.getByTestId('board-title')).toHaveText(/^칠판/)
+  await expect(a.getByTestId('board-title')).toHaveText(/^제목 없음/)                 // 이름은 나중에(2026-10-28)
   const link = a.url()
   await a.locator('button[title^="사각형 —"]').first().click()
   const box = await a.getByTestId('board').boundingBox()
@@ -41,8 +41,7 @@ test('처음 = 새 비밀 주소의 빈 칠판 · 다시 오면 그 칠판 · �
   await expect(b.getByTestId('board-row')).toHaveCount(1)                               // 내 칠판 = 받은 칠판만(서버의 다른 칠판은 안 보임)
   await b.goto('/'); await expect(b).toHaveURL(link)                                    // 받은 칠판도 「마지막 칠판」
   await expect(b.getByTestId('dock-board')).toHaveAttribute('aria-pressed', 'true')   // 연 칸은 이 브라우저에 기억
-  await b.getByTestId('board-new').click()
-  await b.getByRole('button', { name: '만들기' }).click()                                // 이름 비워도 = 코드만
+  await b.getByTestId('board-new').click()                                              // 누르면 바로 = 코드만(2026-10-28 — 이름 칸 없음)
   await expect(b).toHaveURL(CODE); expect(b.url()).not.toBe(link)
   await expect(b.getByRole('button', { name: '들어가기' })).toHaveCount(0)               // 내가 만든 새 칠판 = 안 물음
   await ca.close(); await cb.close()

@@ -172,3 +172,13 @@ def test_chatlog_first_save_and_old_file_without_rev():
     assert collab.merge_chatlog(None, {"base": 0, "messages": [_q(1, "가")]})[0]["rev"] == 1
     new, moved = collab.merge_chatlog({"messages": [_q(1, "가")]}, {"base": 0, "messages": [_q(1, "가"), _a(2, "답")]})   # rev 없던 옛 파일 = 0
     assert moved == 0 and new["rev"] == 1
+
+
+def test_presence_people_reads_without_pinging():
+    """칠판 판 줄 동그라미(2026-10-28) — 읽기만(신호를 새로 남기지 않음), ttl 지난 사람은 빠짐"""
+    p = collab.Presence(ttl=10)
+    p.ping("b", "c1", "가", now=100)
+    p.ping("b", "c2", "나", now=105)
+    assert p.people("b", now=108) == [{"id": "c1", "name": "가"}, {"id": "c2", "name": "나"}]
+    assert p.people("b", now=112) == [{"id": "c2", "name": "나"}]
+    assert p.people("없음", now=112) == []
