@@ -1008,7 +1008,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         const f = s.message.length > 20 ? 40 : 52, mt = wrap(s.message, f, CW - 64, 700), mh = layoutText(mt, null, f * PT, 'app', 700).h
         out.push(box(L, Y + 330, 14, Math.max(220, mh + 150), CORAL, 7), txt(L + 64, Y + 380, mt, f, { weight: 700 }))
         if (lines.length) out.push(txt(L + 64, Math.max(Y + 520, Y + 380 + mh + 60), wrap(lines[0], 24, CW - 64), 24, { color: MUTE }))
-      } else if (lines.length) out.push(txt(L, Y + 230, wrap(lines.map(b => (kind === '출처' ? b : `${kind === '마무리' ? '→' : '•'}  ${b}`)).join('\n'), kind === '출처' ? 15 : 30, CW), kind === '출처' ? 15 : 30))
+      } else if (lines.length) {   // 글줄이 적으면 크게(2026-11-03 실검증 — 넷이 30이면 장의 위 1/4에 몰리고 아래가 비어 TV에서 작았음)
+        const bf = kind === '출처' ? 15 : lines.length <= 3 ? 40 : lines.length <= 5 ? 34 : 30
+        out.push(txt(L, Y + 230, wrap(lines.map(b => (kind === '출처' ? b : `${kind === '마무리' ? '→' : '•'}  ${b}`)).join('\n'), bf, CW), bf))
+      }
     }
     if (s.notes) { const memo = base([X, Y + H + 40], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#fffafafa', lines: [{ k: 'h3', t: `발표자 메모 · ${i + 1}장` }, ...memoFromAnswer(String(s.notes), '')]   /* 마크다운으로 읽음 — 「**됨**」 별표가 글자로 보였음(2026-11-02 실검증) */, scale: 2, z })
       out.push({ ...memo, rect: [0, 0, MEMO.W, memoHeight(memo)] }) }
