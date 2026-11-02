@@ -79,3 +79,14 @@ def test_web_made_document_survives_desktop_open_save(tmp_path):
         if a["type"] in D._WEB_TYPES:
             bad += [(a["type"], u, "+" + k, b[k]) for k in b if k not in a]   # 데스크톱 대리 그림용 칸(테두리 등)이 웹 종류에 붙지 않음
     assert bad == []
+
+
+def test_web_jpeg_image_opens_on_desktop():
+    """웹은 2026-11-02부터 큰 그림을 JPEG로 담음(15MB 칠판이 밖에서 10초 넘게 열렸음) — 데스크톱이 「PNG로만」 읽어 빈 그림이 되지 않게."""
+    from PyQt6.QtCore import QBuffer, QByteArray, QIODevice
+    img = QImage(40, 30, QImage.Format.Format_RGB32); img.fill(0xFFFF0000)
+    ba = QByteArray(); buf = QBuffer(ba); buf.open(QIODevice.OpenModeFlag.WriteOnly); img.save(buf, "JPG"); buf.close()
+    s = base64.b64encode(bytes(ba)).decode("ascii")
+    assert s.startswith("/9j/")
+    pm = D._b64_to_pixmap(s)
+    assert not pm.isNull() and (pm.width(), pm.height()) == (40, 30)

@@ -503,7 +503,7 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
     const mine = threadsRef.current, next = { ...d }
     for (const [id, ms] of Object.entries(mine)) { const by = new Map(); for (const m of [...(d[id] || []), ...ms]) by.set(m?.at != null ? `${m.role}|${m.at}` : `?${by.size}`, m); next[id] = [...by.values()].sort((a, b) => (a?.at || 0) - (b?.at || 0)) }
     threadsRef.current = next; setThreads(next) }
-  const pullThreads = () => { if (server) fetch(THREADS_URL, { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(takeThreads).catch(() => {}) }
+  const pullThreads = () => { if (server) fetch(THREADS_URL, { cache: 'no-store' }).then(r => (r.status === 200 ? r.json() : null)).then(takeThreads).catch(() => {}) }
   useEffect(() => { if (!server) return; pullThreads(); window.addEventListener('focus', pullThreads); return () => window.removeEventListener('focus', pullThreads) }, [server])   // eslint-disable-line react-hooks/exhaustive-deps
   const setThread = (id, msgs) => { const next = { ...threadsRef.current, [id]: msgs }; threadsRef.current = next; setThreads(next)
     if (server) fetch(THREADS_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [id]: msgs }) })
@@ -702,7 +702,7 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
           <Btn icon="web" label="웹" on={webOpen} onClick={() => { setWebAt(null); setWebOpen(o => !o) }} onDown={e => toolDown(e, 'web')} title="웹 카드 — 칠판으로 끌면 그 자리에 · 유튜브·웹페이지 주소를 칠판에(칠판에 주소를 Ctrl+V 해도 돼요)" />
           {webOpen && <WebForm onInsert={u => { const url = /^https?:\/\//i.test(u) ? u : 'https://' + u; setWebOpen(false); ed.current?.insertWeb(url, webAt || 'near') }} onClose={() => setWebOpen(false)} />}
         </div>{/* 「회의」 = 칠판에 회의록을 넣는 도구(2026-10-23 사용자 — 전엔 오른쪽 KAIROS 옆) */}
-        <Btn icon="🎙" label={meetSt === 'saved' ? '정리하기' : meetSt ? '끝내기' : '회의'} on={!!meetSt} disabled={meetSt === 'start' || meetSt === 'stopping'}
+        <Btn icon="mic" label={meetSt === 'saved' ? '정리하기' : meetSt ? '끝내기' : '회의'} on={!!meetSt} disabled={meetSt === 'start' || meetSt === 'stopping'}
           onClick={() => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : meetSt ? ed.current?.meetStop() : ed.current?.meetStart())}
           title={meetSt ? '회의 끝내기 — 받아 적은 글을 요약·결정·할 일로 정리해 칠판에(KAIROS)' : '회의 받아 적기 — 마이크로 말한 사람별로 실시간 받아 적고, 끝내면 회의록으로 정리(KAIROS)'} />
         </Group>

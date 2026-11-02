@@ -229,3 +229,11 @@ def test_server_board_image_question_goes_to_chat_with_image(server, monkeypatch
     with urllib.request.urlopen(urllib.request.Request(base + "/api/chat", data=body, method="POST", headers={"Content-Type": "application/json"})) as r:
         out = json.loads(r.read())
     assert out["content"] == "송신탑 사진이에요" and seen[-1]["kind"] == "chat" and seen[-1]["images"] == [img]
+
+
+def test_fresh_request_after_image_is_new_drawing():
+    """그림 바로 뒤라도 길게 새로 묘사한 말 = 새 그림(2026-11-02 실검증 — 앞 그림 고치기로 가 후보 1장), 짧은 고칠 말·앞 그림을 가리키는 말 = 고치기."""
+    long_new = "손으로 그린 방송 송신소 계통도 스케치. 흰 종이, 검은 볼펜. 송신기 A와 B, 절체기, 필터, 안테나를 화살표로 연결"
+    assert board_image.is_fresh(long_new) and board_image.is_fresh("새로 그려 줘 고양이")
+    assert not board_image.is_fresh("내일 날짜도 넣어 줘") and not board_image.is_fresh("배경을 하늘색으로")
+    assert not board_image.is_fresh("이 그림에서 송신탑을 더 크게 하고 하늘은 노을빛으로, 구름도 좀 더 많이 넣어 주고 글씨는 빼 줘 그리고 액자처럼")

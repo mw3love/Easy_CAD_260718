@@ -2,6 +2,7 @@
 // 누르거나 끌면 그 자리가 화면 가운데로. 제목 줄 = 미니맵 · − · % · ＋(% 누르면 100% — 2026-10-20 사용자: 다 보기는 Z가 맡아 겹쳤고 100%로 돌아갈 길이 없었음. 옛 10-18 = % 누르면 다 보기).
 // 보는 범위 네모 = 데스크톱과 같은 고정 시안 #22d3ee 테두리만. 데스크톱은 실제 그림을 축소하지만, 웹은 9천 개 도면에서도 가볍게 도형 윤곽만 캔버스에 그린다(보드는 바탕색 면).
 // 2026-10-27 사용자(「회색 상자만 보임」): 그림 = 진짜 그림 작게·웹·PDF 카드 = 대표 그림·메모·문서 = 흰 종이 + 글 줄 — 그림은 한 번만 읽어 두고(이미 칠판이 읽은 것) 다 읽히면 다시 그림.
+import { imgSrc } from './render.jsx'
 import { useEffect, useRef } from 'react'
 import { DOCKED, FoldBtn, useFold } from './fold.jsx'
 import { docBounds, itemBounds } from './doc.js'
@@ -25,7 +26,7 @@ function pic(src, onLoad) {
   if (im.complete) return im.naturalWidth ? im : null
   im.addEventListener('load', onLoad, { once: true }); return null
 }
-const picOf = it => (it.type === 'image' && it.data ? 'data:image/png;base64,' + it.data : (it.type === 'web' || it.type === 'pdf') && it.thumb ? it.thumb : '')
+const picOf = it => (it.type === 'image' && it.data ? imgSrc(it.data) : (it.type === 'web' || it.type === 'pdf') && it.thumb ? it.thumb : '')
 
 function draw(ctx, items, f, dark, W, H, again) {
   ctx.clearRect(0, 0, W, H); if (!f) return

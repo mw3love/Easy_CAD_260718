@@ -153,3 +153,40 @@ def test_trace_font_missing_still_scales(monkeypatch):
     monkeypatch.setattr(board_trace, "generate_ops_tiled", lambda *a, **k: ({"ops": [{"op": "text", "x": 0, "y": 0, "text": "가"}]}, []))
     out = board_trace.trace("k", _png(400, 200), width=200, base_url="http://x")
     assert out["items"][0]["font"] == 3                                # 13 / 4 = 3.25 → 3
+
+
+def test_trace_box_fonts_are_evened_and_fit_the_box():
+    """상자 글자 크기 고르기(2026-11-02 실검증 — 「마이크로웨이브」는 아주 작고 「송신기」는 상자를 넘쳤음):
+    가운데 값 ±15% 안으로, 상자 폭을 넘으면 줄이되 가운데 값의 65%까지만."""
+    box = lambda label, font, w=60: {"op": "box", "x1": 0, "y1": 0, "x2": w, "y2": 40, "label": label, "font": font}
+    spec = {"ops": [box("스튜디오", 16), box("필터", 15), box("안테나", 16), box("송신기", 40), box("마이크로웨이브", 5), {"op": "text", "x": 0, "y": 0, "text": "메모", "font": 30}]}
+    f = [op["font"] for op in board_trace._even_box_fonts(spec)["ops"]]
+    assert f[0] == 16 and f[1] == 15 and f[2] == 16      # 고른 것은 그대로(상자 폭 120에 들어감)
+    assert f[3] == 18                                    # 40 → 가운데 값 16 × 1.15
+    assert f[4] == 11                                    # 5 → 13.6(0.85배) → 일곱 자가 폭 120에 들어가는 11.3으로(65% = 10.4보다 큼)
+    assert f[5] == 30                                    # 자유 글자는 안 건드림
+    assert board_trace._even_box_fonts({"ops": [box("하나", 40)]})["ops"][0]["font"] == 40   # 상자 하나면 비교할 것이 없음
+
+
+def test_trace_free_text_inside_unlabeled_box_becomes_its_label():
+    """이름 없는 상자 안의 자유 글자 = 그 상자 이름(2026-11-02 실검증 — 따로 놓인 글이라 가운데에 안 오고 크기 고르기에서도 빠졌음).
+    상자 밖 글·돌린 글·이미 이름 있는 상자는 그대로, 두 줄이면 위에서 아래로."""
+    spec = {"ops": [
+        {"op": "box", "x1": 0, "y1": 0, "x2": 100, "y2": 50},
+        {"op": "text", "x": 10, "y": 10, "text": "마이크로웨이브", "font": 6},
+        {"op": "text", "x": 30, "y": 30, "text": "링크", "font": 6},
+        {"op": "text", "x": 10, "y": 60, "text": "- 1Gbps", "font": 10},           # 상자 밑 = 그대로
+        {"op": "box", "x1": 200, "y1": 0, "x2": 300, "y2": 50, "label": "송신기", "font": 15},
+        {"op": "text", "x": 210, "y": 20, "text": "메모", "font": 10},              # 이름 있는 상자 안 = 그대로
+        {"op": "text", "x": 20, "y": 20, "text": "세로", "font": 10, "rot": 90},    # 돌린 글 = 그대로
+    ]}
+    ops = board_trace._texts_into_boxes(spec)["ops"]
+    assert ops[0]["label"] == "마이크로웨이브\n링크" and ops[0]["font"] == 6
+    assert [o.get("text") for o in ops if o["op"] == "text"] == ["- 1Gbps", "메모", "세로"]
+    assert len(ops) == 5
+
+
+def test_trace_legend_like_box_keeps_its_texts():
+    """줄이 넷 넘거나 긴 글이 든 상자(범례·설명)는 합치지 않음 — 합치면 가운데 정렬돼 선 견본과 어긋났음(2026-11-02 실검증)."""
+    spec = {"ops": [{"op": "box", "x1": 0, "y1": 0, "x2": 300, "y2": 200}] + [{"op": "text", "x": 40, "y": 20 + 30 * i, "text": f"선 {i}", "font": 10} for i in range(4)]}
+    assert board_trace._texts_into_boxes(spec)["ops"] == spec["ops"]

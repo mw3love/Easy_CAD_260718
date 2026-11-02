@@ -39,9 +39,11 @@ export function docBounds(items) {
 
 // 보드 안에 있나 — 가운데가 보드 사각형 안(데스크톱 "소속은 위치로"). 보드 안 잉크는 밝은 칠판 규칙(흰→검정)을 안 탄다.
 export function boardMembership(items) {
-  const boards = items.filter(it => it.type === 'board').map(itemBounds)
+  // 종이 = 보드 + 딥모드 판·발표 자료 장(render `isDeepPaper`와 같은 조건) — 위의 글은 어두운 화면에서도 원래 색(2026-11-02 실검증)
+  const paper = it => it.type === 'board' || (it.type === 'frame' && !!(it.deep_plan || it.deep_of || it.slide))
+  const boards = items.filter(paper).map(itemBounds)
   return items.map(it => {
-    if (it.type === 'board' || !boards.length) return false
+    if (paper(it) || !boards.length) return false
     const b = itemBounds(it), cx = b.x + b.w / 2, cy = b.y + b.h / 2
     return boards.some(r => cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h)
   })

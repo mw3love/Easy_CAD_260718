@@ -13,7 +13,7 @@ SRC = os.path.join(ROOT, "easycad", "resources", "icons")
 OUT = os.path.join(ROOT, "web", "src", "next", "icons.json")
 # 웹 위 막대가 쓰는 것만(이름 = 파일 이름)
 NAMES = ["board", "open", "save", "download", "pdf", "undo", "redo", "select", "sarrow", "text", "line", "polygon",
-         "pen", "badge", "present", "frame", "table", "memo", "web", "zoom_fit", "share", "generate", "theme"]
+         "pen", "badge", "present", "frame", "table", "memo", "web", "mic", "zoom_fit", "share", "generate", "theme"]
 
 
 def main():

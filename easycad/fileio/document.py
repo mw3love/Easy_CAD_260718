@@ -186,7 +186,7 @@ def _pixmap_to_b64(pm: QPixmap) -> str:
 
 def _b64_to_pixmap(s: str) -> QPixmap:
     pm = QPixmap()
-    pm.loadFromData(base64.b64decode(s), "PNG")
+    pm.loadFromData(base64.b64decode(s))   # 형식은 내용으로(웹이 2026-11-02부터 큰 그림을 JPEG로 담음)
     return pm
 
 

@@ -69,6 +69,14 @@ class Handler(SimpleHTTPRequestHandler):
     changed = threading.Condition()   # 저장되면 깨움 — 받아 오기를 기다리던 요청(롱 폴링, 2026-10-19 사용자: 거의 실시간)
     revs = {}                     # 칠판 이름 → 마지막 판 번호(기다리는 동안 파일을 다시 읽지 않게)
 
+    def end_headers(self):
+        # 화면(index.html) = 늘 새로 물어봄, 이름에 지문이 든 assets/ = 오래 둬도 됨(2026-11-02 실검증 — 머리말이 없어 브라우저가 옛 index.html을
+        # 그대로 써 새로 빌드한 화면이 안 보였음: 어두운 화면 발표 장 고침이 반영 안 된 채 보였음)
+        path = self.path.split("?")[0]
+        if not path.startswith("/api/"):
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable" if path.startswith("/assets/") else "no-cache")
+        super().end_headers()
+
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=os.path.join(HERE, "dist"), **kw)
 
@@ -178,6 +186,8 @@ class Handler(SimpleHTTPRequestHandler):
                 kind = route.pick_from(str(req.get("ask_add") or ""), [str(c) for c in reply.get("choices") or []]) or str(reply.get("default") or "") or "chat"
                 sys.stderr.write("[되묻기 답] %s\n" % kind)
             fu = board_image.followup(msgs)   # 바로 앞 답이 그림이면 그 줄기(요청·찾은 정보)
+            if fu and board_image.is_fresh(str(last.get("content", ""))):
+                fu = None   # 그림 뒤라도 길게 새로 묘사한 말 = 새 그림·보통 길 고르기(2026-11-02 실검증 — 앞 그림 고치기로 가 후보 1장)
             # 칠판에서 고른 그림(대화 기록엔 안 남음, 2026-10-20 사용자 — 칠판에서 고르고 말하기) — data:image만, 4장까지
             bimgs = [s for s in req.get("board_images") or [] if isinstance(s, str) and s.startswith("data:image/")][:4]
             text, base_svg = str(last.get("content", "")), str(req.get("base_svg") or "")[:60000]
@@ -1014,8 +1024,8 @@ class Handler(SimpleHTTPRequestHandler):
         if self._gone(os.path.basename(p).split(".")[0]):
             return self._send(410, b'{"error":"gone"}')
         if not os.path.exists(p):
-            if p.endswith(".meet.json"):
-                return self._send(204)   # 받아 적던 회의 없음 = 보통(칠판 열 때마다 물어봄 — 404면 콘솔에 오류가 쌓임)
+            if p.endswith(".meet.json") or p.endswith(".threads.json"):
+                return self._send(204)   # 받아 적던 회의·말풍선 대화 없음 = 보통(칠판 열 때마다 물어봄 — 404면 콘솔에 오류가 쌓임, 말풍선은 2026-11-02 실검증)
             return self._send(404, b'{"error":"none"}')
         with open(p, "rb") as f:
             self._send(200, f.read())

@@ -104,3 +104,15 @@ test('직각 화살표 배율은 점에 녹인다', async () => {
   assert.equal(bakeSarrow({ ...a, scale: 1 }).pts, a.pts)   // 배율 없으면 그대로
   assert.equal(fromEcad({ items: [a] }).items[0].scale, 1)
 })
+
+test('발표 자료 장·딥모드 판 위 글 = 종이 위(어두운 화면에서도 원래 색 — 2026-11-02 실검증: 단계 줄 글자가 밝은 바탕에 묻혔음)', () => {
+  const T = (x, y) => ({ type: 'text', pos: [x, y], rect: [0, 0, 100, 30], text: '단계', font: 26, scale: 1 })
+  const items = [
+    { type: 'frame', pos: [0, 0], rect: [0, 0, 1600, 900], scale: 1, slide: { title: '무엇을', layout: '단계' } },
+    T(200, 300),                                                                         // 장 안
+    T(200, 1000),                                                                        // 장 밖(발표자 메모 자리)
+    { type: 'frame', pos: [3000, 0], rect: [0, 0, 800, 600], scale: 1 },                 // 보통 프레임
+    T(3100, 100),
+  ]
+  assert.deepEqual(boardMembership(items), [false, true, false, false, false])
+})

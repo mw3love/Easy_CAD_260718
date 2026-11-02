@@ -1,6 +1,7 @@
 // 오른쪽 위 「속성」 카드(고를 때만) — 고른 것 모두의 선 색·굵기·선 모양·채움, 화살표 칸(종류·화살촉·머리 크기·모서리), 글자 크기·색.
 // 데스크톱 `host_style._refresh_properties`와 같은 자리·같은 항목·같은 차례(종류 → 선 → 채움 → 화살표 → 글자). 섞어 고르면 해당하는 것에만.
 // 첫 화면 규칙(CLAUDE.md): 폭 192, 제목 15px 굵게, 켜짐만 코랄.
+import TOOL_ICONS from './icons.json' with { type: 'json' }   // 위 막대 손그림 아이콘(메모·글자 — 「다른 물건으로」 목록)
 import { isMine, folderTitle } from './mysym.js'
 import { useEffect, useRef, useState } from 'react'
 import { ColorChip, FloatPanel } from './colorpop.jsx'
@@ -125,6 +126,12 @@ const kindOf = it => (it.type === 'symbol' ? it.kind : it.type)
 const swapPatch = k => (k === 'rect' || k === 'ellipse' ? { type: k, kind: undefined, cuts: undefined, sym_name: undefined } : { type: 'symbol', kind: k, cuts: undefined, sym_name: undefined })
 const kindName = k => (k === 'rect' ? '사각형' : k === 'ellipse' ? '원' : SYMBOLS[k]?.name || k)
 const shapeIcon = k => paletteIcon(k === 'rect' || k === 'ellipse' ? k : 'sym:' + k, 22, 14, 1.3)   // 도형 카드와 같은 그림(칠판 기본 비율)
+// 다른 물건으로 바꾸기 목록(2026-11-02 사용자 — 네모 글 → 메모 등). 도형 바꾸기 목록 끝에 구분선과 함께, 메모·글 상자는 이것만
+function ConvertList({ convert, onConvert, top }) {
+  return <div style={top ? undefined : { borderBottom: `1px solid ${C.line}`, marginBottom: 3, paddingBottom: 3 }}>{!top && <div style={{ padding: '0 8px 2px', fontSize: 11, color: C.muted }}>다른 물건으로</div>}
+    {convert.map(([to, name]) => <button key={to} data-testid={`convert-${to}`} onClick={() => onConvert(to)} style={btn(false, { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>
+      {to === 'rect' ? shapeIcon('rect') : <span aria-hidden style={{ width: 22, height: 16, display: 'flex', justifyContent: 'center', color: 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: TOOL_ICONS[to].replace('<svg ', '<svg width="16" height="16" ') }} />}<span style={{ fontSize: 12 }}>{name}</span></button>)}</div>
+}
 // 회전 대상 — 회전 손잡이가 있는 것(데스크톱 `_is_rotatable`: 끝점으로 모양을 정하는 화살표·선·펜은 뺌)
 const ROTATABLE = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'text'])
 
@@ -265,7 +272,7 @@ const wrap360 = a => +((((a % 360) + 360) % 360).toFixed(1))
 // items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
 // kind = 고른 것이 모두 화살표이고 종류가 같으면 그것('straight'|'curved'|'ortho'), onKind(k) = 화살표 종류 바꾸기
 // 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)
-export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dark, cells, setCells, onLegend, align, liveEd, deep }) {   // deep = 딥모드 판 줄(DeepRows)   // liveEd = 글 고치는 중 편집기(TipTap) — 「글자」 꾸밈이 고른 글자(없으면 글 전체)에 먹음, 2026-10-23   // onLegend(범례 id, 줄 열쇠, { name } | { color·style·width }) — 범례 줄 이름·도면 속 그 선 일괄 바꾸기   // cells = 고른 표 칸 { table, r0, r1, c0, c1 }, setCells(꾸밈 → 고칠 값, 이름, 묶음)   // library = 내 심볼(서버 파일), onSwapTo(아이디들, 'customsym:<id>'|'rect'|'sym:<종류>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
+export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, convert = [], onConvert, dark, cells, setCells, onLegend, align, liveEd, deep }) {   // deep = 딥모드 판 줄(DeepRows)   // liveEd = 글 고치는 중 편집기(TipTap) — 「글자」 꾸밈이 고른 글자(없으면 글 전체)에 먹음, 2026-10-23   // onLegend(범례 id, 줄 열쇠, { name } | { color·style·width }) — 범례 줄 이름·도면 속 그 선 일괄 바꾸기   // cells = 고른 표 칸 { table, r0, r1, c0, c1 }, setCells(꾸밈 → 고칠 값, 이름, 묶음)   // library = 내 심볼(서버 파일), onSwapTo(아이디들, 'customsym:<id>'|'rect'|'sym:<종류>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
   const swapRef = useRef(null)
   const [pop, setPop] = useState(null)   // 지금 열린 펼침 하나 — 'swap'·'dash'·색 칸 이름(한 번에 하나만)
   useEffect(() => {
@@ -333,6 +340,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
         <button title="클릭: 다른 도형으로 바꾸기(크기·연결 유지)" aria-expanded={pop === 'swap'} onClick={() => setPop(pop === 'swap' ? null : 'swap')} style={btn(pop === 'swap', { width: '100%', justifyContent: 'flex-start', gap: 6, padding: '0 4px', height: 28 })}>
           {swapOne ? shapeIcon(kindOf(swapOne)) : null}<span data-testid="prop-type" title={symName && items.length > 1 ? `${symName} · 조각 ${items.length}개` : undefined} style={{ font: "700 15px 'Pretendard', sans-serif", overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{swapOne ? title : symName || `묶음 ${items.length}개`}</span><span style={{ color: C.muted, marginLeft: 'auto' }}>▾</span></button>
         {pop === 'swap' && <FloatPanel anchor={swapRef} id="swap" width={180} testid="pop-swap">   {/* 떠 있는 목록 — 카드 안에 펼쳐 스크롤이 생겼음(2026-10-23 전수조사) */}
+          {convert.length > 0 && <ConvertList convert={convert} onConvert={to => { onConvert(to); setPop(null) }} />}   {/* 맨 위 — 끝에 두면 내 심볼 밑이라 스크롤해야 보였음(2026-11-02 실검증) */}
           {SWAP_KINDS.map(k => <button key={k} onClick={() => { if (swapGrp) onSwapTo(swapGrp, k === 'rect' || k === 'ellipse' ? k : 'sym:' + k); else if (k !== kindOf(swapOne)) set(it => (it._id === swapOne._id ? swapPatch(k) : null), '도형 바꾸기'); setPop(null) }}
             style={btn(!!swapOne && k === kindOf(swapOne), { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>{shapeIcon(k)}<span style={{ fontSize: 12 }}>{kindName(k)}</span></button>)}
           {/* 내 심볼 — 폴더마다 구분선(데스크톱 `_fill_swap_menu`). 묶음으로 바뀌고 라벨은 안 옮김(여러 조각 중 어디에 둘지 애매 — 데스크톱과 같음) */}
@@ -342,6 +350,11 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
                 <img alt="" src={'data:image/png;base64,' + s.thumb} width="20" height="20" style={{ filter: dark ? 'invert(1) hue-rotate(180deg)' : undefined }} />
                 <span style={{ fontSize: 12, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.name}</span></button>)}</div> })}
         </FloatPanel>}
+      </div>
+      : convert.length > 0 && !folded ? <div ref={swapRef} data-ppop="swap" style={{ flex: 1, minWidth: 0 }}>   {/* 메모·글 상자 = 머리말을 누르면 다른 물건으로(2026-11-02) */}
+        <button title="클릭: 다른 물건으로 바꾸기(자리·연결 유지)" aria-expanded={pop === 'swap'} onClick={() => setPop(pop === 'swap' ? null : 'swap')} style={btn(pop === 'swap', { width: '100%', justifyContent: 'flex-start', gap: 6, padding: '0 4px', height: 28 })}>
+          <span data-testid="prop-type" style={{ font: "700 15px 'Pretendard', sans-serif", overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</span><span style={{ color: C.muted, marginLeft: 'auto', fontSize: 10 }}>▾</span></button>
+        {pop === 'swap' && <FloatPanel anchor={swapRef} id="swap" width={180} testid="pop-swap"><ConvertList convert={convert} onConvert={to => { onConvert(to); setPop(null) }} top /></FloatPanel>}
       </div>
       : <span data-testid="prop-type" style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</span>}
       <FoldBtn minus folded={folded} onClick={toggleFold} /></div>

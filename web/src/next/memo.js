@@ -78,6 +78,16 @@ export function memoText(lines) {
   return (lines || []).map((ln, i) => (ln.k === 'hr' ? '────────' : ln.k === 'table' ? (ln.rows || []).map(r => r.join(' | ')).join('\n') : '  '.repeat(ln.lv || 0) + ({ h1: '# ', h2: '## ', h3: '### ', ul: '• ', ol: `${nums[i]}. `, todo: ln.done ? '☑ ' : '☐ ', quote: '│ ' }[ln.k] || '') + ln.t)).join('\n')
 }
 
+// 꾸민 글(도형 글·글 상자 — 한 덩어리 글 + runs) → 메모 줄(2026-11-02 「메모로 바꾸기」). 꾸밈은 줄마다 잘라 옮김, 빈 줄도 한 줄
+export function splitRunLines(text, runs) {
+  const out = []; let at = 0
+  for (const t of String(text || '').split('\n')) {
+    const e = at + t.length, rs = (runs || []).map(([s, len, ...r]) => [Math.max(s, at), Math.min(s + len, e), r]).filter(([a, b]) => b > a).map(([a, b, r]) => [a - at, b - a, ...r])
+    out.push({ k: 'p', t, ...(rs.length ? { runs: rs } : {}) }); at = e + 1
+  }
+  return out.length ? out : [{ k: 'p', t: '' }]
+}
+
 // 줄 → 마크다운(💬 말풍선이 AI에게 보냄 — 고친 답을 `memoFromAnswer`로 되읽게, 2026-10-28: 쉬운 글의 「•」를 AI가 그대로 돌려줘 목록이 글줄이 됐음). 글자 꾸밈은 안 실음
 export function memoMarkdown(lines) {
   const nums = olNumbers(lines)

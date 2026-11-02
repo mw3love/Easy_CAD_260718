@@ -3,7 +3,7 @@
 // 화면 = 칠판 × z + (x, y). 손잡이·선 굵기는 화면 px 고정(÷ z).
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { arrowAt, arrowLabelBoxes, flipT, cellFontPx, cellStyle, fitTable, legendLayout, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, memoLinkAt, rr, isDeepPaper, deepPaper, docFrame, webFrame } from './render.jsx'
+import { arrowAt, arrowLabelBoxes, flipT, cellFontPx, cellStyle, fitTable, legendLayout, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, memoLinkAt, rr, isDeepPaper, deepPaper, docFrame, webFrame, imgSrc } from './render.jsx'
 import { DOC_NAME, boardMembership, drawOrder, itemBounds } from './doc.js'
 import { docText } from './find.jsx'
 import { keyHeaders } from './kairosKey.js'
@@ -44,7 +44,7 @@ import { answerTable, freeSpot, nearSpot, sourceLine } from '../chatFormat.js'
 import { LIVE_H, LIVE_W, bigPage, isLive, liveFits } from './livecard.js'
 import { DOC_SLEEP_PX, WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { isLegendLine, legendEntries, restyleLegendRow, syncLegends } from './legend.js'
-import { HANDLE_MIN_Z, LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoMarkdown, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
+import { HANDLE_MIN_Z, LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoMarkdown, memoText, moveLines, pickLines, splitRunLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
 import { htmlPlan, looksMarkdown, textKind, tsvRows } from './clipin.js'
 import { looksSvg, svgFits, svgItems } from './svgin.js'
@@ -90,6 +90,18 @@ const withLabels = (it, labels) => { const o = { ...it, labels }; delete o.label
 // 화살표 안 점 → 길 위 t·옆 거리(직각 = 꺾은선 길이 비율, 곡선 = 매개변수 — 데스크톱 `_project_to_path`·`_project_to_curve`)
 const projectOn = (it, q) => (it.type === 'sarrow' ? projectToPath(it.pts.map(([x, y]) => ({ x, y })), q) : projectToCurve(it, q))
 const PEN_LAYER = 'pen-notes'   // 발표 판서 레이어
+// 칠판에 담는 그림(2026-11-02 실검증 — 대화창 그림 1536×1024 PNG가 장당 3~4MB라 4장에 칠판 15MB, 밖(Funnel)에서 열면 10초 넘게 걸림):
+// 긴 변 1600까지 줄이고(베끼기·글 읽기도 1600까지만 씀), 그래도 크고(400KB 넘음) 투명한 곳이 없으면 JPEG(0.9). 작은 그림·투명 그림 = PNG 그대로(글자 또렷)
+const IMG_MAX = 1600, IMG_JPEG_OVER = 400_000
+function packImage(im) {
+  const k = Math.min(1, IMG_MAX / Math.max(im.naturalWidth || im.width, im.naturalHeight || im.height)), w = Math.round((im.naturalWidth || im.width) * k), h = Math.round((im.naturalHeight || im.height) * k)
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const g = cv.getContext('2d'); g.drawImage(im, 0, 0, w, h)
+  const png = cv.toDataURL('image/png').split(',')[1]
+  if (png.length <= IMG_JPEG_OVER) return png
+  const px = g.getImageData(0, 0, w, h).data; for (let i = 3; i < px.length; i += 4) if (px[i] < 255) return png   // 투명한 곳이 있으면 PNG
+  const jpg = cv.toDataURL('image/jpeg', 0.9).split(',')[1]
+  return jpg.length < png.length ? jpg : png
+}
 const IMG_FIXED = 680   // 대화창 그림 후보를 칠판에 붙일 때 긴 변(칠판 단위, 답 메모 340의 두 배) — 배율과 상관없이 같은 크기
 const snap45 = (a, p) => { const t = Math.round(Math.atan2(p.y - a.y, p.x - a.x) / (Math.PI / 4)) * (Math.PI / 4), L = Math.hypot(p.x - a.x, p.y - a.y); return { x: a.x + L * Math.cos(t), y: a.y + L * Math.sin(t) } }   // Shift = 45° 단위
 const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0], locked: false, group_id: null, layer_id: null, _id: newId(), ...extra })
@@ -779,6 +791,48 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     })
     commit(rebound, its.map(it => it._id), key.startsWith('customsym:') ? '내 심볼로 바꾸기' : '도형 바꾸기')
   }
+  // 다른 물건으로 바꾸기(2026-11-02 사용자 — 「네모에 적은 글을 제대로 된 메모로 키우고 싶을 때」). 같은 _id라 레이어·묶음·붙은 화살표가 그대로, Ctrl+Z 한 번.
+  // 도형 글·글 상자 → 메모(꾸밈은 줄마다 나눠 옮김, 꾸밈 없는 글은 마크다운으로 읽어 「- 」가 목록이 됨), 메모 → 사각형·글 상자(목록 기호는 글로, 줄 꾸밈은 빠짐)
+  function convertTargets(it) {
+    if (!it || it.locked || readOnly) return []
+    if (it.type === 'text' || (['rect', 'ellipse', 'symbol'].includes(it.type) && it.label?.text?.trim())) return [['memo', '메모로 바꾸기']]
+    if (it.type === 'memo') return [['rect', '사각형으로 바꾸기'], ['text', '글 상자로 바꾸기']]
+    return []
+  }
+  function convertItem(id, to) {
+    const m = R.current.model, it = m.items.find(x => x._id === id); if (!it) return
+    const b = sceneBox(it, textBox), s = it.scale || 1
+    const keep = { _id: it._id, pos: [b.x, b.y], scale: s, rotation: 0, z: it.z, origin: [0, 0], locked: false, group_id: it.group_id ?? null, layer_id: it.layer_id ?? null }
+    let next
+    if (to === 'memo') {
+      const text = (it.type === 'text' ? it.text : it.label?.text) || '', runs = it.type === 'text' ? it.runs : it.label?.runs
+      const lines = runs?.length ? splitRunLines(text, runs) : memoFromAnswer(text, '')
+      const fill = it.type !== 'text' && it.fill && !/^#00/i.test(it.fill) ? it.fill : '#ffffffff'
+      const w = Math.max(160, b.w / s)   // 폭 = 원래 폭(좁으면 160) — 메모 기본 340으로 늘리면 옆 도형을 덮었음(2026-11-02 실검증), 가운데 그대로
+      next = { ...keep, pos: [b.x + b.w / 2 - (w * s) / 2, b.y], type: 'memo', rect: [0, 0, w, 40], fill, lines }
+      next.rect = [0, 0, w, memoHeight(next)]
+    } else {
+      const text = memoText(it.lines)
+      if (to === 'text') next = { ...keep, type: 'text', text, color: INK, font: 12, bg: null }
+      else {
+        next = { ...keep, type: 'rect', rect: [0, 0, b.w / s, 80], pen: INK, width: 1, style: 1, fill: it.fill && !/^#ffffffff$/i.test(it.fill) ? it.fill : null, label: { text, color: INK, font: 16, bg: null, align: 'left' } }
+        next.rect = [0, 0, next.rect[2], fitTextHeight(next)]
+      }
+    }
+    const all = m.items.map(x => (x._id === id ? next : x))
+    const rebound = all.map(a => {   // 붙은 화살표 끝 = 새 테두리의 가장 가까운 자리(도형 바꾸기와 같게)
+      if (!isArrow(a)) return a
+      let o = a
+      for (const kk of ['bind1', 'bind2']) {
+        if (a['_' + kk] !== id) continue
+        const e = bindEnd(a, kk, m.items, rectOf); if (!e) continue
+        o = { ...o, ...bindOf(kk, next, nearestBorder(next, e.p, rectOf).p) }
+      }
+      return o
+    })
+    commit(rebound, [id], to === 'memo' ? '메모로 바꿈' : to === 'text' ? '글 상자로 바꿈' : '사각형으로 바꿈'); setTool('select')
+    setStatus(to === 'memo' ? '메모로 바꿨어요 — 두 번 누르면 제목·목록·할 일로 고쳐 써요 · 되돌리기 Ctrl+Z' : `${to === 'text' ? '글 상자' : '사각형'}로 바꿨어요 — 목록 모양·글자 꾸밈은 글로 남아요 · 되돌리기 Ctrl+Z`)
+  }
   // 고른 도형을 레이어로(데스크톱 `move_selection_to_layer`) — 그 레이어의 잠금을 물려받음, 되돌리기 한 칸
   function moveSelToLayer(id) {
     const m = R.current.model, ly = layersOf(m).find(l => l.id === id), ids = new Set(movingSet(R.current.sel))
@@ -850,7 +904,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 고른 것 속 그림(최대 4장) — 대화창이 「이거 고쳐 줘」의 고칠 그림으로 보냄(서버 `input_images`, 2026-10-20 사용자: 칠판에서 고르고 말하기)
   function selImages() {
     const m = R.current.model, ids = new Set(withContents(R.current.sel))
-    return m.items.filter(it => ids.has(it._id) && it.type === 'image' && it.data).slice(0, 4).map(it => (it.data.startsWith('data:') ? it.data : 'data:image/png;base64,' + it.data))
+    return m.items.filter(it => ids.has(it._id) && it.type === 'image' && it.data).slice(0, 4).map(it => imgSrc(it.data))
   }
   // 고른 것 속 그림의 이름표(.ecad `uid`, 6장까지) — 발표 자료가 기억해 두고 서버가 칠판 파일에서 꺼내 AI에게 보임(`easycad/ai/see.py`, 2026-10-28)
   function selImageIds() {
@@ -877,7 +931,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const edit = it.type === 'frame' && it.slide ? 'slide' : it.type === 'memo' ? 'memo' : it.type === 'table' ? 'table' : it.type === 'text' ? 'text' : it.label?.text?.trim() ? 'label' : ''
     const ids = new Set(withContents([id])), text = edit === 'memo' ? memoMarkdown(it.lines) : edit === 'table' ? memoMarkdown([{ k: 'table', rows: it.cells || [] }])
       : edit === 'label' ? it.label.text : m.items.filter(x => ids.has(x._id)).flatMap(itemTexts).join('\n\n')
-    const url = x => (x.data.startsWith('data:') ? x.data : 'data:image/png;base64,' + x.data)
+    const url = x => imgSrc(x.data)
     const images = it.type === 'image' ? [] : m.items.filter(x => x._id !== id && ids.has(x._id) && x.type === 'image' && x.data).slice(0, 6).map(url)   // 프레임 안 그림(2026-10-28 — 전엔 글만 봄)
     const inside = it.type === 'frame' ? ids.size - 1 : 0   // 프레임 말풍선 머리 「안 N개를 보고」 · cut = 서버 글 상한(`board_bubble.MAX_TEXT` 2만 자)을 넘어 뒤가 잘림
     return { type: it.type, edit, box: sceneBox(it, textBox), text, image: it.type === 'image' && it.data ? url(it) : '', ...(images.length ? { images } : {}), ...(inside ? { inside, cut: text.length > 20000 } : {}),
@@ -956,7 +1010,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         if (lines.length) out.push(txt(L + 64, Math.max(Y + 520, Y + 380 + mh + 60), wrap(lines[0], 24, CW - 64), 24, { color: MUTE }))
       } else if (lines.length) out.push(txt(L, Y + 230, wrap(lines.map(b => (kind === '출처' ? b : `${kind === '마무리' ? '→' : '•'}  ${b}`)).join('\n'), kind === '출처' ? 15 : 30, CW), kind === '출처' ? 15 : 30))
     }
-    if (s.notes) { const memo = base([X, Y + H + 40], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#fffafafa', lines: [{ k: 'h3', t: `발표자 메모 · ${i + 1}장` }, { k: 'p', t: s.notes }], scale: 2, z })
+    if (s.notes) { const memo = base([X, Y + H + 40], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#fffafafa', lines: [{ k: 'h3', t: `발표자 메모 · ${i + 1}장` }, ...memoFromAnswer(String(s.notes), '')]   /* 마크다운으로 읽음 — 「**됨**」 별표가 글자로 보였음(2026-11-02 실검증) */, scale: 2, z })
       out.push({ ...memo, rect: [0, 0, MEMO.W, memoHeight(memo)] }) }
     return out
   }
@@ -1884,8 +1938,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const url = URL.createObjectURL(file)
     try {
       const im = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = url })
-      const cv = document.createElement('canvas'); cv.width = im.naturalWidth; cv.height = im.naturalHeight; cv.getContext('2d').drawImage(im, 0, 0)
-      const data = cv.toDataURL('image/png').split(',')[1]
+      const data = packImage(im)
       const c = R.current.cam, mp = R.current.mouse, vw = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
       // 크기: 보통 = 지금 보이는 곳 짧은 변의 60%(원본보다 크게는 안 함) — 배율 따라 칠판 위 크기가 달라짐.
       // fixed = 대화창 그림 후보 — 배율과 상관없이 긴 변 680(답 메모 두 개 폭, 2026-10-20 사용자: 붙일 때마다 크기가 제각각)
@@ -1904,7 +1957,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 뜻으로 찾기·글만 받는 AI 길·데스크톱이 「무슨 그림」을 앎. 1~3초 뒤에 오므로 되돌리기에 안 남김(Ctrl+Z가 안 보이는 고침을 되돌리지 않게), 실패하면 그냥 둠
   function describeImage(id, data) {
     if (readOnly) return
-    fetch('/api/describe', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() }, body: JSON.stringify({ data: 'data:image/png;base64,' + data }) })
+    fetch('/api/describe', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() }, body: JSON.stringify({ data: imgSrc(data) }) })
       .then(r => (r.ok ? r.json() : null)).then(d => { const t = d?.text?.trim(); if (t) quietSet(id, it => (it.type === 'image' && !it.alt ? { alt: t } : null)) }).catch(() => {})
   }
   function quietSet(id, f) {   // 되돌리기 칸 없이 한 도형 칸 고치기(저장·공동작업은 평소대로) — f(도형) → 더할 칸, null = 안 고침
@@ -1923,9 +1976,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const b = await (await fetch(url)).blob(), src = URL.createObjectURL(b)
       const im = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = src }); URL.revokeObjectURL(src)
       if (released()) return
-      const cv = document.createElement('canvas'); cv.width = im.naturalWidth; cv.height = im.naturalHeight; cv.getContext('2d').drawImage(im, 0, 0)
       const k = IMG_FIXED / Math.max(im.naturalWidth, im.naturalHeight), w = im.naturalWidth * k, h = im.naturalHeight * k, z = topZ(R.current.model.items) + 1
-      const protos = [base([0, 0], { type: 'image', rect: [0, 0, w, h], data: cv.toDataURL('image/png').split(',')[1], z, ...(caption ? { alt: caption } : null) })]   // 요청 = 보이지 않는 설명
+      const protos = [base([0, 0], { type: 'image', rect: [0, 0, w, h], data: packImage(im), z, ...(caption ? { alt: caption } : null) })]   // 요청 = 보이지 않는 설명
       startPaletteDrag('image', protos, ids => { setTool('select'); onPlaced?.(ids) })
     } catch { setStatus('그림을 못 가져왔어요') }
   }
@@ -2399,6 +2451,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     its = its.map(it => { const o = { ...it, pos: [0, y] }; y += sceneBox(o, textBox).h + 12 * s; return o })
     if (its.length > 1) { const g = 'g' + newId(); its = its.map(it => ({ ...it, group_id: g })) }
     const b = unionBox(its.map(it => sceneBox(it, textBox))), at = opt.at || pasteAt(), tl = at.center ? spotNear(b.w, b.h) : { x: at.x - b.w / 2, y: at.y - b.h / 2 }
+    if (!at.center && !opt.at) {   // 마우스 자리 가운데 = 긴 메모는 윗부분(제목)이 화면 밖으로 나갔음(2026-11-02 실검증) — 화면 안에 들어오게 밀되, 화면보다 길면 윗변을 화면 위에
+      const c = R.current.cam, top = -c.y / c.z + 16 / c.z, bottom = (size.h - c.y) / c.z - 16 / c.z
+      tl.y = b.h > bottom - top ? top : Math.min(Math.max(tl.y, top), bottom - b.h)
+    }
     its = its.map(it => ({ ...it, pos: [it.pos[0] + tl.x - b.x, it.pos[1] + tl.y - b.y] }))
     commit([...R.current.model.items, ...its], its.map(it => it._id), '붙여넣음'); setTool('select')
     setStatus(opt.file ? `${opt.file} → ${what}${its.some(it => it.fold) ? ' — 길어서 접어 넣음, 「… 줄 더」를 누르면 펼쳐져요' : ''}` : `${what} 붙여넣음 — 마음에 안 들면 Ctrl+Z`)
@@ -2615,6 +2671,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         // 2026-10-27 사용자 전수조사(「상식적으로 이상한 것」): 하는 일이 없는 항목은 숨기고, 프레임엔 프레임에만 있는 일
         const frame1 = selIt.length === 1 && selIt[0].type === 'frame' ? selIt[0] : null
         if (frame1) out.push(['이 장부터 발표', '', act(() => startPresent(frame1._id))], ['이름 바꾸기', '', act(() => setTagEdit(frame1._id))], '-')
+        const conv = selIt.length === 1 && !card ? convertTargets(selIt[0]) : []   // 다른 물건으로 바꾸기(2026-11-02 사용자 — 네모 글 → 메모 등)
+        if (conv.length) out.push(...conv.map(([to, name]) => [name, '', act(() => convertItem(selIt[0]._id, to))]), '-')
         if (has) out.push(['복사', 'Ctrl+C', act(copy)], ['잘라내기', 'Ctrl+X', act(() => { copy(); commit(removeItems(m.items, movingSet(ids)), [], '잘라냄') })],
           ['복제', 'Ctrl+D', act(dupSel)],
           ['지우기', 'Del', act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))])
@@ -2649,7 +2707,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           if (onBubble && ids.length === 1) out.push(['AI 말풍선 (KAIROS)', '', act(() => onBubble(ids[0]))])   // 이 물건만의 작은 대화창(2026-10-28 사용자)
           else if (onBubble && !readOnly && selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame') && !inFrames) out.push(['프레임으로 감싸고 AI 말풍선 (KAIROS)', '', act(() => { const id = wrapFrame(true); if (id) onBubble(id) })])   // 여럿 = 대화가 붙을 자리(프레임)를 먼저 — 발표엔 안 나옴
           if (onAsk && (selTexts().length || selImages().length)) {   // 📽 발표 자료(§8 항목69 3단계) — 고른 것(딥모드 판·정리 문서·메모…)이 재료, 주제 = 판·문서 제목
-            const t0 = selIt.find(it => it.deep_plan)?.deep_plan?.plan?.title || selIt.find(it => it.type === 'doc')?.title || selIt.find(it => it.type === 'frame')?.name || ''
+            const t0 = selIt.find(it => it.deep_plan)?.deep_plan?.plan?.title || selIt.find(it => it.type === 'doc')?.title || selIt.find(it => it.type === 'frame')?.name || selIt.map(it => it.type === 'memo' && it.lines?.find(l => /^h[123]$/.test(l.k) && l.t.trim())?.t.trim()).find(Boolean) || ''   // 메모 = 맨 위 제목 줄(2026-11-02 실검증 — 전엔 「고른 자료로 발표 자료」)
             out.push(['발표 자료 만들기 (KAIROS)', '', act(() => onAsk(t0 ? `${t0} — 발표 자료` : '고른 자료로 발표 자료', 'slides'))]) }
           if (onAsk && (selTexts().length || selImages().length)) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])   // 「정리해 줘」 ① — 고른 것이 재료
         }
@@ -2689,7 +2747,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         return <TextEditor key={ed.id} spec={{ ...s, onReady: setLiveEd, at: ed.at, onPan: startPan, onWheel: wheelZoom, armed: !!ed.armed, fresh: !!ed.fresh,
           onArm: () => { const ne = { id: ed.id, kind: ed.kind, ...(ed.i != null ? { i: ed.i } : {}), fresh: true }; R.current.editing = ne; setEditing(ne) } }} onDone={finishEdit} /> })(editing ? (editing.kind !== 'cell' && editing.kind !== 'memo' ? editing : null) : (t => (t?.kind === 'memo' ? null : t))(armTarget()))}   {/* 메모 대기는 위 MemoEditor가 받음(둘이 같이 뜨면 이 편집기가 첫 글자를 가로챘음) */}
       {editing && liveEd && <FormatBar ed={liveEd} />}   {/* 드래그 꾸미기 막대(2026-10-19 — 옛 오른쪽 위 「글자」 카드 대신) */}
-      {selItems.length > 0 && <Props deep={deepProps()} liveEd={editing && !editing.armed && editing.kind !== 'memo' ? liveEd : null} align={selItems.length >= 2 ? { n: alignTargets().length, align: alignSel, dist: a => distributeSel(a) } : null} items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} dark={dark} onLegend={legendEdit} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}
+      {selItems.length > 0 && <Props deep={deepProps()} liveEd={editing && !editing.armed && editing.kind !== 'memo' ? liveEd : null} align={selItems.length >= 2 ? { n: alignTargets().length, align: alignSel, dist: a => distributeSel(a) } : null} items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} convert={selItems.length === 1 ? convertTargets(selItems[0]) : []} onConvert={to => convertItem(selItems[0]._id, to)} dark={dark} onLegend={legendEdit} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}
         onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
     </div>
   )

@@ -1,7 +1,7 @@
 // 메모(§8 항목61 4-b ⑤ 1차, 2026-10-18) — 답 → 줄, 줄 ↔ 편집기 문서, 번호, 쉬운 글
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { docToLines, linesToDoc, memoBlocks, memoFromAnswer, memoMarkdown, memoText, olNumbers } from '../src/next/memo.js'
+import { docToLines, linesToDoc, memoBlocks, memoFromAnswer, memoMarkdown, memoText, olNumbers, splitRunLines } from '../src/next/memo.js'
 
 const ANS = '# 회의 정리\n\n**결론**: 로그는 `30`일.\n\n## 할 일\n- [ ] 견적 비교\n- [x] 서버 신청\n- 메모\n  - 하위 항목\n1. 첫째\n2. 둘째\n> 하루 1회\n```\nx = 1\n  y = 2\n```'
 
@@ -128,4 +128,13 @@ test('💬 말풍선 — 줄 → 마크다운 → 줄이 같은 모양(제목·�
   const back = memoFromAnswer(memoMarkdown(L))
   assert.deepEqual(back.map(l => [l.k, l.t, l.done || false, l.lv || 0, l.rows || null]), L.map(l => [l.k, l.t, l.done || false, l.lv || 0, l.rows || null]))
   assert.ok(!memoMarkdown(L).includes('•'))
+})
+
+test('splitRunLines — 꾸민 글 한 덩어리 → 메모 줄, 꾸밈은 줄마다 잘라 옮김(2026-11-02 「메모로 바꾸기」)', () => {
+  const runs = [[0, 3, '#ffff0000', true], [2, 4, null, false, null, false, 'u']]   // 「송신기」 빨강·굵게(0~3), 「기\n예비」 밑줄(2~6)
+  const out = splitRunLines('송신기\n예비기', runs)
+  assert.deepEqual(out.map(l => l.t), ['송신기', '예비기'])
+  assert.deepEqual(out[0].runs, [[0, 3, '#ffff0000', true], [2, 1, null, false, null, false, 'u']])
+  assert.deepEqual(out[1].runs, [[0, 2, null, false, null, false, 'u']])
+  assert.deepEqual(splitRunLines('', null), [{ k: 'p', t: '' }])
 })
