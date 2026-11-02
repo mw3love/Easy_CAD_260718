@@ -1,5 +1,6 @@
 // 제자리 우클릭 메뉴 — 데스크톱 `host_context._build_context_menu`와 같은 항목·차례(웹에 아직 없는 케이블 번호·심볼 등록·AI로 바꾸기·보드 색은 뺌).
 // entries = [이름, 단축키, 할 일, 하위 목록?] | '-'(구분선). 하위 목록 = [이름, 할 일, 끔?] | '-'. 바깥 누르기·Esc로 닫힘.
+// 웹의 하나뿐인 메뉴 부품(2026-11-02 디자인 규칙 ⑤). at.anchor = 메뉴를 연 ⋯ 단추 — 그 단추 누르기는 「바깥」으로 안 봄(단추가 다시 눌러 닫음, `ui.jsx` menuBelow)
 import { useEffect, useRef, useState } from 'react'
 
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)' }
@@ -7,7 +8,7 @@ const box = { position: 'absolute', zIndex: 30, pointerEvents: 'auto',minWidth: 
 const row = dis => ({ all: 'unset', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '5px 10px', borderRadius: 5, cursor: dis ? 'default' : 'pointer', opacity: dis ? 0.4 : 1 })
 const Sep = () => <div style={{ height: 1, background: C.line, margin: '4px 6px' }} />
 
-export function ContextMenu({ at, entries, onClose }) {
+export function ContextMenu({ at, entries, onClose, testid }) {
   const ref = useRef(null), [sub, setSub] = useState(null), [pos, setPos] = useState(at)
   useEffect(() => {   // 화면 밖으로 나가면 안쪽으로
     const el = ref.current, P = el?.parentElement; if (!el || !P) return
@@ -15,10 +16,10 @@ export function ContextMenu({ at, entries, onClose }) {
     setPos({ x: Math.max(4, Math.min(at.x, W - w - 4)), y: Math.max(4, Math.min(at.y, H - h - 4)) })
   }, [at])
   useEffect(() => {
-    const down = e => { if (ref.current && !ref.current.contains(e.target)) onClose() }, key = e => { if (e.key === 'Escape') onClose() }
+    const down = e => { if (ref.current && !ref.current.contains(e.target) && !at.anchor?.contains(e.target)) onClose() }, key = e => { if (e.key === 'Escape') onClose() }
     window.addEventListener('pointerdown', down, true); window.addEventListener('keydown', key)
     return () => { window.removeEventListener('pointerdown', down, true); window.removeEventListener('keydown', key) }
-  }, [onClose])
+  }, [onClose, at.anchor])
   // 펼친 하위 목록이 화면 밑·오른쪽을 넘으면 안쪽으로(2026-10-18 사용자: 아래쪽에서 잘림)
   const fitSub = el => {
     const P = ref.current?.parentElement; if (!el || !P) return
@@ -26,11 +27,11 @@ export function ContextMenu({ at, entries, onClose }) {
     if (over > 0) el.style.top = `${Math.max(-4 - over, pr.top + 4 - r.top - 4)}px`
     if (r.right > pr.right - 4) { el.style.left = 'auto'; el.style.right = '100%'; el.style.marginLeft = '0'; el.style.marginRight = '2px' }
   }
-  const none = !entries.length
+  const none = !entries.length   // 마우스 올림 = 회색(아래 hover — 규칙 ③)
   useEffect(() => { if (none) onClose() }, [none, onClose])   // 띄울 것이 없으면(빈 곳·붙일 것 없음) 바로 닫음 — 남아 있으면 나중에 복사했을 때 옛 자리에 뜸
   if (none) return null
-  const hover = e => { e.currentTarget.style.background = 'rgba(218,119,86,.14)' }, leave = e => { e.currentTarget.style.background = 'transparent' }
-  return <div ref={ref} onContextMenu={e => e.preventDefault()} onPointerDown={e => e.stopPropagation()} style={{ ...box, left: pos.x, top: pos.y }}>
+  const hover = e => { e.currentTarget.style.background = 'var(--mb-group)' }, leave = e => { e.currentTarget.style.background = 'transparent' }
+  return <div ref={ref} data-testid={testid} onContextMenu={e => e.preventDefault()} onPointerDown={e => e.stopPropagation()} style={{ ...box, left: pos.x, top: pos.y }}>
     {entries.map((en, i) => en === '-' ? <Sep key={i} /> : (
       <div key={i} style={{ position: 'relative' }} onMouseEnter={() => setSub(en[3] ? i : null)}>
         <button onClick={en[3] ? () => setSub(i) : en[2]} onMouseEnter={hover} onMouseLeave={leave} style={row(false)}>

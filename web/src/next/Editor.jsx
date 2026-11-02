@@ -149,7 +149,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, skipFrames, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, selImageIds, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, setImage, slidesBoard, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, liveModel: () => R.current.model, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, skipFrames, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, selImageIds, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, setImage, slidesBoard, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -1292,7 +1292,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         commit([...mm.items.map(x => (x._id === it._id ? withLines(x, rest.length ? rest : [{ k: 'p', t: '' }]) : x)), placed], [placed._id], '칠판 표로'); setLineSel(null) }]] : []),
       '-',
       ['복제', 'Ctrl+D', () => { apply(lines => [...lines.slice(0, last), ...idx.map(i => structuredClone(lines[i])), ...lines.slice(last)], '줄 복제')(); setLineSel({ id: it._id, s: last, e: last + idx.length }) }],
-      ['삭제', 'Del', () => { apply(lines => lines.filter((_, j) => !on.has(j)), '줄 지움')(); setLineSel(null) }],
+      ['지우기', 'Del', () => { apply(lines => lines.filter((_, j) => !on.has(j)), '줄 지움')(); setLineSel(null) }],
     ]   // 「칠판으로 꺼내기」는 뺌(2026-10-18 사용자: 손잡이로 끌어내는 게 더 직관적)
   }
   function finishMemo(lines, extra) {   // extra = { caret }(Esc — 그 줄 고르기) | { grab }(고치는 중 ⠿ — 끝내고 그 줄 끌기·메뉴로)
@@ -2508,10 +2508,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
             return <g data-testid="meeting-live" data-state={meet.state}><rect x={meet.at.x} y={meet.at.y} width={w} height={h} rx={10 * s} fill="rgba(218,119,86,.06)" stroke="#da7756" strokeWidth={1.5 / z} strokeDasharray={`${8 / z} ${5 / z}`} pointerEvents="none" />
               <foreignObject x={0} y={0} width={MEET_W} height={MEET_H} transform={`translate(${meet.at.x},${meet.at.y}) scale(${s})`}>
                 <div style={{ width: MEET_W, height: MEET_H, boxSizing: 'border-box', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6, font: `400 14px ${APP_FONT}`, color: '#3f3f46' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#da7756', fontWeight: 600 }}><span style={{ flex: 1 }}>{head}</span>
-                    {(saved || meet.state === 'listen' || meet.state === 'reconnect') && <button data-testid="meeting-live-end" onPointerDown={stop} onClick={meetStop} style={{ ...btn, background: '#da7756', color: '#fff' }}>{saved ? '정리하기' : '끝내기'}</button>}
-                    {saved && <button data-testid="meeting-live-raw" onPointerDown={stop} onClick={meetRaw} title="요약 없이 받아 적은 글만 칠판에" style={{ ...btn, color: '#da7756', border: '1px solid #da7756' }}>전문만</button>}
-                    {saved && meetRec.current && <button data-testid="meeting-live-rec" onPointerDown={stop} onClick={meetFromRec} title="PC에 같이 녹음한 것으로 처음부터 다시 받아써서 회의록 — 인터넷이 끊긴 동안의 말까지" style={{ ...btn, color: '#da7756', border: '1px solid #da7756' }}>녹음으로 정리</button>}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--mb-accent)', fontWeight: 600 }}><span style={{ flex: 1 }}>{head}</span>
+                    {(saved || meet.state === 'listen' || meet.state === 'reconnect') && <button data-testid="meeting-live-end" onPointerDown={stop} onClick={meetStop} style={{ ...btn, background: 'var(--mb-accent)', color: '#fff' }}>{saved ? '정리하기' : '끝내기'}</button>}
+                    {saved && <button data-testid="meeting-live-raw" onPointerDown={stop} onClick={meetRaw} title="요약 없이 받아 적은 글만 칠판에" style={{ ...btn, color: 'var(--mb-accent)', border: '1px solid #da7756' }}>전문만</button>}
+                    {saved && meetRec.current && <button data-testid="meeting-live-rec" onPointerDown={stop} onClick={meetFromRec} title="PC에 같이 녹음한 것으로 처음부터 다시 받아써서 회의록 — 인터넷이 끊긴 동안의 말까지" style={{ ...btn, color: 'var(--mb-accent)', border: '1px solid #da7756' }}>녹음으로 정리</button>}
                     {saved && meetRec.current && <button data-testid="meeting-live-save-rec" onPointerDown={stop} onClick={meetSaveRec} title="녹음을 파일로 받아 두기 — 나중에 칠판에 끌어 놓으면 회의록" style={{ ...btn, color: '#71717a' }}>녹음 받기</button>}
                     {saved && <button data-testid="meeting-live-drop" onPointerDown={stop} onClick={meetDiscard} style={{ ...btn, color: '#71717a' }}>버리기</button>}</div>
                   <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 4, lineHeight: 1.5 }}>
@@ -2608,7 +2608,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         if (frame1) out.push(['이 장부터 발표', '', act(() => startPresent(frame1._id))], ['이름 바꾸기', '', act(() => setTagEdit(frame1._id))], '-')
         if (has) out.push(['복사', 'Ctrl+C', act(copy)], ['잘라내기', 'Ctrl+X', act(() => { copy(); commit(removeItems(m.items, movingSet(ids)), [], '잘라냄') })],
           ['복제', 'Ctrl+D', act(dupSel)],
-          ['삭제', 'Del', act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))])
+          ['지우기', 'Del', act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))])
         if (frame1) out.push(['프레임만 지우기 (안의 것은 남김)', '', act(() => commit(removeItems(m.items, [frame1._id]), [], '프레임만 지움'))])   // 「삭제」는 안의 것까지
         const canCopyStyle = ids.length === 1 && selIt[0] && Object.keys(captureStyle(selIt[0])).length > 0   // 그림·프레임 = 옮길 꾸밈이 없음(전엔 「복사됨」만 뜨고 빈 것)
         const canPasteStyle = has && styleClip.current && selIt.some(it => styleFor(it, styleClip.current))
@@ -2657,7 +2657,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       {notesGone && present == null && <div data-testid="notes-gone" onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', bottom: 54, left: '50%', transform: 'translateX(-50%)', zIndex: 7, display: 'flex', alignItems: 'center', gap: 10, padding: '4px 6px 4px 14px', borderRadius: 99,
         background: 'rgba(24,24,27,.9)', color: '#fff', font: "500 13px 'Pretendard', sans-serif", whiteSpace: 'nowrap', boxShadow: '0 2px 10px rgba(0,0,0,.25)' }}>
         발표 판서 {notesGone.items.length}개 지움
-        <button onClick={keepNotes} style={{ all: 'unset', cursor: 'pointer', padding: '3px 12px', borderRadius: 99, background: '#da7756', color: '#fff', fontWeight: 600 }}>남기기</button></div>}
+        <button onClick={keepNotes} style={{ all: 'unset', cursor: 'pointer', padding: '3px 12px', borderRadius: 99, background: 'var(--mb-accent)', color: '#fff', fontWeight: 600 }}>남기기</button></div>}
       {tagEdit && (() => { const it = byId.get(tagEdit); if (!it) return null; const b = frameTagBox(it), o = scr({ x: b.x, y: b.y })   // 프레임 이름표 바로 고치기(치는 대로 — 2026-10-18 사용자)
         return <input key={tagEdit} autoFocus defaultValue={it.name || ''} placeholder="이름" onPointerDown={e => e.stopPropagation()} onChange={e => renameFrame(it._id, e.target.value)}
           onBlur={() => setTagEdit(null)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') setTagEdit(null) }}

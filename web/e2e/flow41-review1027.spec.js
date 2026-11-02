@@ -24,7 +24,7 @@ test('프레임으로 감싸기 = 안에 든 것으로 이름(하나 = 종류 ·
 test('레이어 판엔 「선택 → 그리는 중」 단추 없음 · 우클릭 「레이어로 이동」은 있음', async ({ page }) => {
   await openBoard(page, boardName('layerbtn')); await setCam(page)
   await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 150, y: 100 }); await page.keyboard.press('Escape')
-  await page.getByTestId('dock-layer').click(); await expect(page.getByRole('button', { name: '＋ 레이어' })).toBeVisible()
+  await page.getByTestId('dock-layer').click(); await expect(page.getByRole('button', { name: '＋ 새 레이어' })).toBeVisible()
   await expect(page.getByRole('button', { name: '선택 → 그리는 중' })).toHaveCount(0)
   const p = await toPage(page, 75, 50); await page.mouse.click(p.x, p.y, { button: 'right' })
   expect((await page.locator('div[style*="z-index: 30"] > div > button').allInnerTexts()).some(n => n.startsWith('레이어로 이동'))).toBe(true)
@@ -57,7 +57,7 @@ test('접속자 = 동그라미 — 5명이면 3명 + 「+2」, 누르면 공유 
   for (const c of ctxs) await c.close()
 })
 
-test('내 심볼(이 브라우저) — 우클릭 추가 → 판에 보임 → 놓기 · 새로 고쳐도 남음 · 이름 바꾸기 · 파일로 저장 → 지우기 → 불러오기', async ({ page }) => {
+test('내 심볼(이 브라우저) — 우클릭 추가 → 판에 보임 → 놓기 · 새로 고쳐도 남음 · 이름 바꾸기 · 내려받기 → 지우기 → 불러오기', async ({ page }) => {
   await openBoard(page, boardName('mysym')); await setCam(page)
   await pickShape(page, '원'); await dragScene(page, { x: 0, y: 0 }, { x: 120, y: 80 }); await page.keyboard.press('Escape')
   await clickScene(page, 60, 40); const p = await toPage(page, 60, 40); await page.mouse.click(p.x, p.y, { button: 'right' })
@@ -73,13 +73,13 @@ test('내 심볼(이 브라우저) — 우클릭 추가 → 판에 보임 → �
   await expect(page.getByTestId('prop-type')).toHaveText('동그라미')
   await page.reload(); await expect(page.getByTestId('mine').getByRole('button', { name: '동그라미' })).toBeVisible()   // 이 브라우저에 남음
   await page.getByTestId('mine').getByRole('button', { name: '동그라미' }).click({ button: 'right' })
-  await page.getByTestId('mine-pop').getByRole('button', { name: '이름 바꾸기' }).click()
+  await page.getByTestId('mine-menu').getByRole('button', { name: '이름 바꾸기' }).click()
   await page.getByTestId('mine-pop').locator('input').fill('원 심볼'); await page.getByTestId('mine-pop').locator('input').press('Enter')
   await expect(page.getByTestId('mine').getByRole('button', { name: '원 심볼' })).toBeVisible()
   await page.getByTestId('mine-more').click()
-  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('mine-pop').getByRole('button', { name: '파일로 저장' }).click()])
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('mine-menu').getByRole('button', { name: '내려받기 (.json)' }).click()])
   const path = await dl.path()
-  await page.getByTestId('pal-sec').filter({ has: page.getByRole('button', { name: '원 심볼' }) }).getByTestId('folder-menu').click(); await page.getByTestId('mine-pop').getByRole('button', { name: /지우기/ }).click()
+  await page.getByTestId('pal-sec').filter({ has: page.getByRole('button', { name: '원 심볼' }) }).getByTestId('folder-menu').click(); await page.getByTestId('mine-menu').getByRole('button', { name: /지우기/ }).click(); await page.getByTestId('mine-delete-ok').click()
   await expect(page.getByTestId('mine').getByRole('button', { name: '원 심볼' })).toHaveCount(0)
   await page.getByTestId('mine').locator('input[type=file]').setInputFiles(path)
   await expect(page.getByTestId('mine').getByRole('button', { name: '원 심볼' })).toBeVisible()
@@ -107,7 +107,7 @@ test('예시 폴더도 지울 수 있음 — 지우면 새로 고쳐도 안 생�
   await openBoard(page, boardName('seed'))
   const mine = page.getByTestId('mine'), sec = name => page.getByTestId('pal-sec').filter({ hasText: name })
   await expect(mine.getByRole('button', { name: '카메라' })).toBeVisible()
-  await sec('방송').getByTestId('folder-menu').click(); await page.getByTestId('mine-pop').getByRole('button', { name: /지우기/ }).click()
+  await sec('방송').getByTestId('folder-menu').click(); await page.getByTestId('mine-menu').getByRole('button', { name: /지우기/ }).click(); await page.getByTestId('mine-delete-ok').click()
   await expect(mine.getByRole('button', { name: '카메라' })).toHaveCount(0)
   await page.reload(); await expect(page.getByTestId('mine').getByRole('button', { name: '사람' })).toBeVisible()
   await expect(page.getByTestId('mine').getByRole('button', { name: '카메라' })).toHaveCount(0)        // 다시 안 생김

@@ -1739,3 +1739,6 @@
 - ⚠ 웹 그림 칸(`image`)은 그림을 칠판 파일 안에 base64로 담는다 — KAIROS 그림 PNG 한 장이 3~4MB. 저장소에 넣을 칠판(예시 등)은 JPG로 줄일 것(`data:image/png`로 읽어도 크롬은 내용으로 알아봄).
 - ⚠ 화면 시험 서버(`web/e2e`, 5291)도 **이 PC의 진짜 KAIROS 키**로 뜬다 — 사람이 누르지 않아도 저절로 KAIROS를 부르는 기능(예: 그림 넣으면 설명 `/api/describe`, 2026-10-28)은 끄는 스위치를 두고 `playwright.config.js` `env`에서 끌 것(`EASYCAD_ROUTE=rules`·`EASYCAD_DESCRIBE=off`) — 안 그러면 시험 200개가 크레딧을 씀
 - ⚠ 늦게 도착하는 AI 결과로 도형 칸을 고칠 때 `commit`을 쓰면 Ctrl+Z가 「안 보이는 고침」을 먼저 되돌린다 — 보이지 않는 칸(그림 `alt` 등)은 `Editor.quietSet`(되돌리기 칸 없음)으로(2026-10-28)
+- ⚠ 웹 판 뿌리의 `onPointerDown={e => e.stopPropagation()}`은 window **거품 단계** 리스너(자체 메뉴의 「바깥 누르면 닫기」)를 막는다 — 판 안을 눌러도 메뉴가 안 닫혔음(2026-11-02 도형 판). 메뉴는 잡기 단계로 듣는 공용 `ctxmenu.jsx`를 쓴다.
+- ⚠ SVG 그리기 속성(`fill=`·`stroke=`)엔 CSS 변수(`var(--mb-accent)`)가 안 먹는다 — 코랄을 변수로 바꿀 때 style 안 값만 바꾸고, SVG 속성·저장되는 물건 색은 `#da7756` 그대로(2026-11-02).
+- ⚠ 화면 시험이 `page.evaluate`로 되돌리기·다시 하기를 부른 직후 칠판을 읽으면 옛 모델이 올 수 있다 — React가 화면 상태를 조금 뒤에 바꿔서. `__mb.toEcad()`는 편집기 속 최신 모델(`ed.liveModel()`)을 읽게 고침(2026-11-02, flow35 가끔 실패의 원인).

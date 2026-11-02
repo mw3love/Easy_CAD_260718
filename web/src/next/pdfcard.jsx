@@ -138,13 +138,13 @@ export function PdfPages({ it, w, h, on }) {
           : <img key={i} alt={`${i + 1}쪽`} draggable={false} src={`${it.url}/page/${i}?w=${px}`} style={{ position: 'absolute', left: 0, top: py, width: w, height: ph, background: '#fff', display: 'block', userSelect: 'none' }} />))}
         {on && lay.map(([py, ph], i) => (py + ph < top - h || py > top + 2 * h ? null : <PageText key={'t' + i} it={it} i={i} w={w} top={py} ph={ph} />))}
         {rect && <div style={{ position: 'absolute', ...rect, border: '1.5px solid #da7756', background: 'rgba(218,119,86,.12)', pointerEvents: 'none' }} />}
-        {marks.map(m => { const c = m.st === 'ok' ? '#16a34a' : m.st === 'fail' ? '#dc2626' : '#da7756'
+        {marks.map(m => { const c = m.st === 'ok' ? '#16a34a' : m.st === 'fail' ? '#dc2626' : 'var(--mb-accent)'
           return <div key={m.key} data-testid={`pdf-clip-${m.st}`} style={{ position: 'absolute', ...m.rect, border: `2px ${m.st === 'busy' ? 'dashed' : 'solid'} ${c}`, background: m.st === 'ok' ? 'rgba(22,163,74,.10)' : 'transparent', pointerEvents: 'none' }}>
             <div style={{ position: 'absolute', left: -2, ...(m.rect.top - top < 24 ? { top: 2, left: 2 } : { bottom: '100%', marginBottom: 2 }), padding: '2px 8px', borderRadius: 99, background: c, color: '#fff', font: "600 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap' }}>{m.msg}</div>
           </div> })}
       </div>
     </div>
-    {on && (alt || sel) && <div style={{ position: 'absolute', left: 8, bottom: 8, padding: '2px 8px', borderRadius: 99, background: '#da7756', color: '#fff', font: "600 11px 'Pretendard', sans-serif", pointerEvents: 'none' }}>✂ 끌어서 오려 오기</div>}
+    {on && (alt || sel) && <div style={{ position: 'absolute', left: 8, bottom: 8, padding: '2px 8px', borderRadius: 99, background: 'var(--mb-accent)', color: '#fff', font: "600 11px 'Pretendard', sans-serif", pointerEvents: 'none' }}>✂ 끌어서 오려 오기</div>}
     {lay.length > 0 && <div style={{ position: 'absolute', right: 8, bottom: 8, padding: '2px 8px', borderRadius: 99, background: 'rgba(24,24,27,.72)', color: '#fff', font: "600 11px 'Pretendard', sans-serif", pointerEvents: 'none' }}>{cur + 1} / {lay.length}</div>}
   </div>
 }

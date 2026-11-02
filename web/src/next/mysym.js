@@ -38,8 +38,9 @@ export function useMySymbols(server) {   // server = 서버 심볼 파일(예시
       return add.length && put({ ...mine, folders, symbols: [...mine.symbols, ...add.map(x => ({ ...x }))] }) ? add.length : 0 },
     renameSymbol: (id, name) => { const n = name.trim(); return !!n && put({ ...mine, symbols: mine.symbols.map(s => (s.id === id ? { ...s, name: n } : s)) }) },
     delSymbol: id => put({ ...mine, symbols: mine.symbols.filter(s => s.id !== id) }),
-    // 파일로 — 데스크톱 `symbol_library.json`과 같은 모양
-    exportText: () => JSON.stringify({ folders: mine.folders, symbols: mine.symbols, folder_colors: {}, section_colors: {}, favorites: [], last_folder: mine.folders[0] || '' }, null, 1),
+    // 파일로 — 데스크톱 `symbol_library.json`과 같은 모양. folder = 그 폴더만(2026-11-02 「이 폴더만 내려받기」)
+    exportText: folder => { const fs = folder ? mine.folders.filter(f => f === folder) : mine.folders, ss = folder ? mine.symbols.filter(s => s.folder === folder) : mine.symbols
+      return JSON.stringify({ folders: fs, symbols: ss, folder_colors: {}, section_colors: {}, favorites: [], last_folder: fs[0] || '' }, null, 1) },
     // 가져오기 = 더하기(같은 이름 폴더는 합침, 심볼은 새 id) → 더한 심볼 수, 못 읽으면 -1, 저장 공간이 모자라면 -2
     importText: text => {
       let d; try { d = JSON.parse(text) } catch { return -1 }

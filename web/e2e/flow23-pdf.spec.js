@@ -175,17 +175,17 @@ test('멀리서 넣어도 쪽 그림(잠들지 않음) · 바깥 눌러도 보�
   const menuBtns = () => page.locator('div[style*="z-index: 30"] > div > button').allInnerTexts()
   await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2, { button: 'right' })   // 객체(켜지 않은 카드) = 틀 메뉴 — 쪽 메뉴·반전 없음
   let names = (await menuBtns()).join('|')
-  expect(names).toContain('넘겨 보기'); expect(names).toContain('새 탭에서 보기'); expect(names).toContain('삭제')
+  expect(names).toContain('넘겨 보기'); expect(names).toContain('새 탭에서 보기'); expect(names).toContain('지우기')
   expect(names).not.toContain('통째로'); expect(names).not.toContain('좌우 반전'); expect(names).not.toContain('전체 선택')
   await page.keyboard.press('Escape')
   await page.mouse.click(b.x + b.width + 150, b.y + 300, { button: 'right' })   // 빈 곳 = 고른 것 풂, 붙일 것이 없으면 메뉴 없음(2026-10-25)
-  names = (await menuBtns()).join('|'); expect(names).not.toContain('전체 선택'); expect(names).not.toContain('삭제')
+  names = (await menuBtns()).join('|'); expect(names).not.toContain('전체 선택'); expect(names).not.toContain('지우기')
   await page.keyboard.press('Escape')
 
   await page.mouse.dblclick(b.x + b.width / 2, b.y + b.height / 2)        // 켜고 안쪽 우클릭 = 내용 메뉴만, 넘겨 보기는 안 꺼짐
   await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2, { button: 'right' })
   names = (await menuBtns()).join('|')
-  expect(names).toContain('이 쪽(2쪽) 통째로 칠판에'); expect(names).toContain('새 탭에서 보기'); expect(names).not.toContain('삭제'); expect(names).not.toContain('전체 선택')
+  expect(names).toContain('이 쪽(2쪽) 통째로 칠판에'); expect(names).toContain('새 탭에서 보기'); expect(names).not.toContain('지우기'); expect(names).not.toContain('전체 선택')
   await expect(body).toHaveCSS('pointer-events', 'auto')
   await page.getByRole('button', { name: /이 쪽\(2쪽\) 통째로 칠판에/ }).click()
   await expect.poll(async () => (await items(page)).map(it => it.type), { timeout: 10_000 }).toEqual(['pdf', 'image', 'text'])

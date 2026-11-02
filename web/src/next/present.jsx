@@ -230,7 +230,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     onAdd([{ pos: [s.x, s.y], type: 'text', text: v, color: argb(penColor), font: +(b.F / (k * (zoom?.s || 1) * PT)).toFixed(3), bg: null }]) }
   const show = awake || !!tool || !!draft, barShow = (intro || nearBottom || barHover.current) && !draft && !zoom?.card   // 영상 크게 보기 중엔 숨김(유튜브 재생바를 가렸음)
   const btn = on => ({ all: 'unset', cursor: 'pointer', minWidth: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, padding: '0 6px', boxSizing: 'border-box',
-    color: on ? '#fff' : 'rgba(255,255,255,.85)', background: on ? '#da7756' : 'transparent', font: "600 14px 'Pretendard', sans-serif" })
+    color: on ? '#fff' : 'rgba(255,255,255,.85)', background: on ? 'var(--mb-accent)' : 'transparent', font: "600 14px 'Pretendard', sans-serif" })
   const th = THEMES[dark ? 'dark' : 'light']
   const barZoom = Math.min(1.35, Math.max(1, (typeof window !== 'undefined' ? window.innerWidth : 1400) / 1400))   // 큰 화면일수록 막대도 크게(2026-10-22 디자인 점검: TV 앞에 서서 누르기엔 글자가 작았음) — 1400px = 1배, 1920 = 1.35배
   const sep = <span style={{ width: 1, height: 28, background: 'rgba(255,255,255,.2)', margin: '0 4px' }} />
@@ -238,7 +238,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   // 두 칸 고르기 — 지금 상태가 켜진 칸(2026-10-18 사용자: 「이동」 버튼이 지금 상태인지 누르면 바뀐다는 뜻인지 모르겠음)
   const seg = (label, opts, cur, set, key) => <div title={`${label} (${key})`} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, margin: '0 2px' }}>
     <div style={{ display: 'flex', background: 'rgba(255,255,255,.08)', borderRadius: 6, padding: 1 }}>{opts.map(([v, name, tip]) => <button key={name} title={tip || name} onClick={() => set(v)}
-      style={{ all: 'unset', cursor: 'pointer', padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', font: "600 12px 'Pretendard', sans-serif", color: cur === v ? '#fff' : 'rgba(255,255,255,.6)', background: cur === v ? '#da7756' : 'transparent' }}>{name}</button>)}</div>
+      style={{ all: 'unset', cursor: 'pointer', padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', font: "600 12px 'Pretendard', sans-serif", color: cur === v ? '#fff' : 'rgba(255,255,255,.6)', background: cur === v ? 'var(--mb-accent)' : 'transparent' }}>{name}</button>)}</div>
     <span style={{ fontSize: 11, color: 'rgba(255,255,255,.6)', whiteSpace: 'nowrap' }}>{label}</span></div>
   return <div ref={root} tabIndex={-1} data-testid="presenter" onPointerDown={down} onPointerMove={move} onPointerUp={up} onContextMenu={e => e.preventDefault()}
     style={{ position: 'fixed', inset: 0, zIndex: 1000, outline: 'none', background: '#000', cursor: laserShown ? LASER_CURSOR : show ? (tool && tool !== 'erase' ? 'crosshair' : zoom?.card ? 'zoom-out' : 'default') : 'none', ...th }}>
@@ -257,17 +257,17 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     {list && <div data-testid="slide-list" onPointerDown={e => { e.stopPropagation(); if (e.target === e.currentTarget) setList(null) }}
       style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.72)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, zIndex: 3 }}>
       <div style={{ color: '#fff', font: "600 15px 'Pretendard', sans-serif" }}>장 목록 <span style={{ fontWeight: 400, color: 'rgba(255,255,255,.6)', fontSize: 13 }}>— 누르기 · 방향키 + Enter · 번호 + Enter · Esc 닫기</span>
-        {list.typed && <span style={{ marginLeft: 10, padding: '2px 10px', borderRadius: 6, background: '#da7756' }}>{list.typed}번으로</span>}</div>
+        {list.typed && <span style={{ marginLeft: 10, padding: '2px 10px', borderRadius: 6, background: 'var(--mb-accent)' }}>{list.typed}번으로</span>}</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, justifyContent: 'center', maxWidth: '86vw', maxHeight: '72vh', overflowY: 'auto', padding: 8 }}>
         {frames.map((fr, j) => { const bb = fr.box
           return <button key={fr.id} data-testid="slide-thumb" onClick={() => { setI(j); setList(null) }} style={{ all: 'unset', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
             <svg width={200} height={120} viewBox={`${bb.x} ${bb.y} ${bb.w} ${bb.h}`} style={{ background: th['--mb-board'], borderRadius: 6, outline: j === list.pick ? '3px solid #da7756' : j === i ? '2px solid rgba(255,255,255,.7)' : '1px solid rgba(255,255,255,.25)', outlineOffset: 2 }}>
               <g style={{ '--z': Math.min(200 / bb.w, 120 / bb.h) }}>{order.map(([it, idx]) => <Item key={it._id} it={it} idx={idx} onBoard={onBoard[idx]} route={routes.get(idx)} labels="inline" dark={dark} />)}</g></svg>
-            <span style={{ color: j === i ? '#da7756' : '#fff', font: "500 12px 'Pretendard', sans-serif" }}>{j + 1}{fr.name ? ` · ${fr.name}` : ''}</span></button> })}
+            <span style={{ color: j === i ? 'var(--mb-accent)' : '#fff', font: "500 12px 'Pretendard', sans-serif" }}>{j + 1}{fr.name ? ` · ${fr.name}` : ''}</span></button> })}
       </div></div>}
     {zoom?.card && show && <button data-testid="big-close" title="원래 크기로 (영상 밖을 눌러도 됨)" onPointerDown={e => e.stopPropagation()} onClick={() => { setZoom(null); setBigHover(false) }} onPointerEnter={() => { setBigHover(true); barHover.current = true }} onPointerLeave={() => { setBigHover(false); barHover.current = false; wake() }}
       style={{ all: 'unset', cursor: 'pointer', position: 'absolute', right: Math.max(16, W - (zoom.right || W)), top: Math.max((BIG_BAND - 40) / 2, (zoom.top ?? BIG_BAND) - 52), height: 40, padding: '0 18px', display: 'flex', alignItems: 'center', gap: 6, borderRadius: 20,
-        color: '#fff', font: "600 15px 'Pretendard', sans-serif", boxShadow: '0 2px 10px rgba(0,0,0,.4)', transition: 'background .12s', background: bigHover ? '#da7756' : 'rgba(63,63,70,.95)', border: '1px solid rgba(255,255,255,.25)' }}>⤡ 원래 크기로 (F)</button>}   {/* 올리면 코랄(2026-10-20 사용자: 알아보게) — 영상 위에선 마우스가 유튜브로 가니 위 띠로 올리면 나타남 */}
+        color: '#fff', font: "600 15px 'Pretendard', sans-serif", boxShadow: '0 2px 10px rgba(0,0,0,.4)', transition: 'background .12s', background: bigHover ? 'var(--mb-accent)' : 'rgba(63,63,70,.95)', border: '1px solid rgba(255,255,255,.25)' }}>⤡ 원래 크기로 (F)</button>}   {/* 올리면 코랄(2026-10-20 사용자: 알아보게) — 영상 위에선 마우스가 유튜브로 가니 위 띠로 올리면 나타남 */}
     {zoom && !zoom.card && <button data-testid="zoom-reset" title="원래 배율로 (Ctrl+0)" onPointerDown={e => e.stopPropagation()} onClick={() => setZoom(null)}
       style={{ all: 'unset', cursor: 'pointer', position: 'absolute', right: 16, top: 16, padding: '6px 12px', borderRadius: 16, background: 'rgba(24,24,27,.86)', color: '#fff', font: "600 12px 'Pretendard', sans-serif", boxShadow: '0 2px 10px rgba(0,0,0,.4)' }}>
       {Math.round(zoom.s * 100)}% · 원래대로</button>}
@@ -281,7 +281,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
       return <div data-testid="present-menu" onPointerDown={e => e.stopPropagation()} onContextMenu={e => e.preventDefault()}
         style={{ position: 'absolute', left: Math.min(menu.x, W - 200), top: Math.min(menu.y, H - 330), minWidth: 180, padding: 4, borderRadius: 10, background: 'rgba(24,24,27,.94)', boxShadow: '0 6px 20px rgba(0,0,0,.5)', display: 'flex', flexDirection: 'column' }}>
         {items.map((m, j) => m === '-' ? <div key={j} style={{ height: 1, background: 'rgba(255,255,255,.15)', margin: '4px 6px' }} />
-          : <button key={j} onClick={m[1]} style={{ all: 'unset', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, color: m[2] ? '#da7756' : 'rgba(255,255,255,.9)', font: "500 13px 'Pretendard', sans-serif" }}
+          : <button key={j} onClick={m[1]} style={{ all: 'unset', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, color: m[2] ? 'var(--mb-accent)' : 'rgba(255,255,255,.9)', font: "500 13px 'Pretendard', sans-serif" }}
             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,.1)' }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>{m[0]}</button>)}
       </div> })()}
     {/* 아래 막대 — 마우스를 움직이면 나타남, 2초 가만히 있으면 숨음(도구를 쓰는 중엔 계속) */}
