@@ -82,3 +82,20 @@ test('발표 자료 3단계 — 고른 자료 우클릭 「발표 자료 만들�
   expect(cover?.data?.length).toBeGreaterThan(10)
   expect(cover.pos[0]).toBeGreaterThan(f1.pos[0] + f1.rect[2] / 2); expect(cover.pos[1]).toBeLessThan(f1.pos[1] + 100)   // 표지 오른쪽 위
 })
+
+test('발표 자료 — 긴 글은 칸에 맞춤(숫자 줄이기·설명 줄 바꿈·칸 늘림) · 출처 장 = 장 글에 나온 번호만 · 제목 속 줄바꿈은 한 줄로', async ({ page }) => {   // 2026-11-02 진짜 KAIROS 장
+  const name = boardName('slides4')
+  const deck = { title: '현황', sources: [{ n: 1, title: '안 쓴 출처', url: 'https://a.com/x' }, { n: 2, title: '쓴 출처\n\n 상세보기', url: 'https://b.com/y' }, { n: 3, title: '숫자 출처', url: 'https://c.com/z' }], slides: [
+    { title: '현황', layout: '표지', bullets: ['발표'], notes: '' },
+    { title: '숫자', layout: '숫자', bullets: ['x'], notes: '', numbers: [{ value: '1,234,567가구', label: '수도권 직접 수신이 가능한 가구 수 추정치 — 2023년 방송통신위원회 실태조사 결과 [3]' }, { value: '3/29곳', label: '구축 [2]' }, { value: '1%', label: '가구' }] }] }
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { slides: 'm' } } }))
+  await openBoard(page, name); await setCam(page)
+  expect((await page.evaluate(d => window.__mb.ed.slidesBoard(d), deck)).frames).toBe(3)
+  const its = (await liveDoc(page)).items, t = s => its.find(it => it.type === 'text' && it.text.replace(/\n/g, ' ').includes(s))
+  expect(t('1,234,567가구').font).toBeLessThan(76); expect(t('3/29곳').font).toBe(76)              // 넘치는 숫자만 줄임
+  const lab = t('수도권 직접'), tile = its.filter(it => it.type === 'rect' && it.radius === 28)
+  expect(lab.text).toContain('\n')                                                               // 설명은 칸 폭에서 줄 바꿈
+  expect(new Set(tile.map(r => r.rect[3])).size).toBe(1); expect(tile[0].rect[3]).toBeGreaterThan(380)   // 세 칸 같이 늘림
+  const src = t('[2] 쓴').text
+  expect(src).toContain('[2] 쓴 출처 상세보기 · b.com'); expect(src).toContain('[3] 숫자 출처'); expect(src).not.toContain('안 쓴 출처')
+})

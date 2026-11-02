@@ -904,7 +904,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function slidesBoard(deck) {
     const sl = (deck?.slides || []).filter(s => s?.title)
     if (readOnly || !sl.length) return null
-    const src = (deck.sources || []).slice(0, 14), pages = src.length ? [...sl, { title: '출처', bullets: src.map(x => `[${x.n}] ${x.title || x.url} · ${siteOf(x.url)}`), notes: '', small: true }] : sl
+    // 출처 장 = 장 글에 나온 번호만(2026-11-02 진짜 KAIROS 장 — 출처 27개 중 앞 14개만 실어 [17]~[27]이 목록에 없었음), 한 장에 24줄까지 · 제목 속 줄바꿈은 한 줄로
+    const used = new Set([...JSON.stringify(sl.map(s => [s.title, s.bullets, s.numbers, s.steps, s.message])).matchAll(/\[(\d+)\]/g)].map(m => +m[1]))
+    const all = deck.sources || [], cited = all.filter(x => used.has(x.n)), src = (cited.length ? cited : all).slice(0, 24)
+    const pages = src.length ? [...sl, { title: '출처', bullets: src.map(x => `[${x.n}] ${String(x.title || x.url).replace(/\s+/g, ' ').trim()} · ${siteOf(x.url)}`), notes: '', small: true }] : sl
     const m = R.current.model, W = 1600, H = 900, GX = 160, ROW = H + 760, PER = 3, cols = Math.min(PER, pages.length), rows = Math.ceil(pages.length / PER)
     const BW = cols * W + (cols - 1) * GX, BH = rows * ROW, c = R.current.cam, view = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
     const at = nearSpot({ x: view.x + view.w / 2, y: view.y + view.h / 2 }, hitPool().map(it => sceneBox(it, textBox)), BW, BH, { pad: 48, step: 96 })
@@ -928,24 +931,30 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const CORAL = '#ffda7756', SOFT = '#fffdf1ec', GRAY = '#fff4f4f5', MUTE = '#ff6b6b75'
     const box = (x, y, w, h, fill, r = 0) => base([x, y], { type: 'rect', rect: [0, 0, w, h], fill, pen: fill, width: 1, style: 0, ...(r ? { radius: r } : {}), z })
     const txt = (x, y, text, font, extra = {}) => base([x, y], { type: 'text', text, color: INK, font, bg: null, z, ...extra })
+    // 칸 폭에 맞추기(2026-11-02 진짜 KAIROS 장 — 「1% 미만」이 숫자 칸 끝에 닿음, 서버는 숫자 14자·단계 60자·한마디 80자까지 줌): 짧은 것 = 글자 줄이기, 긴 글 = 줄 바꾸기
+    const lw = (t, f, wt) => layoutText(t, null, f * PT, 'app', wt).w + 2 * TEXT_MARGIN
+    const fit = (t, f, w, wt = 400, min = 20) => { const v = lw(t, f, wt); return v <= w ? f : Math.max(min, Math.floor(f * w / v)) }
+    const wrap = (t, f, w, wt = 400) => String(t).split('\n').map(p => layoutText(p, null, f * PT, 'app', wt, w - 2 * TEXT_MARGIN).lines.map(l => l.parts.map(q => q.text).join('').trimEnd()).join('\n')).join('\n')
     if (kind === '표지') {
       const dy = cv ? 200 : 0   // 표지 그림(3단계) = 오른쪽 위, 제목은 그 밑으로
       if (cv) { const iw = 560, ih = Math.min(400, iw * cv.h / cv.w); out.push(base([X + W - 96 - iw, Y + 64], { type: 'image', rect: [0, 0, iw, ih], data: cv.data, z, alt: cv.alt, slide_role: 'cover' })) }
-      out.push(box(X, Y, 28, H, CORAL), box(L + 24, Y + 300 + dy, 120, 10, CORAL, 5), txt(L + 24, Y + 340 + dy, s.title, cv ? 48 : 56, { weight: 700 }))
-      if (lines.length) out.push(txt(L + 24, Y + 450 + dy, lines.join('\n'), 26, { color: MUTE }))
+      out.push(box(X, Y, 28, H, CORAL), box(L + 24, Y + 300 + dy, 120, 10, CORAL, 5), txt(L + 24, Y + 340 + dy, wrap(s.title, cv ? 48 : 56, CW - 24, 700), cv ? 48 : 56, { weight: 700 }))
+      if (lines.length) out.push(txt(L + 24, Y + 450 + dy, wrap(lines.join('\n'), 26, CW - 24), 26, { color: MUTE }))
     } else {
-      out.push(txt(L, Y + 72, s.title, 40, { weight: 700 }), box(L, Y + 150, 96, 8, CORAL, 4))
+      out.push(txt(L, Y + 72, s.title, fit(s.title, 40, CW, 700, 26), { weight: 700 }), box(L, Y + 150, 96, 8, CORAL, 4))
       if (kind === '숫자' && s.numbers?.length) {
-        const n = s.numbers.length, g = 48, tw = (CW - (n - 1) * g) / n
+        const n = s.numbers.length, g = 48, tw = (CW - (n - 1) * g) / n, labs = s.numbers.map(v => wrap(v.label, 22, tw - 96))
+        const th = Math.max(380, ...labs.map(t => 250 + layoutText(t, null, 22 * PT, 'app').h + 56))   // 설명이 길면 세 칸 같이 늘림
         s.numbers.forEach((v, k) => { const x = L + k * (tw + g)
-          out.push(box(x, Y + 250, tw, 380, SOFT, 28), txt(x + 48, Y + 320, v.value, 76, { weight: 800, color: CORAL }), txt(x + 48, Y + 500, v.label, 22)) })
+          out.push(box(x, Y + 250, tw, th, SOFT, 28), txt(x + 48, Y + 320, v.value, fit(v.value, 76, tw - 96, 800, 28), { weight: 800, color: CORAL }), txt(x + 48, Y + 500, labs[k], 22)) })
       } else if (kind === '단계' && s.steps?.length) {
         s.steps.forEach((t, k) => { const y = Y + 220 + k * 118
-          out.push(box(L, y, CW, 96, GRAY, 48), txt(L + 40, y + 24, String(k + 1), 30, { weight: 800, color: CORAL }), txt(L + 120, y + 26, t, 26)) })
+          out.push(box(L, y, CW, 96, GRAY, 48), txt(L + 40, y + 24, String(k + 1), 30, { weight: 800, color: CORAL }), txt(L + 120, y + 26, t, fit(t, 26, CW - 160, 400, 16))) })
       } else if (kind === '한마디' && s.message) {
-        out.push(box(L, Y + 330, 14, 220, CORAL, 7), txt(L + 64, Y + 380, s.message, s.message.length > 20 ? 40 : 52, { weight: 700 }))
-        if (lines.length) out.push(txt(L + 64, Y + 520, lines[0], 24, { color: MUTE }))
-      } else if (lines.length) out.push(txt(L, Y + 230, lines.map(b => (kind === '출처' ? b : `${kind === '마무리' ? '→' : '•'}  ${b}`)).join('\n'), kind === '출처' ? 15 : 30))
+        const f = s.message.length > 20 ? 40 : 52, mt = wrap(s.message, f, CW - 64, 700), mh = layoutText(mt, null, f * PT, 'app', 700).h
+        out.push(box(L, Y + 330, 14, Math.max(220, mh + 150), CORAL, 7), txt(L + 64, Y + 380, mt, f, { weight: 700 }))
+        if (lines.length) out.push(txt(L + 64, Math.max(Y + 520, Y + 380 + mh + 60), wrap(lines[0], 24, CW - 64), 24, { color: MUTE }))
+      } else if (lines.length) out.push(txt(L, Y + 230, wrap(lines.map(b => (kind === '출처' ? b : `${kind === '마무리' ? '→' : '•'}  ${b}`)).join('\n'), kind === '출처' ? 15 : 30, CW), kind === '출처' ? 15 : 30))
     }
     if (s.notes) { const memo = base([X, Y + H + 40], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#fffafafa', lines: [{ k: 'h3', t: `발표자 메모 · ${i + 1}장` }, { k: 'p', t: s.notes }], scale: 2, z })
       out.push({ ...memo, rect: [0, 0, MEMO.W, memoHeight(memo)] }) }
