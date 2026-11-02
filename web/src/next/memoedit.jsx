@@ -132,7 +132,8 @@ export function MemoEditor({ spec, onDone }) {
     } catch { editor.commands.focus('end') }
     editor.on('update', () => { if (sp.current.armed) sp.current.onArm?.(); sp.current.onChange?.(docToLines(editor.getJSON())) })   // 치는 동안 메모 높이(칠판에 바로) · 대기 중 글이 들어오면(한글 조합 등) 바로 고치기로
     const onDown = e => { if (!sp.current.armed && e.button === 0 && box.current && !box.current.contains(e.target) && !e.target.closest?.('[data-keep-edit]')) finish() }
-    const tm = setTimeout(() => window.addEventListener('pointerdown', onDown, true), 0)   // 0초 안에 닫히면(개발 모드 두 번 띄우기) 감시가 남아 오류를 쌓던 것 — 타이머도 지움
+    window.addEventListener('pointerdown', onDown, true); const tm = 0   // 바로 붙임(2026-11-02 — 0초 타이머가 화면이 바쁘면 60ms 넘게 밀려 그사이 빈 곳 누르기를 놓쳐 메모가 고치는 중에 멈췄음, flow21). 닫힐 때 아래에서 뗌
+
     // 치는 중에도 휠 = 칠판 확대(입력 칸은 배율 따라 같이 커짐 — 2026-10-18 사용자)
     const el = box.current, onWheel = e => { if (!sp.current.onWheel) return; e.preventDefault(); e.stopPropagation(); sp.current.onWheel(e) }
     el.addEventListener('wheel', onWheel, { passive: false })

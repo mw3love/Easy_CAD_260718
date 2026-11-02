@@ -5,6 +5,9 @@ import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { boardName, openBoard, setCam, clickScene, liveDoc } from './helpers.js'
 
+// 칸(iframe)의 누르기 자리는 브라우저가 화면을 그린 뒤에야 바뀜 — 두 번 그릴 때까지 기다림
+const settle = page => page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 50)))))
+
 const CARD = `<!doctype html><html><head><title>시험 카드</title><style>body{margin:0;font:16px sans-serif}</style></head><body>
 <button id="inc" style="position:absolute;left:300px;top:200px;width:140px;height:70px">더하기</button>
 <button id="go" style="position:absolute;left:300px;top:330px;width:140px;height:50px" onclick="location.href='https://example.com/nav'">나가기</button>
@@ -43,6 +46,7 @@ test('움직이는 카드 — 한 번 = 고르기 · 두 번 = 조작 · 바깥 
 
   await page.mouse.dblclick(at.x, at.y)                                          // 두 번 = 조작 켜기
   await expect(fr).toHaveCSS('pointer-events', 'auto')
+  await settle(page)   // 켠 바로 뒤 누르기는 칸에 안 닿고 칠판으로 가 「끝」이 됨(2026-11-02 다른 PC — 크롬 154, 기다리면 늘 됨)
   await page.mouse.click(at.x, at.y)
   await expect(inner.locator('#v')).toHaveText('1')
   await clickScene(page, 300, 560)                                               // 바깥(카드 아래 빈 곳) = 끝
@@ -105,7 +109,7 @@ test('대화창 「+ › 움직이는 카드」 → 대화창에서 만져 보�
   const inner = page.frameLocator('[data-testid="answer-live"] iframe')
   await expect(inner.locator('#r')).toHaveText(/parent 막힘/)
   const f = await pv.boundingBox(), k = f.width / 720, r = await inner.locator('#inc').evaluate(e => { const b = e.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2] })
-  await page.mouse.click(f.x + r[0] * k, f.y + r[1] * k)                         // 대화창 안에선 바로 만져 봄
+  await settle(page); await page.mouse.click(f.x + r[0] * k, f.y + r[1] * k)     // 대화창 안에선 바로 만져 봄(막 뜬 칸 = 화면이 자리 잡을 때까지)
   await expect(inner.locator('#v')).toHaveText('1')
 
   await page.getByRole('button', { name: '칠판에 붙이기' }).last().click()

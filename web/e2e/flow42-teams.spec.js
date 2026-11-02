@@ -27,7 +27,9 @@ async function login(page, pw, who = '시험') {
   await page.getByRole('button', { name: '들어가기' }).click()
 }
 async function boardList(page) {
+  const got = page.waitForResponse(r => r.url().includes('/api/boards'))   // 판을 열 때마다 서버 목록을 다시 받음 — 받은 뒤 읽기(2026-11-02 다른 PC: 이 브라우저 줄 main만 먼저 읽힘)
   await page.getByTestId('board-title').click()
+  await got; await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))
   await expect(page.getByTestId('board-form')).toBeVisible()
   await expect(page.getByTestId('board-row').first()).toBeVisible()
   const rows = await page.getByTestId('board-row').getByTestId('board-name').allInnerTexts()

@@ -33,7 +33,7 @@ test('왼쪽 판 — 칸 바꾸기 · 열린 칸 다시 누르면 접힘(칠판 
   const w0 = (await page.getByTestId('board').boundingBox()).width
   await page.getByTestId('dock-frame').click()                                      // 열린 칸 = 접기
   await expect(page.getByTestId('dock-panel')).toHaveCount(0)
-  expect((await page.getByTestId('board').boundingBox()).width).toBeGreaterThan(w0 + 180)   // 판 192만큼
+  await expect.poll(async () => (await page.getByTestId('board').boundingBox()).width).toBeGreaterThan(w0 + 180)   // 판 192만큼(칠판 크기는 다음 그리기 때 — 기다림, 2026-11-02 다른 PC에서 바로 읽으면 옛 폭)
   await page.reload()
   await expect(page.getByText(`서버 「${name}」`).first()).toBeVisible()
   await expect(page.getByTestId('dock-panel')).toHaveCount(0)                       // 접은 것 기억

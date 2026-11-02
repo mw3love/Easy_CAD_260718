@@ -810,7 +810,7 @@ function Gate() {
   const check = async () => {   // 로그인이 필요한가 → (팀 서버면) 이 칠판을 써도 되나 — 주소에 칠판이 없으면 우리 팀 첫 칠판으로
     const s = await api.session(); setSs(s)
     if (s.auth && !s.ok) { setGate('login'); return }
-    if (s.team && AUTO_BOARD && s.home && (AUTO_BOARD === 'new' || s.board_ok === false)) { location.replace(`${location.pathname}?board=${encodeURIComponent(s.home)}`); return }   // 주소 없이 들어온 팀 = 우리 팀 첫 칠판(새 비밀 주소를 팀이 가져가지 않게)
+    if (s.team && AUTO_BOARD && s.home && (AUTO_BOARD === 'new' || s.board_ok === false)) { if (s.board_ok === false) forgetBoard(DOC_NAME); location.replace(`${location.pathname}?board=${encodeURIComponent(s.home)}`); return }   // 주소 없이 들어온 팀 = 우리 팀 첫 칠판(새 비밀 주소를 팀이 가져가지 않게)
     if (s.team && s.board_ok === false) { setGate('blocked'); return }
     if (s.gone) { forgetBoard(DOC_NAME); setGate('gone'); return }   // 지운 칠판 링크 = 빈 칠판을 만들지 않고 안내(2026-10-28), 「마지막 칠판」에서도 뺌
     // 남이 준 링크로 처음 연 칠판(이미 있고 내 목록에 없음) = 같이 쓰는 칠판 → 이름을 한 번 물음(혼자 쓰는 새 칠판은 안 물음 — 2026-10-27 Excalidraw처럼)

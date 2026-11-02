@@ -82,7 +82,7 @@ export function TextEditor({ spec, onDone }) {
     host.current.addEventListener('keydown', e => { if (e.key === 'Escape' && !sp.current.armed) escWhileEditing = e }, true)
     host.current.addEventListener('keydown', e => { if (e === escWhileEditing) e.stopPropagation() })
     const onDown = e => { if (e.button === 0 && host.current && !host.current.contains(e.target) && !e.target.closest?.('[data-keep-edit]')) finish() }   // 「글자」 카드를 누를 땐 계속
-    const tm = setTimeout(() => window.addEventListener('pointerdown', onDown, true), 0)   // 휠·오른쪽 바깥 누르기 = 화면 이동(끝내지 않음)
+    window.addEventListener('pointerdown', onDown, true); const tm = 0   // 휠·오른쪽 바깥 누르기 = 화면 이동(끝내지 않음) · 바로 붙임(2026-11-02 — 0초 타이머가 바쁘면 60ms 넘게 밀려 그사이 바깥 누르기를 놓침, 메모와 같은 까닭)
     // 대기 중 칠판을 누르면 포커스가 빠짐(이미 고른 도형을 다시 눌러 끌 때 등) — 손을 떼면 다시 받음(첫 글자·한글 입력기가 빠지지 않게)
     const onUp = () => { if (sp.current.armed && !host.current?.contains(document.activeElement) && mayTake(host.current)) focusNow(editor) }   // 버튼을 누른 뒤도(입력 칸만 빼고)
     window.addEventListener('pointerup', onUp)
