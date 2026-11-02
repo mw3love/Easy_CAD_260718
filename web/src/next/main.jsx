@@ -495,14 +495,20 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
   const toggleFull = () => { try { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen() } catch { /* 막힌 환경이면 그대로 */ } }
   const toggleDark = () => setDark(d => { try { localStorage.setItem('mb.theme', d ? 'light' : 'dark') } catch { /* 기억 못 해도 그만 */ } return !d })
   const [server, setServer] = useState(false), [srvKnown, setSrvKnown] = useState(false)   // srvKnown = 서버 답을 받음(대화창도 그 뒤에 — 처음 방문의 예시 대화가 복사된 뒤 읽게, 2026-10-28)
-  // 💬 AI 말풍선(2026-10-28) — 열린 말풍선(물건 _id)·물건마다 대화(서버 `<칠판>.threads.json`, 통째 저장 — 한 사람이 쓰는 기준)
+  // 💬 AI 말풍선(2026-10-28) — 열린 말풍선(물건 _id)·물건마다 대화(서버 `<칠판>.threads.json`)
+  // 두 창(2026-11-02): 보낼 땐 바뀐 물건 것만 → 서버가 파일과 합쳐(`collab.merge_threads`) 전체를 돌려줌 = 다른 창이 쓴 것도 받음. 말풍선을 열 때·창으로 돌아올 때도 받아 옴
   const [bubbles, setBubbles] = useState([]), [threads, setThreads] = useState({}), threadsRef = useRef({})
   const THREADS_URL = `/api/threads/${encodeURIComponent(DOC_NAME)}`
-  useEffect(() => { if (!server) return
-    fetch(THREADS_URL, { cache: 'no-store' }).then(r => (r.ok ? r.json() : {})).then(d => { if (d && typeof d === 'object' && !Array.isArray(d)) { threadsRef.current = d; setThreads(d) } }).catch(() => {}) }, [server])   // eslint-disable-line react-hooks/exhaustive-deps
+  const takeThreads = d => { if (!d || typeof d !== 'object' || Array.isArray(d)) return   // 받은 것 + 이 창 것(같은 메시지 = 이 창 것 — 늦게 온 옛 답이 방금 쓴 것을 지우지 않게, 서버 `merge_threads`와 같은 규칙)
+    const mine = threadsRef.current, next = { ...d }
+    for (const [id, ms] of Object.entries(mine)) { const by = new Map(); for (const m of [...(d[id] || []), ...ms]) by.set(m?.at != null ? `${m.role}|${m.at}` : `?${by.size}`, m); next[id] = [...by.values()].sort((a, b) => (a?.at || 0) - (b?.at || 0)) }
+    threadsRef.current = next; setThreads(next) }
+  const pullThreads = () => { if (server) fetch(THREADS_URL, { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(takeThreads).catch(() => {}) }
+  useEffect(() => { if (!server) return; pullThreads(); window.addEventListener('focus', pullThreads); return () => window.removeEventListener('focus', pullThreads) }, [server])   // eslint-disable-line react-hooks/exhaustive-deps
   const setThread = (id, msgs) => { const next = { ...threadsRef.current, [id]: msgs }; threadsRef.current = next; setThreads(next)
-    if (server) fetch(THREADS_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) }).catch(() => setStatus('말풍선 대화를 저장하지 못했어요')) }
-  const openBubble = id => setBubbles(bs => (bs.includes(id) ? bs : [...bs, id]))
+    if (server) fetch(THREADS_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [id]: msgs }) })
+      .then(r => (r.ok ? r.json() : Promise.reject(r))).then(d => takeThreads(d.threads)).catch(() => setStatus('말풍선 대화를 저장하지 못했어요')) }
+  const openBubble = id => { pullThreads(); setBubbles(bs => (bs.includes(id) ? bs : [...bs, id])) }
   // 서버 답 전(첫 0.1초)에도 서버 있는 모습으로 그림 — 「Magic Board」·흐린 공유·동그라미 없음 → 바뀌며 위 막대가 좌우로 밀렸음(2026-10-28 사용자 「새 칠판 누르면 살짝 깜빡」)
   const live = server || !srvKnown
   const [me, setMe] = useState(() => { try { return localStorage.getItem('mb.name') || '' } catch { return '' } }), [others, setOthers] = useState([]), [shareOpen, setShareOpen] = useState(false)

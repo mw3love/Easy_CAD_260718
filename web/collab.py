@@ -184,6 +184,22 @@ def merge_chatlog(old: dict | None, new: dict) -> tuple[dict, int]:
     return new, moved
 
 
+def merge_threads(old: dict | None, patch: dict) -> dict:
+    """💬 말풍선 대화(`<칠판>.threads.json` = {물건 _id: [메시지]}) — 창이 보낸 것(바뀐 물건만, 옛 창은 통째)을 파일과 합침(2026-11-02).
+    전엔 창마다 통째로 덮어 두 창이 서로 다른 물건에 쓴 대화도 지워졌음. 말풍선 메시지는 지우는 일이 없어(쌓이고 표시만 바뀜) 둘 다 남김 —
+    같은 메시지(역할 + 시각)는 보낸 쪽 것(「원래대로 ↔ 바꾼 것」 같은 표시 바꿈), 시각 순."""
+    out = {k: v for k, v in (old or {}).items() if isinstance(v, list)}
+    for oid, msgs in (patch or {}).items():
+        if not isinstance(msgs, list):
+            continue
+        by = {}
+        for m in (out.get(oid) or []) + msgs:   # 뒤(보낸 쪽)가 이김
+            if isinstance(m, dict):
+                by[_msg_key(m) or ("?", len(by))] = m
+        out[oid] = sorted(by.values(), key=lambda m: m.get("at") or 0)
+    return out
+
+
 # ── 팀별 칠판(§8 항목67, 2026-10-27) — 데이터 폴더 `teams.json` 한 파일. 없으면 지금과 똑같이(공용 비밀번호 하나) ──
 # 파일 = [{"name": "A팀", "password": "…", "key": "KAIROS 키(없으면 서버 키)", "base": "그 키의 게이트웨이 주소(다른 계정일 때만)", "boards": ["칠판", …]}]. 팀 = 비밀번호 하나 + 키 하나 + 칠판 여러 개.
 # 팀 열쇠로는 그 팀 `boards`와 「아직 아무도 안 쓴 이름」만 — 처음 저장하면 그 팀 `boards`에 더함. 팀 없는 옛 칠판은 관리자(`edit_password.txt`)만.

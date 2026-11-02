@@ -182,3 +182,17 @@ def test_presence_people_reads_without_pinging():
     assert p.people("b", now=108) == [{"id": "c1", "name": "가"}, {"id": "c2", "name": "나"}]
     assert p.people("b", now=112) == [{"id": "c2", "name": "나"}]
     assert p.people("없음", now=112) == []
+
+
+def test_threads_merge_two_windows():
+    """💬 말풍선 두 창(2026-11-02) — 다른 물건에 쓴 것도, 같은 물건에 번갈아 쓴 것도 남고, 표시 바꿈은 보낸 쪽, 옛 창의 통째 저장도 안 지움."""
+    old = {"X": [_q(1, "X 질문"), _a(2, "X 답")], "Y": [_q(3, "Y 질문")]}
+    d = collab.merge_threads(old, {"Z": [_q(5, "Z 질문")]})                                  # 바뀐 물건만 보냄
+    assert set(d) == {"X", "Y", "Z"} and len(d["X"]) == 2
+    d = collab.merge_threads(d, {"Y": [_q(4, "다른 창 Y 질문")]})                             # 같은 물건, 다른 창 = 둘 다, 시각 순
+    assert [m["at"] for m in d["Y"]] == [3, 4]
+    flip = dict(_a(2, "X 답"), fix={"on": False})
+    d = collab.merge_threads(d, {"X": [_q(1, "X 질문"), flip]})                               # 「원래대로」 = 보낸 쪽
+    assert d["X"][1]["fix"] == {"on": False} and len(d["X"]) == 2
+    d = collab.merge_threads(d, {"X": [_q(1, "X 질문")], "bad": "x"})                         # 옛 창의 통째 저장(일부만 앎) = 안 지움, 깨진 값은 무시
+    assert len(d["X"]) == 2 and "bad" not in d and collab.merge_threads(None, {"A": []}) == {"A": []}

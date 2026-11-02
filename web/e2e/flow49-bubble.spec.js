@@ -139,3 +139,24 @@ test('말풍선 3단계 — 표는 그 자리에서 칸이 바뀌고(줄 더하�
   expect(seen.at(-1).item).toMatchObject({ type: 'text', edit: 'text' })
   expect((await liveDoc(page)).items.find(it => it.type === 'text').text).toBe('점검 끝')
 })
+
+test('말풍선 두 창 — 다른 메모에 쓴 대화가 서로 안 지워짐 · 말풍선을 열면 다른 창이 쓴 대화도 보임(2026-11-02)', async ({ browser }) => {
+  const name = boardName('bubble2'), ca = await browser.newContext(), cb = await browser.newContext(), a = await ca.newPage(), b = await cb.newPage(), seen = []
+  await fake(a, seen); await fake(b, seen)
+  await openBoard(a, name); await setCam(a)
+  await pasteText(a, '# 첫 메모\n- 안테나 정상'); await expect.poll(async () => (await liveDoc(a)).items.length).toBe(1)
+  await a.mouse.click(1200, 700); await pasteText(a, '# 둘째 메모\n- 송신기 점검'); await expect.poll(async () => (await liveDoc(a)).items.length).toBe(2)
+  await waitSaved(a)
+  await openBoard(b, name); await expect.poll(async () => (await liveDoc(b)).items.length).toBe(2)
+  await openOn(a, '안테나 정상'); await openOn(b, '송신기 점검')                       // 두 창이 먼저 열어 둠(각자 빈 대화를 들고 있음)
+  const ba = a.getByTestId('bubble'), bb = b.getByTestId('bubble')
+  await ba.getByTestId('bubble-input').fill('A 창 질문'); await ba.getByTestId('bubble-input').press('Enter')
+  await expect(ba.getByTestId('bubble-a')).toHaveCount(1)
+  await bb.getByTestId('bubble-input').fill('B 창 질문'); await bb.getByTestId('bubble-input').press('Enter')
+  await expect(bb.getByTestId('bubble-a')).toHaveCount(1)
+  const file = async () => (await (await a.request.get(`/api/threads/${encodeURIComponent(name)}`)).json())
+  await expect.poll(async () => Object.values(await file()).map(t => t.length).sort()).toEqual([2, 2])   // 전엔 B 저장이 A 대화를 지웠음
+  await bb.getByTestId('bubble-close').click(); await openOn(b, '안테나 정상')          // B가 A의 메모 말풍선을 열면 A 대화가 보임
+  await expect(b.getByTestId('bubble').getByTestId('bubble-q')).toContainText('A 창 질문')
+  await ca.close(); await cb.close()
+})

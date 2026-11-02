@@ -1188,11 +1188,22 @@ class Handler(SimpleHTTPRequestHandler):
                     old = None
                 doc, moved = collab.merge_chatlog(old if isinstance(old, dict) else None, doc)
                 raw, rev = json.dumps(doc, ensure_ascii=False).encode("utf-8"), doc["rev"]
+            merged = None
+            if p.endswith(".threads.json") and isinstance(doc, dict):   # 💬 말풍선 = 물건마다 합치기(2026-11-02 — 두 창이 통째로 덮던 것), 합친 전체를 돌려줌
+                try:
+                    with open(p, encoding="utf-8") as f:
+                        old = json.load(f)
+                except (OSError, ValueError):
+                    old = None
+                merged = collab.merge_threads(old if isinstance(old, dict) else None, doc)
+                raw = json.dumps(merged, ensure_ascii=False).encode("utf-8")
             if os.path.exists(p):
                 root, ext = os.path.splitext(p)
                 prev = root + ".prev" + ext
                 write_via_temp(prev, lambda tmp: _copy(p, tmp))
             write_via_temp(p, lambda tmp: _write(tmp, raw))
+        if merged is not None:
+            return self._json(200, {"ok": True, "threads": merged})
         if rev is None:
             return self._send(200, b'{"ok":true}')
         self._json(200, {"ok": True, "rev": rev, "moved": moved})

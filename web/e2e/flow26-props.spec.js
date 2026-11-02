@@ -57,12 +57,16 @@ test('색 칸 = 한 덩이(어디 눌러도 색 창, 열리면 바로 코드 입
   expect((await last(page)).width).toBe(2)
 })
 
+// 대기 → 고치는 중으로 바뀐 뒤 고르기(2026-11-02 다른 PC — 바로 Shift+←를 누르면 편집기 속 고른 상태가 화면과 어긋남, 원인 확인 필요 — 사람 손 속도에선 안 생김)
+const editing = async page => { await expect(page.locator('[data-testid="text-editor"]:not([data-armed])')).toHaveCount(1); await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))) }
+
 test('글 고치는 중에도 속성 카드 — 「글자」 꾸밈 버튼 = 꾸미기 막대와 같은 줄, 드래그한 부분에만 먹음', async ({ page }) => {
   await openBoard(page, boardName('editprops')); await setCam(page)
   await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 200, y: 80 })
   await page.keyboard.type('ABCD')                                               // 고치는 중(아직 안 끝냄)
   await expect(page.getByTestId('props-fmt')).toBeVisible()                       // 전엔 고치는 중엔 속성 카드가 숨었음
   await expect(page.getByTestId('fmt-scope')).toHaveText(' · 글 전체에')        // 안 골랐으면 = 글 전체
+  await editing(page)
   await page.keyboard.press('Shift+ArrowLeft'); await page.keyboard.press('Shift+ArrowLeft')   // 「CD」만 고름
   await expect(page.getByTestId('fmt-scope')).toHaveText(' · 드래그한 글자에만')
   const bar = await page.getByTestId('format-bar').locator('button').evaluateAll(bs => bs.map(b => b.getAttribute('aria-label')))
@@ -72,6 +76,7 @@ test('글 고치는 중에도 속성 카드 — 「글자」 꾸밈 버튼 = 꾸
   await page.keyboard.press('Escape')
   expect((await last(page)).label.runs).toEqual([[2, 2, null, true]])            // 고른 「CD」에만
   await clickScene(page, 10, 10); await page.keyboard.press('Enter')             // 다시 고치기 — 「CD」를 골라 코드도 켬
+  await editing(page)
   await page.keyboard.press('End'); await page.keyboard.press('Shift+ArrowLeft'); await page.keyboard.press('Shift+ArrowLeft')
   await page.getByTestId('fmt-코드').click()
   await expect(page.getByTestId('fmt-굵게')).toHaveAttribute('aria-pressed', 'true')   // 코드를 켜도 굵게가 안 풀림(막대도 카드처럼 — 전엔 코드가 다른 꾸밈을 뗌)
