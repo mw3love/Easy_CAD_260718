@@ -112,6 +112,37 @@ export function channelHints(place, ends, ox = 0, oy = 0) {
   return out
 }
 
+/** 라벨 달린 짧은 화살표(옆 상자로 곧게) 틈을 남의 세로선이 지나면 그 선에 다른 세로 통로를 줌(처음 지을 때만, 경유지 `route_hints`) —
+ *  통로 = 지나는 높이에서 상자(여유 12)·라벨 틈(여유 6)에 안 걸리는 x 중 원래 자리에서 가장 가까운 곳. 못 찾거나 바꿔도 걸리면 그대로.
+ *  2026-11-03 실조건(공개 칠판 19·20번): 아래 줄 → 위 줄 되돌림 선(「제어」·「상태 보고·원격제어」)이 「출력 샘플」·「변조된 RF」 틈(119)을 세로로 지나 라벨 둘 자리가 없었음. */
+export function clearLabelGaps(items, x0, x1) {
+  const fs = HEAD_PT * PX, heads = items.filter(it => it.type === 'text').map(it => {   // 띠 이름표 글자도 피함(왼쪽 바깥 통로가 이름 위를 지날 수 있음)
+    const lines = String(it.text).split('\n'); return { l: it.pos[0], t: it.pos[1], r: it.pos[0] + Math.max(...lines.map(t => textW(t, fs))) + 8, b: it.pos[1] + lines.length * fs * 1.3 + 8 }
+  })
+  const boxes = items.filter(it => it.flow_step).map(it => ({ l: it.pos[0], t: it.pos[1], r: it.pos[0] + it.rect[2], b: it.pos[1] + it.rect[3] })).concat(heads)
+  const arrows = () => { const r = resolveRoutes(items); return items.map((it, i) => (it.type === 'sarrow' ? { it, pts: r.get(i) || it.pts } : null)).filter(Boolean) }
+  const gapsOf = as => as.filter(a => a.it.labels?.[0]?.text && a.pts.length === 2 && Math.abs(a.pts[0][1] - a.pts[1][1]) < 0.5)
+    .map(a => ({ a: a.it, y: a.pts[0][1], l: Math.min(a.pts[0][0], a.pts[1][0]), r: Math.max(a.pts[0][0], a.pts[1][0]) }))
+  const crossing = (a, gaps) => a.pts.slice(1).map((q, j) => [a.pts[j], q]).filter(([p, q]) => Math.abs(p[0] - q[0]) < 0.5)
+    .find(([p, q]) => gaps.some(g => g.a !== a.it && g.l + 4 < p[0] && p[0] < g.r - 4 && Math.min(p[1], q[1]) < g.y && g.y < Math.max(p[1], q[1])))
+  let as = arrows()
+  for (const a of as) {
+    if (a.it.route_hints?.length) continue
+    const gaps = gapsOf(as), hit = crossing(a, gaps); if (!hit) continue
+    const lo = Math.min(hit[0][1], hit[1][1]), hi = Math.max(hit[0][1], hit[1][1]), sx = hit[0][0]
+    const ok = x => !boxes.some(b => b.l - 12 < x && x < b.r + 12 && b.t < hi && lo < b.b) && !gaps.some(g => g.l - 6 < x && x < g.r + 6 && lo < g.y && g.y < hi)
+    let best = null
+    for (let x = Math.ceil(x0); x <= x1; x += 4) if (ok(x) && (best == null || Math.abs(x - sx) < Math.abs(best - sx))) best = x
+    if (best == null) continue
+    const A = a.pts[0], B = a.pts[a.pts.length - 1], old = a.it.route_hints
+    a.it.route_hints = [[best - (A[0] + B[0]) / 2 - a.it.pos[0], (lo + hi) / 2 - (A[1] + B[1]) / 2 - a.it.pos[1]]]
+    const next = arrows(), me = next.find(n => n.it === a.it)
+    if (crossing(me, gapsOf(next))) a.it.route_hints = old
+    else as = next
+  }
+  return items
+}
+
 /** 라벨을 제 선 위 빈자리로(처음 지을 때만 — 손으로 옮긴 라벨은 안 건드림): 가운데(또는 갈림길 옆)부터 조금씩 앞뒤로 옮겨 보며
  *  남의 화살표 선·상자·먼저 놓은 라벨·화살촉에 안 걸리는 첫 자리. 다 걸리면 그대로.
  *  2026-11-03 실조건(공개 칠판 19번): 곧게 내려가는 「전원 공급」 라벨 밑을 남의 가로선이 지나갔고 「출력 샘플」·「제어」 라벨이 서로 겹쳤음.
@@ -177,6 +208,7 @@ export function flowItems(place, X, Y, { id = newId(), no = 1, z = 1, zb = -1, s
       labels: k.text ? [{ text: k.text, color: INK, font: LABEL_PT, bg: null, t, off: 0 }] : [],
       _bind1: a._id, bind1_pt: pa, bind1_group: null, _bind2: b._id, bind2_pt: pb, bind2_group: null, z: z + 1, flow_of: id }))
   })
+  clearLabelGaps(out, ox, ox + place.width)
   placeLabels(out)
   const W = place.width + 2 * PAD, H = place.height + 2 * PAD
   const frame = { ...base([X, Y], { type: 'frame', rect: [0, 0, W, H], name: place.title || '도형', no, z: zb }), _id: id, flow_spec: spec }
