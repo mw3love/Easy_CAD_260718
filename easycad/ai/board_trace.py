@@ -261,7 +261,8 @@ def _clear_lines(spec: dict) -> dict:
     """글과 선·그림 겹침 줄이기(2026-11-03 사용자 — 「감시 서버」 위 모니터 그림, 세로선에 걸린 「VSWR 1.1」, 「송신기#1」의 「#」 낙서).
     ① 상자 이름 위의 작은 낙서(글자 높이보다 작은 poly — AI가 「#」 같은 글자 조각을 그림으로도 그림)는 뺀다(이름에 이미 있음).
     ② 상자 안 그림(아이콘)이 이름과 겹치면 이름을 그림 옆 빈 쪽에 맞게 줄이고(75%까지), 더 줄여야 하면 이름을 빈 쪽 가운데 자유 글로 옮긴다.
-    ③ 자유 글 가운데를 지나는 선은 가장 가까운 쪽으로 글을 비킨다(폭의 반·높이만큼까지, 새로 겹치지 않을 때만)."""
+    ③ 자유 글 가운데를 지나는 선은 가장 가까운 쪽으로 글을 비킨다(폭의 반·높이만큼까지, 새로 겹치지 않을 때만).
+    ④ 왼쪽에서 온 가로선이 글 머리 안에서 끝나면(범례 견본 화살표) 글을 선 끝 뒤로 민다 — ③보다 먼저(③은 글을 위로 올려 범례 줄이 어긋남)."""
     ops = [dict(op) if isinstance(op, dict) else op for op in spec.get("ops", [])]
     drop = set()
     boxes = [op for op in ops if isinstance(op, dict) and op.get("op") == "box" and op.get("label")]
@@ -340,6 +341,20 @@ def _clear_lines(spec: dict) -> dict:
         c = core(r)
         return any(_seg_cuts(p, q, c) for p, q in segs) or any(u is not t and _meet(r, _text_box(u)) for u in ts)
 
+    for t in ts:   # ④(③보다 먼저 — ③이 글을 위로 올려 범례 줄이 어긋났음) 왼쪽에서 온 가로선이 글 머리 안에서 끝나면(범례 견본 화살표 끝이 「신호선 …」 머리에 걸림 — 같은 날 진짜 단추 시험) 글을 선 끝 뒤로
+        r = _text_box(t)
+        h = r[3] - r[1]
+        gap = 0.3 * h
+        ends = [max(float(p[0]), float(q[0])) for p, q in segs
+                if abs(float(q[1]) - float(p[1])) < 0.2 * abs(float(q[0]) - float(p[0]))
+                and r[1] + 0.1 * h <= (float(p[1]) + float(q[1])) / 2 <= r[3] - 0.1 * h
+                and min(float(p[0]), float(q[0])) < r[0] < max(float(p[0]), float(q[0])) + gap]
+        if not ends:
+            continue
+        dx = max(ends) + gap - r[0]
+        nr = (r[0] + dx, r[1], r[2] + dx, r[3])
+        if 0 < dx <= 0.6 * (r[2] - r[0]) and not bad(t, nr):
+            t["x"] = float(t["x"]) + dx
     for t in ts:   # ③
         r = _text_box(t)
         c = core(r)

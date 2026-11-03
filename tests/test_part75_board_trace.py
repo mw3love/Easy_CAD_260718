@@ -355,3 +355,19 @@ def test_desktop_multiline_box_label_centers_each_line_and_reads_web_ha():
     assert abs(box.center().x() - 100) < 3                                    # 이름 덩어리는 상자 가운데
     assert left._label.pos().x() < 30                                          # 여백 끝(폭 200 × 0.85 → 왼쪽 15)
     assert item_to_dict(left)["label"]["ha"] == "left"
+
+
+def test_trace_clear_lines_pushes_text_past_legend_sample_arrow():
+    """범례 견본 화살표 끝이 글 머리에 걸리면(2026-11-03 진짜 단추 시험 — 「신호선 (RF/오디오/데이터)」만 화살표 끝보다 앞에서 시작) 글을 화살표 끝 뒤로.
+    이미 화살표 뒤에서 시작하는 글·화살표가 가리키는 글(세로선)은 그대로."""
+    spec = {"ops": [
+        {"op": "line", "pts": [[0, 100], [70, 100]], "head": True},
+        {"op": "text", "x": 40, "y": 92, "text": "신호선 (RF/오디오/데이터)", "font": 16},   # 화살표(y 100)가 글 줄 가운데
+        {"op": "line", "pts": [[0, 140], [70, 140]], "head": True},
+        {"op": "text", "x": 80, "y": 128, "text": "감시 신호 (이더넷)", "font": 18},
+        {"op": "line", "pts": [[300, 0], [300, 60]], "head": True},
+        {"op": "text", "x": 280, "y": 62, "text": "- 50Ω", "font": 16},
+    ]}
+    out = board_trace._clear_lines(spec)["ops"]
+    assert out[1]["x"] > 70                                     # 화살표 끝(70) 뒤로
+    assert out[3]["x"] == 80 and out[5]["x"] == 280             # 그 밖은 그대로
