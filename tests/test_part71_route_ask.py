@@ -54,9 +54,9 @@ def test_icon_words_ask_by_words_and_remember():
     assert route.route("k", "펭귄 아이콘 그려줘") == ("image", "rules")   # 안 물었으면 갈 길은 그대로(주간 자가 시험 `CASES`)
 
 
-def test_diagram_word_구성도():
-    assert route.adjust("송신소 구성도 만들어 줘", "image", 0.8, {"image": 0.8, "chat": 0.2}) == "chat"
-    assert board_chat.guess_kind("송신소 구성도 그려 줘") == "chat"
+def test_diagram_word_구성도():   # 2026-10-23 그림으로 갔음 → 11-03부터 🔷 도형(고칠 수 있는 상자 + 화살표)
+    assert route.adjust("송신소 구성도 만들어 줘", "image", 0.8, {"image": 0.8, "chat": 0.2}) == "diagram"
+    assert board_chat.guess_kind("송신소 구성도 그려 줘") == "diagram"
 
 
 @pytest.fixture
@@ -114,15 +114,16 @@ def test_server_typed_reply_and_remembered_flag(server):
     assert "remembered" not in _post(base, kind="icon", messages=[{"role": "user", "content": "펭귄 아이콘 그려줘"}])   # 버튼·이름표로 고른 건 기억이 아님
 
 
-def test_diagram_draw_asks_and_style_words_mean_picture():
+def test_diagram_draw_goes_to_shapes_and_style_words_mean_picture():
     """2026-11-03 사용자 검토 — 「손으로 그린 듯한 … 계통도를 그려 줘. 연필 스케치 느낌」이 「계통도」 때문에 대화로 떨어져 SVG 코드 글이 나왔음.
-    그림 느낌 말 = 그림, 없이 「계통도 그려 줘」 = 그림 vs 고칠 도형 한 번 물음(도형 먼저 — 고칠 수 있는 쪽), 같은 갈림길 기억(`icon|image`) 따름."""
+    그림 느낌 말 = 그림. 없이 「계통도 그려 줘」 = 처음엔 아이콘 vs 그림을 물었지만 같은 날 저녁 사용자 결정으로 묻지 않고 🔷 도형(`board_diagram`)."""
     mine = "손으로 그린 듯한 방송 송신소 계통도를 그려 줘. 흰 종이에 연필 스케치 느낌. 상자 5개를 화살표로 연결."
     assert board_chat.guess_kind(mine) == "image" and route.adjust(mine, "image", 0.6, {"image": 0.6, "chat": 0.3}) == "image"
     assert route.decide("k", mine)[0] == "image"
-    assert route.decide("k", "송신소 계통도 그려 줘") == ("icon", "rules", ["icon", "image"])
-    assert route.decide("k", "송신소 계통도 그려 줘", prefs={"icon|image": "image"}) == ("image", "rules", [])
-    assert route.decide("k", "흐름도 그리는 방법 알려 줘")[2] == [] and route.decide("k", "구성도를 표로 정리해 줘")[2] == []
+    assert route.decide("k", "송신소 계통도 그려 줘") == ("diagram", "rules", [])
+    assert route.decide("k", "송신소 계통도 그려 줘", prefs={"icon|image": "image"}) == ("diagram", "rules", [])   # 옛 갈림길 기억은 상관없음
+    assert route.decide("k", "점검 순서 흐름도 만들어 줘")[0] == "diagram" and route.decide("k", "KBS 조직도 그려줘")[0] == "diagram"
+    assert route.decide("k", "흐름도 그리는 방법 알려 줘") == ("chat", "rules", []) and route.decide("k", "구성도를 표로 정리해 줘")[0] != "diagram"
 
 
 def test_chat_answer_svg_code_goes_to_picture_slot():

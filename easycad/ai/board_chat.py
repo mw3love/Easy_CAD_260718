@@ -40,15 +40,19 @@ _BOARD_WORDS = re.compile(r"지난번|저번|예전에|아까|칠판에(서)?\s*
 _IMAGE_WORDS = re.compile(r"그려\s*(줘|주세요|봐)|그림\s*(을|으로|좀)?\s*(그려|만들|생성)|이미지\s*(를|로)?\s*(만들|생성|그려)|일러스트|삽화|캐릭터\s*(만들|그려)")
 _DIAGRAM_WORDS = re.compile(r"흐름도|순서도|플로우|도면|계통도|구성도|다이어그램|표로|마인드맵|조직도")   # 구성도 = 2026-10-23 측정(「송신소 구성도」가 그림으로 갔음)
 # 그림 느낌 말(2026-11-03 사용자 검토) — 「손으로 그린 듯한 계통도를 그려 줘. 연필 스케치 느낌」은 그림인데 「계통도」 때문에 대화로 떨어져 SVG 코드 글이 나왔음.
-# 이런 말이 있으면 흐름도·계통도라도 그림. 없이 「계통도 그려 줘」만이면 뜻이 둘(그림 vs 고칠 도형) → 한 번 물음(`maybe_diagram`, §8 항목64 되묻기)
+# 이런 말이 있으면 흐름도·계통도라도 그림. 없이 「계통도 그려 줘」만이면 고칠 수 있는 도형(`is_diagram` — 같은 날 저녁 사용자 결정: 묻지 않고 바로, 답 밑 「이미지로 다시」)
 _STYLE_WORDS = re.compile(r"손으로\s*그린|손그림|연필|스케치|수채화|유화|크레파스|일러스트|삽화|사진\s*(처럼|같이|같은)|그림체|만화")
 _DRAW_DIAGRAM = re.compile(r"흐름도|순서도|플로우|도면|계통도|구성도|다이어그램|마인드맵|조직도")   # 「표로」는 뺌(표는 그리기가 아님)
 
 
-def maybe_diagram(text: str) -> bool:
-    """「송신소 계통도 그려 줘」 — 그림(이미지)일 수도·고칠 도형일 수도 → 대화창이 되물음. 그림 느낌 말이 있으면 그림이라 아님."""
+_DIAGRAM_MAKE = re.compile(r"그려|그리|만들|작성|짜\s*(줘|주세요|봐)")
+
+
+def is_diagram(text: str) -> bool:
+    """「송신소 계통도 그려 줘」·「점검 순서 흐름도 만들어 줘」 = 고칠 수 있는 도형(🔷 도형 그리기 — `board_diagram`).
+    2026-11-03 사용자 결정: 묻지 않고 바로 도형, 그림 느낌 말(연필·스케치…)이 있으면 그림. 만드는 법·뜻을 묻는 말은 아님."""
     t = text or ""
-    return bool(_IMAGE_WORDS.search(t) and _DRAW_DIAGRAM.search(t) and not _STYLE_WORDS.search(t) and not _HOWTO_WORDS.search(t))
+    return bool(_DRAW_DIAGRAM.search(t) and _DIAGRAM_MAKE.search(t) and not _STYLE_WORDS.search(t) and not _HOWTO_WORDS.search(t))
 
 
 # 아이콘(§8 항목63) — 선을 고칠 수 있는 SVG 도형(`board_icon`). 뜻이 분명한 말(SVG·벡터·선 그림) + 만들기 말이 같이 있을 때만.
@@ -103,7 +107,7 @@ _NO_SEARCH = re.compile(r"칠판에서 고른|이 (메모|글|카드)|위 (내�
 
 
 def guess_kind(text: str, has_context: bool = False) -> str:
-    """질문 → "report"(정리 문서) | "board"(칠판에서 찾아 답) | "icon"(아이콘 후보) | "image"(그림 후보) | "search"(웹 검색) | "chat"(대화).
+    """질문 → "report"(정리 문서) | "board"(칠판에서 찾아 답) | "icon"(아이콘 후보) | "diagram"(🔷 도형) | "image"(그림 후보) | "search"(웹 검색) | "chat"(대화).
     낱말 규칙(데스크톱 `guess_kind`처럼) — 칠판에서 고른 글을 다루는 말이면 대화."""
     t = text or ""
     if _REPORT_WORDS.search(t) and (has_context or _DOC_WORDS.search(t) or not _has_topic(t)):
@@ -112,6 +116,8 @@ def guess_kind(text: str, has_context: bool = False) -> str:
         return "board"
     if is_icon(t):
         return "icon"
+    if is_diagram(t):   # 「계통도 그려 줘」 = 🔷 도형(2026-11-03)
+        return "diagram"
     if _IMAGE_WORDS.search(t) and (not _DIAGRAM_WORDS.search(t) or _STYLE_WORDS.search(t)):   # 그림 느낌 말 = 흐름도라도 그림(2026-11-03)
         return "image"
     if has_context and _NO_SEARCH.search(t):

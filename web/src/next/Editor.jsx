@@ -14,6 +14,7 @@ import { alignSnap } from './align.js'
 import { CHART_MIN, isChart } from './chart.js'
 import { deepLayout, deepWaste, variantsOf } from './deep.js'
 import { deepHead, deepMeasure, deepSection } from './deepboard.js'
+import { flowItems, flowSig } from './flowboard.js'
 import { styleOf } from './deepstyle.js'
 import { ROUTE_BOX, bindPt, dropTarget, edgeMid, bindEnd, groupFrac, groupHost, hostPorts, isBindHost, isConnHost, isHollow, isSnapLine, nearestBorder, OPP, qcDelta, qcDots, snapAt } from './connect.js'
 import { routeOrtho } from '../route.js'
@@ -161,7 +162,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, liveModel: () => R.current.model, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, skipFrames, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, selImageIds, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, setImage, slidesBoard, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, liveModel: () => R.current.model, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, skipFrames, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, selImageIds, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, setImage, slidesBoard, flowBoard, flowTarget, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -977,6 +978,37 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     bringIn({ x: at.x, y: at.y, w: BW, h: BH }); setTool('select')
     setStatus(`발표 자료 ${pages.length}장 — 위 막대 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모`)
     return { ids, frames: pages.length }
+  }
+  // 🔷 도형 그리기(2026-11-03) — 서버 자리(`board_diagram.place`) → 프레임 안 띠·상자·붙은 화살표(flowboard.js), Ctrl+Z 한 번.
+  // into = 이어 고칠 도형 프레임 _id — 손으로 안 고쳤으면 그 자리에서 다시 짓고(_id·번호 그대로), 고쳤으면 덮지 않고 오른쪽 옆에 새로. { id, replaced }
+  function flowBoard(res, into = '') {
+    const pl = res?.place; if (readOnly || !pl?.steps?.length) return null
+    const m = R.current.model, old = into ? m.items.find(it => it._id === into && it.flow_spec != null) : null
+    const edited = old && flowSig(m.items.filter(it => it.flow_of === old._id), old.pos[0], old.pos[1]) !== old.flow_sig
+    const W = pl.width + 80, H = pl.height + 80
+    if (old && !edited && !old.locked) {
+      const rest = m.items.filter(it => it._id !== old._id && it.flow_of !== old._id), z = Math.max(1, ...m.items.filter(it => it.flow_of === old._id).map(it => (it.z ?? 0) - 2))
+      const r = flowItems(pl, old.pos[0], old.pos[1], { id: old._id, no: old.no, z, zb: old.z ?? -1, spec: res.spec })
+      commit([...rest, { ...r.frame, name: old.name && old.name !== old.flow_title ? old.name : r.frame.name, flow_title: r.frame.name }, ...r.items], [old._id], '도형 고치기')
+      bringIn({ x: old.pos[0], y: old.pos[1], w: W, h: H }); setTool('select')
+      setStatus(`도형을 고쳐 다시 그렸어요 — 상자 ${pl.steps.length}개 · Ctrl+Z로 되돌리기`)
+      return { id: old._id, replaced: true }
+    }
+    const c = R.current.cam, view = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
+    const ctr = old ? { x: old.pos[0] + old.rect[2] + 80 + W / 2, y: old.pos[1] + H / 2 } : { x: view.x + view.w / 2, y: view.y + view.h / 2 }
+    const at = nearSpot(ctr, hitPool().map(it => sceneBox(it, textBox)), W, H, { pad: 48, step: 96 })
+    const r = flowItems(pl, at.x, at.y, { no: nextFrameNo(m.items), z: topZ(m.items) + 1, zb: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, spec: res.spec })
+    commit([...m.items, { ...r.frame, flow_title: r.frame.name }, ...r.items], [r.frame._id], '도형 그리기')
+    bringIn({ x: at.x, y: at.y, w: W, h: H }); setTool('select')
+    setStatus(old ? '손으로 고친 도형은 그대로 두고 고친 도형을 옆에 새로 그렸어요' : `도형 ${pl.steps.length}개를 그렸어요 — 상자를 옮기면 화살표가 따라와요 · Ctrl+Z로 되돌리기`)
+    return { id: r.frame._id, replaced: false }
+  }
+  // 고른 것이 도형 판 하나(프레임이나 그 안 물건)면 { id, spec } — 대화창이 「○○ 추가해 줘」를 그 도형 고치기로 보냄. 아니면 null
+  function flowTarget(id = '') {
+    const m = R.current.model, sel = id ? [id] : R.current.sel, roots = new Set()
+    for (const s of sel) { const it = m.items.find(x => x._id === s); if (!it) continue; const root = it.flow_spec != null ? it : it.flow_of ? m.items.find(x => x._id === it.flow_of) : null; if (!root) return null; roots.add(root) }
+    if (roots.size !== 1) return null
+    const [r] = roots; return { id: r._id, spec: r.flow_spec }
   }
   // 장 하나 그리기(발표 자료 2단계 모양 — 서버 `slides.LAYOUTS`): 표지 = 왼쪽 코랄 띠 + 큰 제목 · 글머리·마무리 = 제목 밑 코랄 줄 + 줄 글 · 숫자 = 큰 숫자 칸 2~3개 · 단계 = 번호 붙은 둥근 줄 · 한마디 = 큰 한 문장.
   // s = 장(`slide`, layout 정해진 것), i = 몇째 장(0부터 — 발표자 메모 머리), X·Y = 프레임 왼쪽 위, cv = 표지 그림 { data, w, h, alt }. 프레임 밖 아래 = 발표자 메모

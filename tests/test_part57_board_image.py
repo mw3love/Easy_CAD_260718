@@ -49,7 +49,7 @@ def test_generate_reads_data_url_b64_and_http():
 def test_guess_image_but_diagrams_stay_chat():
     assert board_chat.guess_kind("산 위 송신탑 그려줘") == "image"
     assert board_chat.guess_kind("송신탑 일러스트 만들어 줘") == "image"
-    assert board_chat.guess_kind("로그인 흐름도 그려줘") == "chat"          # 칠판 도형으로 그릴 것은 그림 모델이 아님
+    assert board_chat.guess_kind("로그인 흐름도 그려줘") == "diagram"       # 칠판 도형으로 그릴 것은 그림 모델이 아님 — 2026-11-03부터 🔷 도형 그리기
     assert board_chat.guess_kind("지난번 그린 그림 뭐였지") == "board"
     assert board_chat.guess_kind("그림 그리는 법 알려줘") == "chat"
 

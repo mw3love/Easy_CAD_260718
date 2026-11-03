@@ -35,6 +35,7 @@ const KINDS = {
   tidy: ['🧩 정리정돈', { color: '#0f766e', background: 'rgba(15,118,110,.12)' }],   // 옛 기록 표시만(정리정돈은 2026-10-25 뺐다)
   image: ['🎨 이미지', { color: '#9333ea', background: 'rgba(147,51,234,.12)' }],
   icon: ['✏️ 아이콘 (SVG)', { color: '#0e7490', background: 'rgba(14,116,144,.12)' }],
+  diagram: ['🔷 도형', { color: '#2563eb', background: 'rgba(37,99,235,.10)' }],   // 상자 + 붙은 화살표(2026-11-03 — flowboard.js)
   live: ['▶ 인터랙티브 HTML', { color: '#b4532f', background: 'rgba(218,119,86,.14)' }],   // 원리를 직접 만져 보는 카드(§8 항목66 4단계)   // 선을 고칠 수 있는 도형(§8 항목63)
   ask: ['❓ 확인', { color: 'var(--mb-accent)', background: 'rgba(218,119,86,.12)' }],   // 되묻기(§8 항목64) — 만들기 전에 버튼으로
   deep: ['📰 Deep Mode', { color: '#b4532f', background: 'rgba(180,83,47,.12)' }],
@@ -50,11 +51,12 @@ const askMemo = () => { try { return JSON.parse(localStorage.getItem(ASK_KEY) ||
 const askPrefs = () => Object.fromEntries(Object.entries(askMemo()).filter(([, v]) => Array.isArray(v) && v.length >= 2 && v.at(-1) === v.at(-2)).map(([k, v]) => [k, v.at(-1)]))
 const rememberAsk = (key, kind) => { try { const m = askMemo(); m[key] = [...(m[key] || []), kind].slice(-2); localStorage.setItem(ASK_KEY, JSON.stringify(m)) } catch { /* 기억 못 해도 그만 */ } }
 // 기다리는 동안 보일 말 — 일마다 실제로 일하는 모델(서버 /api/models `jobs`)을 같이(2026-10-20 사용자: 정돈인데 고른 gpt가 보여 헷갈림, 칠판엔 아무 표시가 없어 안 되는 줄 알았음)
-const JOB_LABEL = { 'slides-plan': '📽 장 계획 짜는 중', 'slides-build': '📽 발표 자료 만드는 중', live: '▶ 인터랙티브 HTML 만드는 중', report: '📄 정리 문서 만드는 중', image: '🎨 이미지 그리는 중', icon: '✏️ 아이콘(SVG) 그리는 중', 'deep-plan': '📰 지면 계획 짜는 중', 'deep-build': '📰 Deep Mode 판 만드는 중', 'deep-section': '📰 꼭지 다시 쓰는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
+const JOB_LABEL = { 'slides-plan': '📽 장 계획 짜는 중', 'slides-build': '📽 발표 자료 만드는 중', live: '▶ 인터랙티브 HTML 만드는 중', report: '📄 정리 문서 만드는 중', image: '🎨 이미지 그리는 중', icon: '✏️ 아이콘(SVG) 그리는 중', diagram: '🔷 도형 그리는 중', 'deep-plan': '📰 지면 계획 짜는 중', 'deep-build': '📰 Deep Mode 판 만드는 중', 'deep-section': '📰 꼭지 다시 쓰는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
 // 「+」 도구 — [길, 이름, 설명, 입력 칸 안내]. 서버는 길(`kind`)을 그대로 따름. 이름은 2026-10-25 사용자(어색한 한글 → 영어 섞어),
 // 정리 문서는 「+」에서 뺌(고르고 우클릭 「정리 문서 만들기」·「정리해 줘」 말이 맡음)
 const TOOLS = [['image', '🎨 이미지 만들기', '사진·일러스트 같은 그림', '무엇을 그릴까요? 예: 산 위 송신탑 수채화'],
   ['icon', '✏️ 아이콘 만들기 (SVG)', '선으로 된 도형 — 칠판에서 고칠 수 있어요', '무엇의 아이콘? 예: 파라볼라 안테나'],
+  ['diagram', '🔷 도형 그리기 (흐름도·계통도)', '상자와 화살표 — 상자를 옮기면 화살표가 따라와요(약 15크레딧)', '무엇을 그릴까요? 예: 송신소 계통도'],
   ['live', '▶ 인터랙티브 HTML', '원리를 직접 만져 보는 HTML 카드 하나(고른 것이 재료, 약 45크레딧)', '무엇을 움직여 볼까요? 예: 가격 × 물량 = 수출액'],
   ['deep', '📰 Deep Mode', '한 주제로 칠판 한 판 — 질문지 → 지면 계획 → 만들기(크레딧 많이)', '어떤 주제로 한 판? 예: 신입에게 어텐션 설명'],
   ['slides', '📽 발표 자료', '고른 자료나 주제로 프레임 여러 장 — 질문지 → 장 계획 → 만들기, 바로 발표', '무엇을 발표할까요? 예: 고른 점검 메모로 팀 공유 발표']]   // 딥모드는 서버가 할 수 있을 때만(/api/models `jobs.deep`)
@@ -92,7 +94,7 @@ const LOG_URL = `/api/chatlog/${encodeURIComponent(DOC_NAME)}`
 const MODEL_KEY = 'magic-board-model'   // 고른 모델은 이 브라우저에만 기억(편의)
 const PICKS_KEY = 'magic-board-models'  // 「모델 설정」 — 일마다 고른 모델 {일: id}(없으면 자동, 2026-10-26)
 // 「모델 설정」 칸 — 고를 의미가 있는 일만(2026-10-26 사용자 선택). 길 고르기·검색·받아쓰기·찾기·글 읽기는 늘 자동. [일, 이름, 종류(서버 choices), 서버 jobs 이름]
-const PICK_ROWS = [['chat', '대화 · 회의 요약', 'llm'], ['image', '이미지', 'image'], ['icon', '아이콘 (SVG)', 'llm'], ['report', '정리 문서', 'llm'], ['live', '인터랙티브 HTML', 'llm'],
+const PICK_ROWS = [['chat', '대화 · 회의 요약', 'llm'], ['image', '이미지', 'image'], ['icon', '아이콘 (SVG)', 'llm'], ['diagram', '도형 그리기', 'llm'], ['report', '정리 문서', 'llm'], ['live', '인터랙티브 HTML', 'llm'],
   ['deep_plan', 'Deep Mode 지면 계획', 'llm'], ['deep_write', 'Deep Mode 본문', 'llm']]
 const JOB_PICK = { 'slides-plan': 'slides', 'slides-build': 'slides', 'deep-plan': 'deep_plan', 'deep-build': 'deep_write', 'deep-section': 'deep_write' }   // 기다리는 일 → 그 일의 모델 칸
 const VENDOR = { gpt: 'GPT', gemini: 'Gemini', claude: 'Claude' }
@@ -272,16 +274,19 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   const chatPost = body => { const ac = new AbortController(); stopRef.current = ac
     return fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() }, body: JSON.stringify(body), signal: ac.signal })
       .catch(e => { throw e.name === 'AbortError' ? new Error('취소했어요 — 서버에서 이미 시작한 일은 끝까지 가서 크레딧이 들 수 있어요') : e }) }
-  async function ask(history, kind = '', prevHtml = '', extra = {}) {   // prevHtml = 바로 앞 답이 정리 문서면 그 HTML(「더 짧게」 = 그 문서 고치기 — 서버가 판단)
+  async function ask(history, kind = '', prevHtml = '', extra0 = {}) {   // prevHtml = 바로 앞 답이 정리 문서면 그 HTML(「더 짧게」 = 그 문서 고치기 — 서버가 판단)
+    const { flow_into: flowInto = '', ...extra } = extra0   // 이어 고칠 도형 프레임(서버엔 안 보냄 — 설계서만 `base_flow`로)
     const q = history.filter(m => m.role === 'user').at(-1)?.content || ''
     const prefs = kind ? {} : askPrefs()
     const r = await chatPost({ model: useModel, board: DOC_NAME, ...(Object.keys(picks).length ? { models: picks } : {}), ...(kind ? { kind } : {}), ...(Object.keys(prefs).length ? { ask_pref: prefs } : {}), ...(prevHtml ? { prev_html: prevHtml } : {}), ...(history.at(-1)?.infographic ? { infographic: true } : {}), ...(history.at(-1)?.base_image ? { base_image: history.at(-1).base_image } : {}), ...(history.at(-1)?.base_svg ? { base_svg: history.at(-1).base_svg } : {}), ...extra, messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) })
     const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
     if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
+    const fb = d.kind === 'diagram' && d.place ? ed.current?.flowBoard?.({ spec: d.spec, place: d.place }, d.fixed ? flowInto : '') : null   // 🔷 도형 = 받자마자 칠판에(데스크톱 원칙 — 만들면 바로 넣고 아니면 Del)
     return { role: 'assistant', content: d.content, model: d.model, ...(d.swap ? { swap: d.swap } : {}), ...(d.cut ? { cut: true } : {}),   // cut = 길이 상한에 걸려 끊김(2026-10-27)
       at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}), ...(d.refs?.length ? { refs: d.refs } : {}),
       ...(d.images?.length ? { images: d.images, prompt: d.caption || history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}),
-      ...(d.svgs?.length ? { svgs: d.svgs, prompt: history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}), ...(d.credits != null ? { credits: d.credits } : {}),   // caption = 이어 고친 그림이면 처음 요청(서버)
+      ...(d.svgs?.length ? { svgs: d.svgs, prompt: history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}), ...(d.credits != null ? { credits: d.credits } : {}),
+      ...(d.kind === 'diagram' && d.place ? { flow: d.spec, place: d.place, flowId: fb?.id || '' } : {}),   // caption = 이어 고친 그림이면 처음 요청(서버)
       ...(d.html ? { html: d.html, title: d.title || (d.kind === 'live' ? '인터랙티브 HTML' : '정리 문서') } : {}), ...(d.kind === 'ask' ? { choices: d.choices || [], askKey: d.key || '' } : {}),
       ...(d.remembered ? { askKey: d.remembered.key, alt: (d.remembered.choices || []).filter(k => k !== d.kind) } : {}) }   // 기억으로 고른 답 — 「다른 쪽으로」 버튼
   }
@@ -318,11 +323,13 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     const base = ims[Math.min(pick, ims.length - 1)]?.url
     const svs = lastA?.role === 'assistant' ? lastA.svgs || [] : [], baseSvg = svs[Math.min(pick, svs.length - 1)]   // 아이콘 뒤 「선을 더 굵게」 = 고른(붙인) 아이콘 고치기 — 고칠 말인지는 서버가 봄
     const boardImgs = from || !selImgs.length ? [] : await Promise.all(selImgs.map(shrinkImage))   // 칠판에서 고른 그림 = 고칠 그림(기록엔 장수만)
+    // 🔷 이어 고칠 도형 = 칠판에서 고른 도형 판, 없으면 바로 앞 도형 답의 판(지웠으면 없음) — 고칠 말인지는 서버가 봄(`board_diagram.FOLLOW_WORDS`)
+    const fl = from ? null : ed.current?.flowTarget?.() || (lastA?.kind === 'diagram' && lastA.flowId ? ed.current?.flowTarget?.(lastA.flowId) : null)
     const mine = { role: 'user', content: q, at: Date.now(), ...(ctx ? { context: ctx, ctxCount: n } : {}), ...(from ? { infographic: true } : {}), ...(base ? { base_image: base } : {}), ...(baseSvg ? { base_svg: baseSvg } : {}),
       ...(ri >= 0 ? { reply_to: replyTo } : {}), ...(boardImgs.length ? { imgCount: boardImgs.length } : {}) }
     const next = [...msgs.filter(m => m.role !== 'error'), mine]
     update(next); setReplyTo(null); if (text == null) setDraft(''); setBusy(Date.now()); setBusyJob(kind)
-    try { update([...next, await ask([...before, mine], kind, (!kind || kind === 'report' || kind === 'live') && lastA?.role === 'assistant' && lastA.html && (kind !== 'live' || lastA.kind === 'live') ? lastA.html : '', { ...(boardImgs.length ? { board_images: boardImgs } : {}), ...(lastA?.kind === 'live' ? { prev_kind: 'live' } : {}) })]) } catch (e) {
+    try { update([...next, await ask([...before, mine], kind, (!kind || kind === 'report' || kind === 'live') && lastA?.role === 'assistant' && lastA.html && (kind !== 'live' || lastA.kind === 'live') ? lastA.html : '', { ...(boardImgs.length ? { board_images: boardImgs } : {}), ...(lastA?.kind === 'live' ? { prev_kind: 'live' } : {}), ...(fl?.spec ? { base_flow: fl.spec, flow_into: fl.id } : {}) })]) } catch (e) {
       setMsgs([...next, { role: 'error', content: String(e.message || e) }])   // 오류는 기록에 안 남김
     } finally { setBusy(null) }
   }
@@ -453,6 +460,11 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     try { const a = await ask(sent, k, '', { ...extra, ...(boardImgs.length ? { board_images: boardImgs } : {}) }); update([...shown, a, ...msgs.slice(i + 1)]) } catch (e) {
       setMsgs([...msgs.filter(x => x.role !== 'error'), { role: 'error', content: String(e.message || e) }])
     } finally { setBusy(null) }
+  }
+  // 🔷 도형 답 → 칠판의 그 판으로(지웠으면 받은 자리로 다시 지음 — AI 안 부름)
+  function showFlow(i) {
+    const m = msgs[i]; if (m.flowId && ed.current?.showIds([m.flowId])) return
+    const r = ed.current?.flowBoard?.({ spec: m.flow, place: m.place }); if (r) setMsg(i, { flowId: r.id })
   }
   function pin(i) {
     const m = msgs[i]
@@ -700,6 +712,10 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
                     <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgPreview(sv))}`} alt={`아이콘 후보 ${j + 1}`} draggable={false} style={{ display: 'block', width: '100%', height: '100%', padding: 10, boxSizing: 'border-box' }} />
                     {flash === `${i}:${j}` && <span style={{ position: 'absolute', left: 6, top: 6, ...css.meta, color: DONE, background: '#fff', borderRadius: 4, padding: '0 4px' }}>✓ 추가됨</span>}
                   </div> })}</div>}
+              {m.kind === 'diagram' && m.place && <div data-testid="answer-diagram" style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                <button data-testid="diagram-show" style={css.pin} onClick={() => showFlow(i)} title="칠판의 그 도형으로 가기(지웠으면 다시 그려 놓아요 — 크레딧 없음)">🔷 칠판에서 보기</button>
+                <button data-testid="diagram-image" style={css.ghost} disabled={!!busy} onClick={() => choose(i, 'image')} title="같은 말로 이미지 후보 2장(약 20크레딧) — 보기 좋지만 상자·글을 고칠 수는 없어요. 칠판의 도형은 그대로">🎨 이미지로 다시</button>
+              </div>}
               {canMore(m) && <div style={{ marginTop: 6 }}><button data-testid="answer-more" style={css.ghost} disabled={!!busy} onClick={() => more(i)}
                 title="같은 요청으로 후보 2개를 더 만들어 아래에 덧붙여요(앞 후보는 그대로)">＋ 2개 더 보기 · 약 {m.kind === 'image' ? 20 : 10}크레딧</button></div>}
               {m.refs?.length > 0 && <div data-testid="answer-refs" style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -710,7 +726,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
                 {m.sources.map(s => <a key={s.n} href={s.url} target="_blank" rel="noopener noreferrer" title={s.url} onPointerDown={e => e.stopPropagation()}
                   style={{ ...css.meta, color: LINK_CHAT, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>[{s.n}] {s.title || siteOf(s.url)} · {siteOf(s.url)}</a>)}</div>}
               {m.kind !== 'ask' && m.kind !== 'deep' && m.kind !== 'slides' && <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
-                {!m.images?.length && !m.svgs?.length && <button style={{ ...(m.pinned ? css.done : css.pin), cursor: 'grab' }} onPointerDown={e => dragDown(e, i)} onClick={() => { if (dragged.current) { dragged.current = false; return } pin(i) }}
+                {!m.images?.length && !m.svgs?.length && m.kind !== 'diagram' && <button style={{ ...(m.pinned ? css.done : css.pin), cursor: 'grab' }} onPointerDown={e => dragDown(e, i)} onClick={() => { if (dragged.current) { dragged.current = false; return } pin(i) }}
                   title={m.pinned ? '누르면 붙인 카드로 가기(지웠으면 다시 붙임) · 칠판으로 끌면 그 자리에 하나 더' : m.refs?.length ? '메모 + 근거가 된 칠판 도형으로 가는 점선 화살표(누르면 빈자리, 끌면 놓은 자리)' : m.sources?.length ? '요약 메모 + 출처 카드를 번호 화살표로 이어 한 묶음으로(누르면 빈자리, 끌면 놓은 자리)' : '누르면 빈자리에, 칠판으로 끌면 놓은 자리에 카드로'}>
                   {m.pinned ? '칠판에 붙임 ✓' : '칠판에 붙이기'}</button>}
                 {/* ⋯ 하나에 — 이어 묻기·분기·다시 만들기·복사(2026-10-20 사용자: 다른 AI 채팅 참고, 버튼은 늘리지 않게) */}

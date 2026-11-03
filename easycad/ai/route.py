@@ -28,7 +28,7 @@ CASES = [
     ("내일 전주 날씨 어때?", 0, "search"), ("오늘 회의 내용 정리해 줘", 0, "report"), ("송신소 발전기 점검 주기는 보통 얼마야?", 0, "chat"),
     ("지난번에 적어 둔 VSWR 값 뭐였지?", 0, "board"), ("요즘 AI 반도체 동향 알려줘", 0, "search"), ("이 메모 영어로 번역해 줘", 1, "chat"),
     ("KBS 수신료 지금 어떻게 걷어?", 0, "search"), ("엑셀에서 VLOOKUP 쓰는 법", 0, "chat"), ("우리 송신소 점검 결과 어땠지?", 0, "board"),
-    ("송신탑 있는 산 풍경 그려 줘", 0, "image"), ("방송 송출 흐름도 그려 줘", 0, "chat"),
+    ("송신탑 있는 산 풍경 그려 줘", 0, "image"), ("방송 송출 흐름도 그려 줘", 0, "diagram"),
     ("칠판 내용 보고서 한 장으로", 0, "report"), ("삼성전자 주가 얼마야", 0, "search"), ("파이썬 리스트 정렬 방법", 0, "chat"),
     ("발표 리허설 언제로 정했었지?", 0, "board"), ("ATSC 3.0이 뭐야?", 0, "chat"), ("ATSC 3.0 국내 도입 최근 상황", 0, "search"),
     ("이 글 더 짧게 다듬어 줘", 1, "chat"), ("전주 맛집 추천해 줘", 0, "search"), ("내가 정리한 할 일 중에 안 끝난 거 있어?", 0, "board"),
@@ -36,7 +36,8 @@ CASES = [
     ("내일의 전주 날씨를 고흐 느낌으로 그려줘.", 0, "image"),   # 2026-10-20 사용자 실사용 — 검색으로 잘못 감
     ("파라볼라 안테나를 SVG로 그려 줘", 0, "icon"), ("송신기를 선 그림으로 만들어 줘", 0, "icon"), ("아이콘 만드는 법 알려줘", 0, "chat"),   # §8 항목63
     ("펭귄 아이콘 그려줘", 0, "image"),   # 「아이콘」은 뜻이 둘 — 안 물었으면 그림, 대화창은 되물음(`decide`, §8 항목64)
-    ("송신소 구성도 만들어 줘", 0, "chat"),   # 2026-10-23 측정 — 구성도가 그림으로 갔음
+    ("송신소 구성도 만들어 줘", 0, "diagram"),   # 2026-10-23 측정 — 구성도가 그림으로 갔음 → 11-03부터 🔷 도형
+    ("손으로 그린 듯한 송신소 계통도 연필 스케치로 그려 줘", 0, "image"), ("흐름도 그리는 법 알려줘", 0, "chat"),   # 그림 느낌 말 = 그림, 묻는 말 = 대화
 ]
 # 주간 자가 시험 결과 — False면 규칙만(서버가 `self_check`로 바꿈). 환경 변수 EASYCAD_ROUTE=rules면 늘 규칙(시험·네트워크 없는 곳)
 state = {"ai": True}
@@ -66,6 +67,8 @@ def adjust(text: str, choice: str, conf: float, probs: dict) -> str:
     「그려 줘」가 분명하면 그림(최신 정보가 필요하면 서버가 검색 → 그리기로 이음), 확신이 낮고 검색이 1·2등이면 검색."""
     if board_chat.is_icon(text):
         return "icon"
+    if board_chat.is_diagram(text):   # 판단 모델엔 도형 길이 없음 — 낱말로(2026-11-03)
+        return "diagram"
     style = board_chat._STYLE_WORDS.search(text or "")   # 「손으로 그린 듯한·연필 스케치」 = 흐름도라도 그림(2026-11-03 사용자 검토)
     if choice == "image" and board_chat._DIAGRAM_WORDS.search(text or "") and not style:
         return "chat"
@@ -96,9 +99,8 @@ def decide(api_key: str, text: str, has_context: bool = False, *, prefs: dict | 
     if board_chat.maybe_icon(text):   # 「아이콘·로고·심볼」 — 판단 모델엔 아이콘 길이 없어 점수로는 못 봄(0단계: 「펭귄 아이콘」 image 1.0) → 낱말로
         pick = (prefs or {}).get("icon|image")
         return (pick, "rules", []) if pick in ("image", "icon") else ("image", "rules", ["image", "icon"])
-    if board_chat.maybe_diagram(text):   # 「계통도 그려 줘」 — 그림 vs 고칠 도형(2026-11-03 사용자 검토: 전엔 대화로 떨어져 SVG 코드 글). 아이콘 되묻기와 같은 갈림길·같은 기억
-        pick = (prefs or {}).get("icon|image")
-        return (pick, "rules", []) if pick in ("image", "icon") else ("icon", "rules", ["icon", "image"])
+    if board_chat.is_diagram(text):   # 「계통도 그려 줘」 = 🔷 고칠 수 있는 도형(2026-11-03 사용자 결정 — 묻지 않음, 그림 느낌 말이면 그림. 전엔 아이콘 vs 그림 되묻기)
+        return "diagram", "rules", []
     rules = board_chat.guess_kind(text, has_context)
     if os.environ.get("EASYCAD_ROUTE") == "rules" or not state["ai"] or not api_key:
         return rules, "rules", []

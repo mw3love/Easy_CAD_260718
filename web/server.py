@@ -42,7 +42,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXAMPLES, EXAMPLE = os.path.join(HERE, "examples"), "intro"   # 예시 칠판 원본(2026-10-28) — `examples/intro/intro.ecad`·`.chat.json`·`.img/`
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_bubble, board_chat, slides, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, model_pick, route, see, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_bubble, board_chat, board_diagram, slides, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, model_pick, route, see, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
@@ -50,7 +50,7 @@ import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
 NAME_RE = re.compile(r"^[\w\-가-힣]{1,64}$")
 MAX_BYTES = 200 * 1024 * 1024   # 그림이 든 칠판도 넉넉히, 하지만 끝없이는 아니게
 _MODELS = {}                    # 키 지문 → (받은 시각, 모델 목록) — `/api/models`
-PICK_JOBS = ("image", "icon", "report", "live", "deep_plan", "deep_write")   # 「모델 설정」으로 고를 수 있는 일(대화·회의 요약은 원래 `model`) — 2026-10-26 사용자: 고를 의미 있는 일만
+PICK_JOBS = ("image", "icon", "diagram", "report", "live", "deep_plan", "deep_write")   # 「모델 설정」으로 고를 수 있는 일(대화·회의 요약은 원래 `model`) — 2026-10-26 사용자: 고를 의미 있는 일만
 # 그림 요청에 날짜 말이 있을 때만 오늘 날짜를 알려 줌(없는데 알려 주면 그림에 오늘 날짜를 써 넣음 — 2026-10-20 실측)
 DATE_WORDS = re.compile(r"오늘|내일|모레|어제|그제|날짜|요일|주말|이번\s*주|다음\s*주|지난\s*주|이번\s*달|다음\s*달|\d+\s*월\s*\d+\s*일")
 
@@ -133,7 +133,7 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:   # 목록을 못 받아도 대화는 기본 모델로 된다
                 return self._json(200, {"default": gw.FALLBACK_DEFAULT_MODEL, "featured": {}, "error": str(e)})
         # 일마다 정해 둔 모델 — 대화창 「생각 중」 줄이 고른 모델이 아니라 실제로 일하는 모델을 보이게(2026-10-20 사용자: 정돈인데 gpt로 보였음)
-        jobs = {"report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "deep": deep_mode.EDITOR_MODEL, "slides": slides.WRITER_MODEL, "live": live_card.LIVE_MODEL, "trace": board_trace.TRACE_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3), live = 「+ › 움직이는 카드」(4단계)
+        jobs = {"report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "diagram": board_diagram.DIAGRAM_MODEL, "deep": deep_mode.EDITOR_MODEL, "slides": slides.WRITER_MODEL, "live": live_card.LIVE_MODEL, "trace": board_trace.TRACE_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3), live = 「+ › 움직이는 카드」(4단계)
         jobs.update(deep_plan=deep_mode.EDITOR_MODEL, deep_write=deep_mode.WRITER_MODEL)   # 「모델 설정」 칸(2026-10-26)
         jobs = {k: model_pick.pick(v) for k, v in jobs.items()}   # 은퇴·없어져 갈아탄 것은 지금 부르는 이름으로
         return self._json(200, {**hit[1], "jobs": jobs, "choices": model_pick.choices()})
@@ -192,6 +192,12 @@ class Handler(SimpleHTTPRequestHandler):
             bimgs = [s for s in req.get("board_images") or [] if isinstance(s, str) and s.startswith("data:image/")][:4]
             text, base_svg = str(last.get("content", "")), str(req.get("base_svg") or "")[:60000]
             follow_svg = bool(base_svg and board_icon.FOLLOW_WORDS.search(text))   # 아이콘 답 뒤 「선을 더 굵게」 = 고른 아이콘 고치기
+            base_flow = str(req.get("base_flow") or "")[:60000]   # 앞 도형 답·고른 도형 판의 설계서 — 「전원 장치 추가해 줘」 = 그 도형 고치기(2026-11-03)
+            flow_fix = bool(base_flow and board_diagram.FOLLOW_WORDS.search(text) and not board_chat.is_diagram(text))   # 새 도형을 그리라는 말(「조직도 그려 줘」)이면 새로
+            if not kind and (flow_fix or (board_chat.is_diagram(text) and not bimgs)):   # 앞 답이 그림이어도 「계통도 그려 줘」 = 도형(2026-11-03 실검증 — 그림 이어 고치기로 먼저 잡혀 이미지가 나왔음)
+                kind = "diagram"
+            if kind == "diagram":
+                return self._diagram(text, key, base_flow if flow_fix else "")
             if not kind and (board_chat.is_icon(text) or follow_svg):
                 kind = "icon"   # 그림 고치기보다 먼저 — 「이 그림 아이콘으로 바꿔 줘」는 그림을 보고 아이콘(§8 항목63)
             if kind == "icon":
@@ -212,6 +218,8 @@ class Handler(SimpleHTTPRequestHandler):
                     self._extra = {"remembered": {"key": "icon|image", "choices": ["image", "icon"]}}
                 if kind == "icon":   # 되묻기에서 두 번 고른 길(`ask_pref`)
                     return self._icon(text, key, "", bimgs[0] if bimgs else "")
+                if kind == "diagram":   # 「계통도 그려 줘」(`route.decide` — 낱말)
+                    return self._diagram(text, key)
             refs = None
             # 날씨·공휴일·법령·통계·특보·대기질·국어 규범 = 공공 데이터 도구(KAIROS MCP, `kr_tools` — 2026-10-20). 못 쓰면(도시 밖·도구 실패) 지금처럼 웹 검색
             found = []
@@ -443,6 +451,21 @@ class Handler(SimpleHTTPRequestHandler):
         # 선 굵기·색은 칠판 펜이 정함(SVG 원본 값은 안 읽음 — 데스크톱과 같게) — 「굵게」라고 했는데 그대로면 헷갈림(2026-10-23 실측)
         tip = "\n\n선 굵기·색은 붙인 뒤 오른쪽 위 속성 카드 「선」에서 바로 바꿀 수 있어요." if re.search(r"굵|가늘|얇|색", ask) else ""
         return self._json(200, {"kind": "icon", "content": head + " — 누르면 칠판에 붙어요(선 하나하나 고칠 수 있어요)" + tip, **out, **getattr(self, "_extra", {})})
+
+    def _diagram(self, ask: str, key: str, base_spec: str = ""):
+        """🔷 도형 그리기 → {"kind": "diagram", "content", "spec"(설계서 글), "place"(칠판 자리 — `board_diagram.place`), "model", "elapsed", "credits"}.
+        칠판이 받아 프레임 안에 띠·상자·붙은 화살표로 짓는다(`flowboard.js`). base_spec = 앞 설계서 → 말대로 고친 전체."""
+        base = self._base()
+        b0 = self._balance(key, base)
+        try:
+            out = self._with("diagram", board_diagram.DIAGRAM_MODEL, lambda m: board_diagram.make(key, ask, base_spec=base_spec, model=m, base_url=base))
+        except Exception as e:
+            return self._json(502, {"error": f"도형 그리기 실패: {gw.friendly_error(e)}"})
+        pl = out["place"]
+        sys.stderr.write("[도형] %s %.1f초 상자 %d 화살표 %d%s\n" % (out["model"], out["elapsed"], len(pl["steps"]), len(pl["links"]), " (고치기)" if base_spec else ""))
+        head = f"🔷 「{pl['title'] or '도형'}」 도형을 고쳤어요" if base_spec else f"🔷 「{pl['title'] or '도형'}」 — 상자 {len(pl['steps'])}개 · 화살표 {len(pl['links'])}개"
+        tip = "칠판에 놓았어요. 상자를 옮기면 화살표가 따라와요 · 「○○ 추가해 줘」처럼 말하면 이 도형을 고쳐요"
+        return self._json(200, {"kind": "diagram", "content": f"{head}\n\n{tip}", **out, "fixed": bool(base_spec), "credits": self._spent(key, base, b0)})
 
     def _report(self, name: str, ask: str, material: str, prev_html: str, key: str, images=None):
         """정리 문서 → {"kind": "report", "content", "title", "html", "model", "elapsed"} — 자료 = 고른 것의 글·그림, 없으면 이 칠판 전체 글·그림(`see`)."""

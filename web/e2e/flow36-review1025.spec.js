@@ -39,7 +39,7 @@ test('「+」 메뉴 이름 = 이미지·아이콘(SVG)·인터랙티브 HTML·D
   await openBoard(page, name, { chat: true })
   await page.getByTestId('plus').click()
   const items = await page.getByRole('menuitemradio').allInnerTexts()
-  expect(items.map(t => t.split('\n')[0])).toEqual(['🎨 이미지 만들기', '✏️ 아이콘 만들기 (SVG)', '▶ 인터랙티브 HTML', '📰 Deep Mode'])
+  expect(items.map(t => t.split('\n')[0])).toEqual(['🎨 이미지 만들기', '✏️ 아이콘 만들기 (SVG)', '🔷 도형 그리기 (흐름도·계통도)', '▶ 인터랙티브 HTML', '📰 Deep Mode'])   // 도형 그리기 = 2026-11-03
   await page.getByRole('menuitemradio', { name: /이미지 만들기/ }).click()
   await expect(page.getByTestId('tool-chip')).toHaveText('🎨 이미지 만들기 ✕')
   await page.getByPlaceholder('무엇을 그릴까요', { exact: false }).click()
