@@ -244,3 +244,50 @@ def test_trace_seam_join_keeps_colors_apart():
     assert len(same) == 1
     apart = _seam_join([piece(0, [[0, 0], [50, 0]], True, color="#d32f2f"), piece(1, [[50, 0], [100, 0]], False)])
     assert len(apart) == 2
+
+
+def _hits(spec):
+    ts = [o for o in spec["ops"] if o["op"] == "text" and not o.get("rot")]
+    boxes = [board_trace._text_box(t) for t in ts]
+    return sum(1 for i, a in enumerate(boxes) for b in boxes[i + 1:]
+               if min(a[2], b[2]) > max(a[0], b[0]) and min(a[3], b[3]) > max(a[1], b[1]))
+
+
+def test_trace_untangle_overlapping_side_by_side_texts():
+    """설명 글 겹침 줄이기(2026-11-03 사용자 — 「- 10kW」·「VSWR 1.1」, 「- 스튜디오 신호」·「- 1Gbps」): AI가 글 크기를 크게 적어 옆 글과 겹침 →
+    설명 글 크기 상한으로 함께 줄여 안 겹치게. 자리는 그대로(작게만), 겹치지 않던 작은 글은 안 줄임."""
+    spec = {"ops": [
+        {"op": "text", "x": 38, "y": 329, "text": "- 스튜디오 신호", "font": 43},
+        {"op": "text", "x": 222, "y": 323, "text": "- 1Gbps", "font": 43},
+        {"op": "text", "x": 707, "y": 164, "text": "- 10kW", "font": 40},
+        {"op": "text", "x": 795, "y": 174, "text": "VSWR 1.1", "font": 34, "color": "#d32f2f"},
+        {"op": "text", "x": 1200, "y": 600, "text": "- 30m", "font": 40},
+        {"op": "text", "x": 900, "y": 900, "text": "세로 글", "font": 60, "rot": 90},
+    ]}
+    assert _hits(spec) == 2
+    out = board_trace._untangle_texts(spec)
+    assert _hits(out) == 0
+    o = out["ops"]
+    assert [(t["x"], t["y"]) for t in o[:4]] == [(t["x"], t["y"]) for t in spec["ops"][:4]]   # 자리는 그대로
+    assert o[0]["font"] < 43 and o[2]["font"] < 40 and o[3]["color"] == "#d32f2f"
+    assert o[5] == spec["ops"][5]                                                              # 돌린 글은 안 건드림
+    assert board_trace._untangle_texts({"ops": spec["ops"][4:]})["ops"] == spec["ops"][4:]    # 안 겹치면 그대로
+
+
+def test_trace_untangle_raises_tiny_texts_and_fits_legend_box():
+    """아주 작게 적힌 설명 글은 다른 글과 안 겹치는 만큼 키우고(「- 자동 절체」 25 → 상한 쪽), 범례 틀 안 글이 오른쪽 변을 넘으면 맞게 줄임."""
+    spec = {"ops": [
+        {"op": "text", "x": 0, "y": 0, "text": "- 48kHz/24bit", "font": 40},
+        {"op": "text", "x": 150, "y": 0, "text": "- MPEG-2", "font": 40},
+        {"op": "text", "x": 600, "y": 300, "text": "- 자동 절체", "font": 20},
+        {"op": "box", "x1": 1000, "y1": 0, "x2": 1260, "y2": 200},
+        {"op": "text", "x": 1050, "y": 20, "text": "신호선 (RF/오디오/데이터)", "font": 30},
+        {"op": "text", "x": 1050, "y": 80, "text": "점선", "font": 30},
+    ]}
+    out = board_trace._untangle_texts(spec)["ops"]
+    assert _hits({"ops": out}) == 0
+    cap = out[1]["font"]
+    assert 20 < out[2]["font"] <= cap                                       # 작은 글은 키움(상한까지)
+    x0, _, x1, _ = board_trace._text_box(out[4])
+    assert x1 <= 1260 and 18 <= out[4]["font"] < 30                             # 범례 글은 틀 안으로(처음 크기의 60%까지)
+    assert out[5]["font"] == spec["ops"][5]["font"] or out[5]["font"] <= 30

@@ -107,6 +107,107 @@ def _even_box_fonts(spec: dict) -> dict:
     return {**spec, "ops": out}
 
 
+def _text_box(op: dict, f: float | None = None) -> tuple[float, float, float, float]:
+    """자유 글이 차지하는 자리(그림 픽셀) — 폭 = 글자 수 × 크기, 높이 = 줄 수 × 크기 × 1.2."""
+    f = float(op.get("font", 13)) if f is None else f
+    lines = str(op["text"]).split("\n")
+    w = max(_units(s) for s in lines) * f * 4 / 3 / SCALE
+    h = len(lines) * f * 4 / 3 * 1.2 / SCALE
+    return float(op["x"]), float(op["y"]), float(op["x"]) + w, float(op["y"]) + h
+
+
+def _untangle_texts(spec: dict) -> dict:
+    """자유 글끼리 겹침 줄이기(2026-11-03 사용자 — 「10kW」·「VSWR 1.1」, 「- 스튜디오 신호」·「- 1Gbps」가 겹쳤음).
+    AI가 설명 글 크기를 원본보다 크게 적는다(실측 약 1.5배 — 자리는 맞음). 그래서 ① 겹친 짝마다 「앞 글이 뒤 글 앞에서 끝나는」 크기를 구해
+    그 가운데 값을 설명 글(가운데 크기 1.25배 이하)의 상한으로(한 그림의 설명 글은 크기가 같음 — 더 작은 글은 그대로), 범례처럼 틀 안 글이 오른쪽 변을 넘으면 맞게,
+    ② 그래도 겹치는 글만 15%까지 더 줄이고
+    ③ 남은 겹침은 뒤 글을 오른쪽·아래로 비켜 놓는다(글 높이·폭의 60%까지). 돌린 글·상자 이름은 안 건드림."""
+    ops = [dict(op) if isinstance(op, dict) else op for op in spec.get("ops", [])]
+    ts = []
+    for op in ops:
+        if not (isinstance(op, dict) and op.get("op") == "text" and str(op.get("text") or "").strip()) or float(op.get("rot") or 0) % 360:
+            continue
+        try:
+            float(op["x"]), float(op["y"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not isinstance(op.get("font", 13), (int, float)):
+            op["font"] = 13
+        ts.append(op)
+    if len(ts) < 2:
+        return {**spec, "ops": ops}
+    f0 = {id(t): float(t.get("font", 13)) for t in ts}
+
+    def need(a, b):
+        """a·b가 겹치면 (줄여야 할 글, 그 글에 필요한 배율, 같은 줄인가) — 안 겹치면 None. 같은 줄 = 왼쪽 글이 오른쪽 글 앞에서 끝나게, 위아래 = 위 글이 아래 글 위에서 끝나게."""
+        A, B = _text_box(a), _text_box(b)
+        ox, oy = min(A[2], B[2]) - max(A[0], B[0]), min(A[3], B[3]) - max(A[1], B[1])
+        if ox <= 0 or oy <= 0:
+            return None
+        if oy >= 0.5 * min(A[3] - A[1], B[3] - B[1]) and abs(A[1] - B[1]) < 0.6 * min(A[3] - A[1], B[3] - B[1]):   # 같은 줄
+            (l, L), (r, R) = sorted(((a, A), (b, B)), key=lambda p: p[1][0])
+            gap = 0.3 * float(l["font"]) * 4 / 3 / SCALE
+            return l, (R[0] - L[0] - gap) / (L[2] - L[0]), True
+        (u, U), (d, D) = sorted(((a, A), (b, B)), key=lambda p: p[1][1])
+        return u, (D[1] - U[1]) / (U[3] - U[1]), False
+
+    def pairs():
+        return [n for i, a in enumerate(ts) for b in ts[i + 1:] if (n := need(a, b))]
+
+    want = sorted(float(t["font"]) * max(0.65, k) for t, k, _ in pairs() if 0.55 <= k < 1)
+    if want:   # ① 설명 글 크기 상한 = 겹친 글이 맞는 크기의 가운데 값 — 그보다 큰 설명 글만 내림(작은 글까지 같은 배율로 줄이면 「N+1」·「- 30m」이 아주 작아졌음)
+        m = sorted(f0.values())[(len(f0) - 1) // 2]
+        cap = want[(len(want) - 1) // 2]
+        for t in ts:
+            if cap < f0[id(t)] <= 1.25 * m:
+                t["font"] = cap
+        for t in ts:   # AI가 아주 작게 적은 설명 글(「- 자동 절체」·「- 30m」)은 상한 쪽으로 키움 — 다른 글과 안 겹치는 만큼만
+            f = float(t["font"])
+            if f >= 0.8 * cap:
+                continue
+            for c in (cap, cap * 0.9, cap * 0.8):
+                if c <= f:
+                    break
+                t["font"] = c
+                A = _text_box(t)
+                if not any(u is not t and min(A[2], B[2]) > max(A[0], B[0]) and min(A[3], B[3]) > max(A[1], B[1])
+                           for u in ts for B in (_text_box(u),)):
+                    break
+                t["font"] = f
+    boxes = []   # 이름 없는 상자(범례·설명 틀) 안에서 시작한 글이 오른쪽 변을 넘으면 맞게(처음 크기의 60%까지)
+    for op in ops:
+        if isinstance(op, dict) and op.get("op") == "box" and not op.get("label"):
+            try:
+                boxes.append(tuple(float(op[k]) for k in ("x1", "y1", "x2", "y2")))
+            except (KeyError, TypeError, ValueError):
+                pass
+    for t in ts:
+        x0, y0, x1, _ = _text_box(t)
+        for bx1, by1, bx2, by2 in boxes:
+            if bx1 <= x0 < bx2 and by1 <= y0 < by2 and x1 > bx2:
+                t["font"] = max(0.6 * f0[id(t)], float(t["font"]) * (bx2 - 4 - x0) / (x1 - x0))
+    for t, k, _ in pairs():   # ② 겹친 글만 조금 더 — 한 번에 15%까지(더 줄이면 옆 글과 크기가 달라 보였음), 처음 크기의 60% 밑으로는 안 줄임
+        t["font"] = max(0.6 * f0[id(t)], float(t["font"]) * max(0.85, min(1.0, k)))
+    for a, b in [(a, b) for i, a in enumerate(ts) for b in ts[i + 1:]]:   # ③ 남은 겹침 = 뒤 글 비켜 놓기
+        n = need(a, b)
+        if not n:
+            continue
+        first, _, row = n
+        second = b if first is a else a
+        F, S = _text_box(first), _text_box(second)
+        if row:
+            dx = F[2] + 0.3 * float(first["font"]) * 4 / 3 / SCALE - S[0]
+            if 0 < dx <= 0.6 * (S[2] - S[0]):
+                second["x"] = float(second["x"]) + dx
+        else:
+            dy = F[3] - S[1]
+            if 0 < dy <= 0.6 * (S[3] - S[1]):
+                second["y"] = float(second["y"]) + dy
+    for t in ts:
+        t["font"] = max(2, round(float(t["font"])))
+    return {**spec, "ops": ops}
+
+
 def trace(key: str, png: bytes, *, width: float = 0, model: str = TRACE_MODEL, base_url: str | None = None,
           progress=None) -> dict:
     """그림 바이트 → {"items": .ecad 아이템들(왼쪽 위 = 0,0), "w", "h", "skipped", "tiles": 구역 로그}.
@@ -119,5 +220,5 @@ def trace(key: str, png: bytes, *, width: float = 0, model: str = TRACE_MODEL, b
     client = gw._client(key, base_url or gw.resolve_base_url(), timeout=600.0)
     spec, log = generate_ops_tiled(client, sent, model=model, progress=progress)
     scale = float(width) / W if width and width > 0 else SCALE
-    sk, skipped = ops_to_sketch(_scale_fonts(_even_box_fonts(spec), scale / SCALE), dark=False, scale=scale)
+    sk, skipped = ops_to_sketch(_scale_fonts(_untangle_texts(_even_box_fonts(spec)), scale / SCALE), dark=False, scale=scale)
     return {"items": sk._items, "w": W * scale, "h": H * scale, "skipped": skipped, "tiles": log, "model": model}
