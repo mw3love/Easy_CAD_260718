@@ -23,7 +23,7 @@ test('처음 = 새 비밀 주소의 예시 칠판 · 다시 오면 그 칠판 ·
   await a.mouse.move(box.x + 400, box.y + 300); await a.mouse.down(); await a.mouse.move(box.x + 560, box.y + 380, { steps: 8 }); await a.mouse.up()
   await waitSaved(a)
   await a.goto('/'); await expect(a).toHaveURL(link)                                    // 다시 오면 마지막 칠판(빈 칠판이 아님)
-  await expect(a.getByText('서버 「', { exact: false }).first()).toBeVisible()
+  await expect(a.getByTestId('status-toast')).toContainText('「Magic Board 둘러보기」')   // 여는 알림 = 칠판 이름(2026-11-03)
   await expect.poll(() => rects(a)).toBe(r0 + 1)
 
   await a.getByRole('button', { name: '공유' }).click()
@@ -35,7 +35,7 @@ test('처음 = 새 비밀 주소의 예시 칠판 · 다시 오면 그 칠판 ·
   await b.getByPlaceholder('이름 (예: 김기자)').fill('비')                                // 남이 준 링크(있는 칠판) = 이름만 한 번
   await expect(b.getByPlaceholder('팀 비밀번호')).toHaveCount(0)
   await b.getByRole('button', { name: '들어가기' }).click()
-  await expect(b.getByText('서버 「', { exact: false }).first()).toBeVisible()
+  await expect(b.getByTestId('status-toast')).toContainText('「Magic Board 둘러보기」')
   await expect.poll(() => rects(b)).toBe(r0 + 1)
   await b.getByTestId('dock-board').click()
   await expect(b.getByTestId('board-row')).toHaveCount(1)                               // 내 칠판 = 받은 칠판만(서버의 다른 칠판은 안 보임)

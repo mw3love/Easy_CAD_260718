@@ -97,7 +97,6 @@ const PICKS_KEY = 'magic-board-models'  // 「모델 설정」 — 일마다 고
 const PICK_ROWS = [['chat', '대화 · 회의 요약', 'llm'], ['image', '이미지', 'image'], ['icon', '아이콘 (SVG)', 'llm'], ['diagram', '도형 그리기', 'llm'], ['report', '정리 문서', 'llm'], ['live', '인터랙티브 HTML', 'llm'],
   ['deep_plan', 'Deep Mode 지면 계획', 'llm'], ['deep_write', 'Deep Mode 본문', 'llm']]
 const JOB_PICK = { 'slides-plan': 'slides', 'slides-build': 'slides', 'deep-plan': 'deep_plan', 'deep-build': 'deep_write', 'deep-section': 'deep_write' }   // 기다리는 일 → 그 일의 모델 칸
-const VENDOR = { gpt: 'GPT', gemini: 'Gemini', claude: 'Claude' }
 const F = "'Pretendard', sans-serif"
 const DONE = '#16a34a'   // 칠판에 붙임(끝남) = 초록 — 코랄은 할 수 있는 일 버튼(2026-10-20 사용자)
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', bar: 'var(--mb-bar)', seg: 'var(--mb-seg)' }
@@ -190,7 +189,7 @@ function NavBtn({ side, onClick, title, testid, children }) {
 }
 
 // ed = Editor 손잡이(selTexts·pinCard·showCard), selKey = 고른 것이 바뀔 때 다시 읽게(main이 넘김)
-export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus, onBusy, width = CHAT_W, setWidth }) {   // width·setWidth = 폭(왼쪽 경계 끌기 — main.jsx가 이 브라우저에 기억)   // onBusy(글) = 칠판 위 알약(정리 문서·딥모드 중에만, 끝나면 '')   // focus = { id, tool } — 빈 칠판 안내가 입력 칸으로(그 길 이름표까지, 2026-10-26)
+export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus, onBusy, width = CHAT_W, setWidth, fromTop = false }) {   // fromTop = 처음 읽은 대화를 첫 질문부터(예시 칠판 — 2026-11-03 UX 검토: 긴 딥모드 대화 끝 카드 중간부터 보였음)   // width·setWidth = 폭(왼쪽 경계 끌기 — main.jsx가 이 브라우저에 기억)   // onBusy(글) = 칠판 위 알약(정리 문서·딥모드 중에만, 끝나면 '')   // focus = { id, tool } — 빈 칠판 안내가 입력 칸으로(그 길 이름표까지, 2026-10-26)
   const [busyJob, setBusyJob] = useState('')   // 기다리는 일의 종류(모르면 '' = 서버가 짐작)   // request = { id, text, kind } — 칠판에서 시킨 질문(바뀔 때마다 한 번 보냄)   // floating = 좁은 창 — 칠판 위에 뜬 카드(2026-10-19)
   const [msgs, setMsgs] = useState([]), [loaded, setLoaded] = useState(false), [draft, setDraft] = useState(''), [busy, setBusy] = useState(null)
   const [, tick] = useState(0), [models, setModels] = useState(null), [server, setServer] = useState(true), [gone, setGone] = useState({})
@@ -250,7 +249,8 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     if (busy) return
     fetch('/api/credits', { headers: keyHeaders() }).then(r => (r.ok ? r.json() : null)).then(d => setCredits(d && d.quota ? d : null)).catch(() => setCredits(null))
   }, [busy, myKey])
-  useEffect(() => { if (box.current) box.current.scrollTop = box.current.scrollHeight }, [msgs.length, busy])
+  const topOnce = useRef(fromTop)
+  useEffect(() => { if (!box.current) return; if (topOnce.current && msgs.length) { topOnce.current = false; box.current.scrollTop = 0; return } box.current.scrollTop = box.current.scrollHeight }, [msgs.length, busy])
   const asked = useRef(null)
   useEffect(() => { if (!request || !loaded || asked.current === request.id) return; asked.current = request.id; send(request.text, request.kind) }, [request, loaded])   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!busy) return; const t = setInterval(() => tick(n => n + 1), 1000); return () => clearInterval(t) }, [busy])
@@ -574,7 +574,6 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   // 일을 아직 모를 때(서버가 짐작 — 「정리 문서로 만들어 줘」를 쳐서 물음)는 모델 이름을 안 씀: 고른 모델이 아닐 수 있음(2026-10-20 실화면)
   useEffect(() => { onBusy?.(busy && BOARD_JOBS.has(busyJob) ? busyLine : '') }, [busyLine])   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => onBusy?.(''), [])   // eslint-disable-line react-hooks/exhaustive-deps
-  const feat = models?.featured || {}
   const lastM = msgs.filter(m => m.role !== 'error').at(-1), tools = TOOLS.filter(t => (t[0] !== 'deep' && t[0] !== 'live' && t[0] !== 'slides') || models?.jobs?.[t[0]])   // 딥모드·움직이는 카드 = 서버가 할 수 있을 때만
   const ta = useRef(null)
   // 첨부(2026-10-28 사용자) — 대화창에 놓기·붙여넣기·「+ › 파일 올리기…」 = 칠판 빈자리에 놓고 고른 채(`ed.attachFiles`), 자료는 칠판에 남음
@@ -781,16 +780,10 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
             style={{ ...css.ghost, padding: '2px 8px', ...(mic === 'listen' ? { color: '#fff', background: '#dc2626', borderColor: '#dc2626' } : null) }}>
             {mic === 'listen' ? '● 듣는 중' : mic === 'wait' ? '🎤 …' : mic === 'stopping' ? '🎤 마무리…' : '🎤'}</button>
           <span data-testid="chat-foot-note" style={{ ...css.meta, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', ...(micErr ? { color: '#dc2626' } : null) }} title={micErr || (server ? `대화 기록은 이 칠판(「${DOC_NAME}」)에 함께 저장돼요` : '')}>{micErr || (server ? '' : '서버가 꺼져 있어요 — python web/server.py 를 켜야 물을 수 있어요.')}</span>{/* 평소 글 「기록은 이 칠판에 저장」은 뺌 — 대화창 폭에선 「기」 한 글자로 잘려 보였음(2026-11-03 UX 검토, 같은 말은 마우스 올림에 남김) */}
-          <select style={css.select} value={useModel} title="대화 답에 쓸 모델(100만 토큰당 입력 / 출력 달러) — 검색·그림·정리 문서는 앱이 일마다 알맞은 모델을 따로 고름" onChange={e => { setModel(e.target.value); try { localStorage.setItem(MODEL_KEY, e.target.value) } catch { /* 기억 못 해도 그만 */ } }}>
-            {!Object.values(feat).some(rows => rows.some(m => m.id === useModel)) && <option value={useModel}>{!model || useModel === models?.default ? '기본 · ' : ''}{useModel}</option>}{/* 전에 골라 둔 모델이 목록에서 빠져도 「기본」으로 보이지 않게(2026-10-26) */}
-            {Object.entries(feat).filter(([, rows]) => rows.length).map(([v, rows]) => (
-              <optgroup key={v} label={VENDOR[v] || v}>
-                {rows.map(m => <option key={m.id} value={m.id}>{m.id === models.default ? '기본 · ' : ''}{m.id}{m.price ? `  ${m.price}` : ''}</option>)}
-              </optgroup>))}
-          </select>
+          {/* 대화 모델 고르기(입력 칸 옆 「기본 · gpt-… $2 / 10」)는 ⚙ 「모델 설정」의 「대화 · 회의 요약」 줄과 같은 일이라 뺌 — 처음 온 사람에겐 모델·값이 낯선 말(2026-11-03 UX 검토, 10-16 「입력 칸 옆」을 뒤집음) */}
           <span data-model-set style={{ position: 'relative' }}>
             <button data-testid="model-settings" style={{ ...css.ghost, padding: '2px 7px', ...(cfgOpen || Object.keys(picks).length ? { color: 'var(--mb-accent)', borderColor: 'var(--mb-accent)' } : null) }} aria-expanded={cfgOpen} onClick={() => setCfgOpen(o => !o)}
-              title="모델 설정 — 일마다 쓸 모델(안 고르면 자동: 앱이 재 보고 고른 모델, 은퇴·없어지면 KAIROS 대체로 저절로)">⚙</button>
+              title="모델 설정 — 일마다 쓸 모델(안 고르면 자동: 앱이 재 보고 고른 모델, 은퇴·없어지면 KAIROS 대체로 저절로)">⚙ 모델</button>
             {cfgOpen && <ModelSettings models={models} picks={{ ...picks, ...(model ? { chat: model } : {}) }} setPick={setPick} />}
           </span>
         </div>

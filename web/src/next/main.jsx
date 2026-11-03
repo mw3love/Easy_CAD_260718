@@ -590,8 +590,9 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
     ;(AUTO_BOARD === 'new' ? api.example() : Promise.resolve()).then(loadServerDoc).then(async r => { const fresh = r.server && !r.doc, rev = fresh ? await api.patch({ upsert: [], delete: [] }) : null
       if (typeof rev === 'number') r = { ...r, doc: { ...emptyDoc(), rev } }
       setExample(r.doc?.example || '')
-      setServer(r.server); setSrvKnown(true); if (r.doc) open(r.doc, `서버 「${DOC_NAME}」`, true, true); else if (r.server) { const m = modelRef.current; sync.current.base = snapshotModel(m); sync.current.rev = 0 }
-      if (fresh || !r.server) setStatus(r.server ? `서버 「${DOC_NAME}」 · 새 칠판` : '서버 없음 — 파일로 열고 저장') }) }, [])   // eslint-disable-line
+      setServer(r.server); setSrvKnown(true); if (r.doc) open(r.doc, r.doc.title ? `「${r.doc.title}」` : `서버 「${DOC_NAME}」`, true, true);   // 알림 = 칠판 이름(처음 온 사람에겐 코드가 뜻 없음 — 2026-11-03 UX 검토), 이름 없으면 전처럼
+      else if (r.server) { const m = modelRef.current; sync.current.base = snapshotModel(m); sync.current.rev = 0 }
+      if (fresh || !r.server) setStatus(r.server ? (boardLabel(DOC_NAME).code ? '새 칠판' : `서버 「${DOC_NAME}」 · 새 칠판`) : '서버 없음 — 파일로 열고 저장') }) }, [])   // eslint-disable-line
 
   // 카드 버튼: 클릭 = 그리기 도구, 6px 넘게 끌면 도형을 칠판에 바로 놓기(데스크톱 `_PaletteButton._DRAG_THRESH`)
   // 미니맵에 그릴 것 — 숨긴 레이어 뺌(화면을 옮길 때마다 다시 그리지 않게 문서가 바뀔 때만)
@@ -775,13 +776,14 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
           background: 'var(--mb-card)', border: '1px solid var(--mb-line)', boxShadow: '0 2px 8px rgba(0,0,0,.12)', font: "600 13px 'Pretendard', sans-serif", color: 'var(--mb-ink)', pointerEvents: 'none', whiteSpace: 'nowrap' }}><Spinner />{aiBusy}</div>}   {/* 정돈·정리 문서 중 — 칠판만 보고 있어도 도는 게 보이게(2026-10-20 사용자) */}
         {findOpen > 0 && <FindBar key={findOpen} items={model.items} server={server} onMarks={setMarks} onGo={id => ed.current?.showItem(id)} onClose={() => setFindOpen(0)} />}
       </div>
-      {chatOpen && srvKnown && <ChatPanel ed={ed} selKey={selKey} floating={narrow} full={phone} onClose={() => setChatOpen(false)} request={chatAsk} focus={chatFocus} onBusy={setAiBusy} width={chatW} setWidth={setChatW} />}
+      {chatOpen && srvKnown && <ChatPanel ed={ed} selKey={selKey} floating={narrow} full={phone} onClose={() => setChatOpen(false)} request={chatAsk} focus={chatFocus} onBusy={setAiBusy} width={chatW} setWidth={setChatW} fromTop={!!example} />}
       </div>
       {phone && <div data-testid="phone-bar" style={{ touchAction: 'none', display: 'flex', gap: 8, padding: '8px 10px calc(8px + env(safe-area-inset-bottom))', background: C.bar, borderTop: `1px solid ${C.line}` }}>   {/* 휴대폰 아래 = 엄지로 누르는 큰 버튼 셋 */}
         {[['⤢', '다 보기', () => fit(modelRef.current.items), false, false],
           ['🎙', meetSt === 'saved' ? '정리하기' : meetSt ? '끝내기' : '회의', () => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : meetSt ? ed.current?.meetStop() : ed.current?.meetStart()), !!meetSt, meetSt === 'start' || meetSt === 'stopping'],
+          ...(example ? [['▶', '차례로', () => ed.current?.startPresent(ed.current?.frameIds()[0]), false, false]] : []),   // 예시 칠판 = 휴대폰에서도 1번부터 크게(전체 보기는 글씨가 안 읽힘 — 2026-11-03 UX 검토)
           ['✦', 'KAIROS', () => setChatOpen(true), false, false]].map(([ic, label, f, on, off]) =>
-          <button key={ic} onClick={f} disabled={off} style={{ all: 'unset', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, height: 44, borderRadius: 10, cursor: 'pointer', opacity: off ? 0.5 : 1,
+          <button key={ic} data-testid={ic === '▶' ? 'phone-tour' : undefined} onClick={f} disabled={off} style={{ all: 'unset', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, height: 44, borderRadius: 10, cursor: 'pointer', opacity: off ? 0.5 : 1,
             font: "600 15px 'Pretendard', sans-serif", color: ic === '✦' || on ? '#fff' : C.ink, background: ic === '✦' ? 'var(--mb-accent)' : on ? '#d44c47' : 'var(--mb-card)', border: `1px solid ${ic === '✦' || on ? 'transparent' : C.line}` }}><span aria-hidden>{ic}</span>{label}</button>)}
       </div>}
     </div>

@@ -1,6 +1,6 @@
 // 흐름 47 — 예시 칠판(2026-10-28 사용자: 들어오자마자 「이렇게 쓰는 거구나」 + 만져 보다 망가지면 한 번에 처음으로).
 // 처음 = 원본(`web/examples/intro`) 사본 · 사람마다 따로 · 「↺ 처음 모습으로」 = 이 사본만 원본으로(칠판·대화) · 예시가 아닌 칠판은 서버가 막음
-import { test, expect } from '@playwright/test'
+import { test, expect, devices } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -46,6 +46,24 @@ test('「▶ 차례로 보기」 = 1번 프레임부터 발표 · → 다음 · 
   await p.keyboard.press('ArrowRight'); await expect(p.getByTestId('presenter')).toContainText('2 /')
   await p.keyboard.press('Escape'); await expect(p.getByTestId('presenter')).toHaveCount(0)
   await c.close()
+})
+
+test('휴대폰 「▶ 차례로」 = 막대는 ◀ 장 ▶ 끝만 · 톡 = 다음 · 왼쪽 톡 = 이전 · 여는 알림 = 칠판 이름 · 대화창은 첫 질문부터(PC)', async ({ browser }) => {
+  const { defaultBrowserType, ...iphone } = devices['iPhone 13']   // eslint-disable-line no-unused-vars
+  const c = await browser.newContext({ ...iphone }); await c.addInitScript(() => { try { localStorage.setItem('mb-guide-off', '1') } catch {} })
+  const p = await c.newPage(); await p.goto('/')
+  await expect(p.getByTestId('status-toast')).toContainText('「Magic Board 둘러보기」')        // 코드(「x9fxv3tn」) 대신 이름
+  await p.getByTestId('phone-tour').tap()
+  const pr = p.getByTestId('presenter'); await expect(pr).toContainText('1 /')
+  await expect(p.getByTestId('present-bar').getByText('형광펜')).toHaveCount(0)              // 판서 도구 없음(화면 밖으로 넘쳤음)
+  const vp = p.viewportSize()
+  await p.touchscreen.tap(vp.width * 0.8, vp.height / 2); await expect(pr).toContainText('2 /')
+  await p.touchscreen.tap(vp.width * 0.1, vp.height / 2); await expect(pr).toContainText('1 /')
+  await c.close()
+  const d = await fresh(browser), q = await d.newPage(); await q.addInitScript(() => { try { localStorage.setItem('mb-chat-open', '1') } catch {} })
+  await q.goto('/'); await expect(q.getByTestId('example-band')).toBeVisible()
+  await expect(q.getByText('2026년 연말정산에서 직장인이 챙겨야 할', { exact: false }).first()).toBeInViewport()   // 예시 대화 첫 질문이 보임
+  await d.close()
 })
 
 test('예시가 아닌 칠판엔 「처음 모습으로」가 안 먹음(서버 409) · 칠판 판 「예시 칠판 열기」 = 새 사본', async ({ page, request }) => {

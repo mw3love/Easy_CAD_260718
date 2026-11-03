@@ -16,7 +16,7 @@ test('「＋ 새 칠판」 = 바로 새 칠판(칠판 코드만) · 빈 칠판�
   await form.getByTestId('board-new').click()                                         // 이름 칸 없이 바로(2026-10-28 사용자)
   await expect(page).toHaveURL(/board=[a-z2-9]{8}$/)
   const b = new URL(page.url()).searchParams.get('board')
-  await expect(page.getByText(`서버 「${b}」`, { exact: false }).first()).toBeVisible()
+  await expect(page.getByTestId('status-toast')).toHaveText('새 칠판')                     // 처음 온 사람에겐 코드가 뜻 없음(2026-11-03)
   await expect(page.getByTestId('board-title')).toHaveText(/^제목 없음/)
   await expect.poll(() => savedDoc(b)?.items?.length).toBe(0)                         // 아무것도 안 그려도 서버에 빈 칠판(칠판 코드로도 찾힘)
   await expect(page).toHaveTitle('제목 없음 — Magic Board')                            // 탭 제목 = 칠판 이름

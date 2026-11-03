@@ -53,7 +53,8 @@ function useGlide(target, ms) {
 
 // frames = [{ id, name, box }] 순서대로, order = 그릴 [아이템, 순번](프레임 자신은 뺀 것), start = 시작 장, dark = 칠판 화면이 어두운가
 // onAdd(아이템 설계[]) = 판서 레이어에 넣기, onErase(칠판 점, 허용 거리) = 그 자리 판서 지우기, onUndo = 되돌리기
-export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dark0 = false, onAdd, onErase, onUndo, onClearNotes, onFlipArrow, onClose }) {   // onClearNotes(칠판 상자) = 그 안 판서 지우기
+export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dark0 = false, onAdd, onErase, onUndo, onClearNotes, onFlipArrow, onClose, simple = false }) {   // simple = 휴대폰(2026-11-03 UX 검토): 막대 = ◀ 장 ▶ 끝만·늘 보임, 톡 = 다음(왼쪽 1/3 = 이전) — 판서 도구 막대가 화면 밖으로 넘쳐 넘기기를 못 했음
+  const tapAt = useRef(null)   // onClearNotes(칠판 상자) = 그 안 판서 지우기
   const [list, setList] = useState(null), listRef = useRef(null)   // 장 목록(Tab — 2026-10-18 사용자: 발표 중 특정 장으로 바로) = { typed: 입력 중 번호 }
   const [i, setI] = useState(start), [glide, setGlide] = useState(true), [vw, setVw] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }))
   const [dark, setDark] = useState(dark0), [wasDark] = useState(() => { setInkDark(dark0); return document.documentElement.dataset.theme === 'dark' })   // 첫 그리기 전에 잉크
@@ -198,6 +199,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
       if (id) { setWebOn(id); if (yt) playYoutube(fr) } else { if (g) window.open(g.getAttribute('data-web-url'), '_blank', 'noopener'); setWebOn(null) }
     }
     if (!tool && laserRef.current && e.button === 0) { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); trailOn.current = true; setTrail([{ x: e.clientX, y: e.clientY, t: Date.now() }]); return }   // preventDefault = 글 선택 안 잡힘
+    if (simple && !tool && e.button === 0) { tapAt.current = { x: e.clientX, y: e.clientY }; return }
     if (!tool) return   // 클릭으로 장을 넘기지 않음(2026-10-18 사용자: 글 선택을 풀거나 판서를 보다가 넘어감) — 끌면 글 선택(기본 동작)
     if (e.button !== 0) return
     const p = { x: e.clientX, y: e.clientY }
@@ -215,6 +217,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     setDraft(d => ({ ...d, b: d.tool === 'arrow' && e.shiftKey ? snap45(d.a, p) : p, pts: d.tool === 'pen' || d.tool === 'hl' ? (Math.hypot(p.x - d.pts.at(-1).x, p.y - d.pts.at(-1).y) >= 2 ? [...d.pts, p] : d.pts) : d.pts })) }
   const up = e => {
     trailOn.current = false
+    if (tapAt.current) { const t = tapAt.current; tapAt.current = null; if (Math.hypot(e.clientX - t.x, e.clientY - t.y) < 12) go(e.clientX < window.innerWidth / 3 ? -1 : 1); return }
     setTimeout(() => { const sl = getSelection(); if (sl?.isCollapsed) sl.removeAllRanges() }, 0)   // 글자 위 클릭이 남긴 빈 선택(깜빡이는 세로 막대)을 지움 — 끌어 고른 글은 그대로(2026-10-18 사용자)
     if ((e.button === 2 || e.button === 1) && pan.current) { const pn = pan.current; pan.current = null; if (!pn.moved && e.button === 2) setMenu({ x: e.clientX, y: e.clientY }); return }   // 휠 클릭은 이동만(메뉴 없음)
     const d = draft; setDraft(null); if (!d || d.tool === 'erase') return
@@ -287,11 +290,11 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     {/* 아래 막대 — 마우스를 움직이면 나타남, 2초 가만히 있으면 숨음(도구를 쓰는 중엔 계속) */}
     <div data-testid="present-bar" onPointerDown={e => e.stopPropagation()} onPointerEnter={() => { barHover.current = true; setNearBottom(true) }} onPointerLeave={() => { barHover.current = false; wake() }}
       style={{ position: 'absolute', left: '50%', bottom: 16, transform: 'translateX(-50%)', zoom: barZoom, display: 'flex', alignItems: 'center', gap: 2, padding: 4, borderRadius: 10, background: 'rgba(24,24,27,.86)',
-        boxShadow: '0 4px 16px rgba(0,0,0,.4)', opacity: barShow ? 1 : 0, pointerEvents: barShow ? 'auto' : 'none', transition: 'opacity .25s' }}>
+        boxShadow: '0 4px 16px rgba(0,0,0,.4)', opacity: barShow || simple ? 1 : 0, pointerEvents: barShow || simple ? 'auto' : 'none', transition: 'opacity .25s' }}>
       <button title="이전 (←)" onClick={() => go(-1)} style={btn(false)}>◀</button>
       <button title="장 목록 (Tab) — 눌러서 바로 가기 · 방향키 + Enter · 번호 + Enter" onClick={() => setList(l => (l ? null : { typed: '', pick: i }))} style={{ ...btn(!!list), font: "500 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap' }}>{i + 1} / {n}{f.name ? ` · ${f.name}` : ''} ▴</button>
       <button title="다음 (→ · 스페이스 · 클릭)" onClick={() => go(1)} style={btn(false)}>▶</button>
-      {sep}
+      {simple ? <button title="끝" onClick={onClose} style={btn(false)}>✕ 끝</button> : <>{sep}
       {TOOLS.map(([id, icon, name, key]) => <button key={id} title={`${name} (${key}) — 다시 누르면 끄기(끄면 클릭 = 다음 장)${id === 'arrow' ? ' · Shift = 45° · X = 방금 그린 화살표 뒤집기' : id === 'erase' ? ' · 판서만, 스치면 지움' : ''} · Ctrl+Z 되돌리기`}
         onClick={() => setTool(t => (t === id ? null : id))} style={tbtn(tool === id)}>{icon}<span style={{ fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' }}>{name}</span></button>)}
       {sep}
@@ -308,7 +311,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
       {sep}
       {seg('넘길 때', [[true, '이동', '칠판 위를 0.4초 미끄러져 감'], [false, '바로', '곧장 바뀜']], glide, setGlide, 'M')}
       {seg('화면', [[false, '밝게', ''], [true, '어둡게', '']], dark, setDark, 'D')}
-      <button title="끝 (Esc)" onClick={onClose} style={tbtn(false)}>{I(<><path d="M5 5 L13 13" /><path d="M13 5 L5 13" /></>)}<span style={{ fontSize: 11, fontWeight: 500 }}>끝</span></button>
+      <button title="끝 (Esc)" onClick={onClose} style={tbtn(false)}>{I(<><path d="M5 5 L13 13" /><path d="M13 5 L5 13" /></>)}<span style={{ fontSize: 11, fontWeight: 500 }}>끝</span></button></>}
     </div>
   </div>
 }
