@@ -34,6 +34,20 @@ test('처음 = 예시 사본 · 사람마다 따로 · 「처음 모습으로」
   await ca.close(); await cb.close()
 })
 
+test('「▶ 차례로 보기」 = 1번 프레임부터 발표 · → 다음 · Esc 끝 (노트북 크기)', async ({ browser }) => {
+  const c = await fresh(browser), p = await c.newPage(); await p.setViewportSize({ width: 1366, height: 768 })
+  await p.goto('/'); await expect.poll(() => count(p)).toBe(N)
+  await expect(p.getByTestId('example-tour')).toBeVisible()
+  await p.getByTestId('board').click({ position: { x: 20, y: 300 } })
+  await p.keyboard.press('Control+a')                                                   // 아무 프레임이나 골라 둬도 1번부터
+  await p.getByTestId('example-tour').click()
+  await expect(p.getByTestId('presenter')).toBeVisible()
+  await expect(p.getByTestId('presenter')).toContainText('1 /')
+  await p.keyboard.press('ArrowRight'); await expect(p.getByTestId('presenter')).toContainText('2 /')
+  await p.keyboard.press('Escape'); await expect(p.getByTestId('presenter')).toHaveCount(0)
+  await c.close()
+})
+
 test('예시가 아닌 칠판엔 「처음 모습으로」가 안 먹음(서버 409) · 칠판 판 「예시 칠판 열기」 = 새 사본', async ({ page, request }) => {
   const plain = `e2e_plain_${Date.now().toString(36)}`
   expect((await request.put(`/api/doc/${plain}`, { data: { format: 'easycad-doc', version: 1, items: [] } })).ok()).toBe(true)
