@@ -559,7 +559,8 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   useEffect(() => { if (menuAt == null) return; const close = e => { if (!e.target.closest?.('[data-answer-menu]')) setMenuAt(null) }; window.addEventListener('pointerdown', close, true); return () => window.removeEventListener('pointerdown', close, true) }, [menuAt])
   // 「+」 도구(2026-10-23 사용자 — Gemini·ChatGPT·Claude처럼): 기본은 앱이 길을 고르고, 고르면 이름표가 남아 그 길로만(× = 다시 자동). 「아이콘」처럼 뜻이 둘인 말을 위해
   const [pickTool, setPickTool] = useState(''), [plusOpen, setPlusOpen] = useState(false)
-  useEffect(() => { if (!plusOpen) return; const close = e => { if (!e.target.closest?.('[data-plus-menu]')) setPlusOpen(false) }; window.addEventListener('pointerdown', close, true); return () => window.removeEventListener('pointerdown', close, true) }, [plusOpen])
+  useEffect(() => { if (!plusOpen) return; const close = e => { if (!e.target.closest?.('[data-plus-menu]')) setPlusOpen(false) }; const esc = e => { if (e.key === 'Escape') { e.stopPropagation(); setPlusOpen(false) } }   // Esc로도 닫힘(화면 규칙 — 메뉴는 바깥·Esc, 2026-11-03 UX 검토)
+    window.addEventListener('pointerdown', close, true); window.addEventListener('keydown', esc, true); return () => { window.removeEventListener('pointerdown', close, true); window.removeEventListener('keydown', esc, true) } }, [plusOpen])
   function saveKey(v) { setKairosKey(v.trim()); setMyKey(!!v.trim()); setKeyDraft(''); setKeyOpen(false) }
   // 정리 문서 → 같은 자료로 인포그래픽 그림 후보(2026-10-20 사용자 선택 — 그림은 보기 좋지만 숫자를 지어낼 수 있어 기본은 문서, 원하면 한 번 더)
   function drawReport(i) { const src = msgs.slice(0, i).filter(m => m.role === 'user').at(-1) || {}; send(`「${msgs[i].title || '정리 문서'}」 인포그래픽 그림`, 'image', { context: src.context, ctxCount: src.ctxCount }) }
@@ -779,7 +780,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
             title={mic === 'listen' ? '듣는 중 — 다시 누르면 멈춰요(보내도 멈춤)' : '말로 입력 — 말하는 동안 글자가 바로 떠요(KAIROS 실시간 받아쓰기, 말한 1분에 약 2크레딧)'}
             style={{ ...css.ghost, padding: '2px 8px', ...(mic === 'listen' ? { color: '#fff', background: '#dc2626', borderColor: '#dc2626' } : null) }}>
             {mic === 'listen' ? '● 듣는 중' : mic === 'wait' ? '🎤 …' : mic === 'stopping' ? '🎤 마무리…' : '🎤'}</button>
-          <span data-testid="chat-foot-note" style={{ ...css.meta, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', ...(micErr ? { color: '#dc2626' } : null) }} title={micErr || (server ? `대화 기록은 이 칠판(「${DOC_NAME}」)에 함께 저장돼요` : '')}>{micErr || (server ? '기록은 이 칠판에 저장' : '서버가 꺼져 있어요 — python web/server.py 를 켜야 물을 수 있어요.')}</span>
+          <span data-testid="chat-foot-note" style={{ ...css.meta, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', ...(micErr ? { color: '#dc2626' } : null) }} title={micErr || (server ? `대화 기록은 이 칠판(「${DOC_NAME}」)에 함께 저장돼요` : '')}>{micErr || (server ? '' : '서버가 꺼져 있어요 — python web/server.py 를 켜야 물을 수 있어요.')}</span>{/* 평소 글 「기록은 이 칠판에 저장」은 뺌 — 대화창 폭에선 「기」 한 글자로 잘려 보였음(2026-11-03 UX 검토, 같은 말은 마우스 올림에 남김) */}
           <select style={css.select} value={useModel} title="대화 답에 쓸 모델(100만 토큰당 입력 / 출력 달러) — 검색·그림·정리 문서는 앱이 일마다 알맞은 모델을 따로 고름" onChange={e => { setModel(e.target.value); try { localStorage.setItem(MODEL_KEY, e.target.value) } catch { /* 기억 못 해도 그만 */ } }}>
             {!Object.values(feat).some(rows => rows.some(m => m.id === useModel)) && <option value={useModel}>{!model || useModel === models?.default ? '기본 · ' : ''}{useModel}</option>}{/* 전에 골라 둔 모델이 목록에서 빠져도 「기본」으로 보이지 않게(2026-10-26) */}
             {Object.entries(feat).filter(([, rows]) => rows.length).map(([v, rows]) => (

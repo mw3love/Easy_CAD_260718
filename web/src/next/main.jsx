@@ -427,7 +427,7 @@ function ShareForm({ onClose, people = [], title = '' }) {   // people = [{ id, 
   return <div onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }} style={{ position: 'absolute', top: 48, right: 0, zIndex: 20, width: 340, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, boxShadow: '0 4px 14px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif", color: C.ink }}>
     <div style={{ display: 'flex', gap: 14, borderBottom: `1px solid ${C.line}`, fontSize: 13 }}>{tabBtn('share', '공유')}{tabBtn('publish', '게시')}</div>
     {tab === 'share' ? <>
-      <div style={{ color: C.muted }}>같이 고칠 사람에게 보내는 링크예요. 들어오면 이름만 적고 바로 편집해요.</div>
+      {inv?.password && <div style={{ color: C.muted }}>같이 고칠 사람에게 보내는 링크예요. 들어오면 이름만 적고 바로 편집해요.</div>}{/* 비밀번호 없는 서버는 아래 「이 주소가 곧 열쇠」가 같은 말이라 뺌(두 번 읽혔음, 2026-11-03 UX 검토) */}
       {inv === undefined ? <span style={{ color: C.muted }}>확인 중…</span> : !inv.password ? <>
         <div data-testid="share-open">이 주소가 곧 열쇠예요 — 받은 사람은 처음 한 번 이름만 적고 바로 같이 고쳐요. 주소를 모르는 사람은 이 칠판을 찾을 수 없어요.</div>{linkBox(board)}
         <div style={{ display: 'flex', gap: 6 }}><button style={b('var(--mb-accent)')} onClick={() => copy(board)}>주소 복사</button>{qrBtn(board)}</div>
@@ -753,9 +753,9 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
           <button onClick={saveFile} style={{ all: 'unset', cursor: 'pointer', padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,.22)' }}>내려받기</button>
           <button onClick={() => { forgetBoard(DOC_NAME); location.href = location.pathname }} style={{ all: 'unset', cursor: 'pointer', padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,.22)' }}>쓰던 칠판으로</button></div>}   {/* 2026-10-28 칠판 지우기 — 열어 둔 창 */}
         {/* 예시 칠판 띠(2026-10-28 사용자 — 만져 보다 망가지면 한 번에 처음으로): 이 사람 사본만 되돌림(칠판·대화·예시 심볼), 되돌리면 고친 것이 사라져 한 번 물음 */}
-        {example && !gone && !exHide && !phone && <div data-testid="example-band" style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 25, display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px 6px 14px', borderRadius: 10,
+        {example && !gone && !exHide && !phone && <div data-testid="example-band" style={{ position: 'absolute', top: 10, left: 'calc((100% - var(--mb-right-inset)) / 2)', transform: 'translateX(-50%)', zIndex: 19, display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px 6px 14px', borderRadius: 10,
           background: C.card, border: `1px solid ${C.line}`, color: C.ink, font: "500 13px 'Pretendard', sans-serif", boxShadow: '0 4px 14px rgba(0,0,0,.12)', whiteSpace: 'nowrap' }}>
-          <span><b style={{ fontWeight: 700 }}>예시 칠판</b> — 마음껏 만져 보세요. 망가져도 한 번에 되돌려요</span>
+          <span><b style={{ fontWeight: 700 }}>예시 칠판</b> — 마음껏 만져 보세요{narrow ? '' : '. 망가져도 한 번에 되돌려요'}</span>   {/* 띠 = 칠판 보이는 칸 가운데(떠 있는 대화창 빼고)·위 막대 팝업(20) 밑, 좁은 창은 짧게 — 속성 카드·공유 창·대화창 머리를 덮었음(2026-11-03 UX 검토) */}
           {/* 차례로 보기(2026-11-03) — 처음 온 사람은 전체 보기라 노트북에서 글씨가 안 읽힘 → 1번 프레임부터 발표처럼. 띠의 대표 행동이라 코랄은 이쪽(규칙 A1), 되돌리기는 회색 테두리(규칙 ⑧ 따로 보이는 단추는 그대로) */}
           <button data-testid="example-tour" onClick={() => ed.current?.startPresent(ed.current?.frameIds()[0])} title="1번 프레임부터 한 장씩 크게 보기 · → 다음 · ← 이전 · Esc 끝" style={{ all: 'unset', cursor: 'pointer', padding: '4px 10px', borderRadius: 6, background: C.accent, color: '#fff', fontWeight: 600 }}>▶ 차례로 보기</button>
           <button data-testid="example-reset" onClick={() => setExAsk(true)} title="이 칠판·KAIROS 대화·예시 심볼을 처음 모습으로" style={{ all: 'unset', cursor: 'pointer', padding: '3px 10px', borderRadius: 6, border: `1px solid ${C.line}`, color: C.ink, fontWeight: 500 }}>↺ 처음 모습으로</button>
