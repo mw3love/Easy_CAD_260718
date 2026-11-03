@@ -208,6 +208,180 @@ def _untangle_texts(spec: dict) -> dict:
     return {**spec, "ops": ops}
 
 
+def _label_box(b: dict) -> tuple[float, float, float, float]:
+    """상자 이름이 차지하는 자리(상자 가운데) — `_text_box`와 같은 셈."""
+    f = float(b.get("font", 15)) if isinstance(b.get("font", 15), (int, float)) else 15.0
+    lines = str(b["label"]).split("\n")
+    w = max(_units(s) for s in lines) * f * 4 / 3 / SCALE
+    h = len(lines) * f * 4 / 3 * 1.2 / SCALE
+    cx, cy = (float(b["x1"]) + float(b["x2"])) / 2, (float(b["y1"]) + float(b["y2"])) / 2
+    return cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2
+
+
+def _pts_box(op: dict):
+    try:
+        if op.get("op") == "circle":
+            cx, cy, r = float(op["cx"]), float(op["cy"]), float(op["r"])
+            return cx - r, cy - r, cx + r, cy + r
+        xs, ys = [float(p[0]) for p in op["pts"]], [float(p[1]) for p in op["pts"]]
+        return min(xs), min(ys), max(xs), max(ys)
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+
+
+def _meet(a, b) -> bool:
+    return min(a[2], b[2]) > max(a[0], b[0]) and min(a[3], b[3]) > max(a[1], b[1])
+
+
+def _seg_cuts(p, q, r) -> bool:
+    """선분 p→q가 사각형 r 안을 지나나(Liang-Barsky)."""
+    (ax, ay), (bx, by) = (float(p[0]), float(p[1])), (float(q[0]), float(q[1]))
+    dx, dy, t0, t1 = bx - ax, by - ay, 0.0, 1.0
+    for pp, qq in ((-dx, ax - r[0]), (dx, r[2] - ax), (-dy, ay - r[1]), (dy, r[3] - ay)):
+        if pp == 0:
+            if qq < 0:
+                return False
+        else:
+            t = qq / pp
+            if pp < 0:
+                t0 = max(t0, t)
+            else:
+                t1 = min(t1, t)
+    return t0 < t1
+
+
+def _segs(op: dict) -> list:
+    pts = list(op.get("pts") or [])
+    if op.get("closed") and pts:
+        pts.append(pts[0])
+    return [(p, q) for p, q in zip(pts, pts[1:]) if len(p) >= 2 and len(q) >= 2]
+
+
+def _clear_lines(spec: dict) -> dict:
+    """글과 선·그림 겹침 줄이기(2026-11-03 사용자 — 「감시 서버」 위 모니터 그림, 세로선에 걸린 「VSWR 1.1」, 「송신기#1」의 「#」 낙서).
+    ① 상자 이름 위의 작은 낙서(글자 높이보다 작은 poly — AI가 「#」 같은 글자 조각을 그림으로도 그림)는 뺀다(이름에 이미 있음).
+    ② 상자 안 그림(아이콘)이 이름과 겹치면 이름을 그림 옆 빈 쪽에 맞게 줄이고(75%까지), 더 줄여야 하면 이름을 빈 쪽 가운데 자유 글로 옮긴다.
+    ③ 자유 글 가운데를 지나는 선은 가장 가까운 쪽으로 글을 비킨다(폭의 반·높이만큼까지, 새로 겹치지 않을 때만)."""
+    ops = [dict(op) if isinstance(op, dict) else op for op in spec.get("ops", [])]
+    drop = set()
+    boxes = [op for op in ops if isinstance(op, dict) and op.get("op") == "box" and op.get("label")]
+    draws = [op for op in ops if isinstance(op, dict) and op.get("op") in ("poly", "circle")]
+    moved = []
+    for b in boxes:
+        try:
+            B = tuple(float(b[k]) for k in ("x1", "y1", "x2", "y2"))
+        except (KeyError, TypeError, ValueError):
+            continue
+        f = float(b.get("font", 15)) if isinstance(b.get("font", 15), (int, float)) else 15.0
+        lh = f * 4 / 3 * 1.2 / SCALE
+        R = _label_box(b)
+        inside = []
+        tol = 0.3 * lh
+
+        def on_edge(d):   # 상자 테두리를 한 번 더 그은 선(손그림 겹선 — 「UPS · 발전기」 이름이 이것 때문에 옆으로 밀렸음, 같은 날) = 그림 아님
+            if d.get("op") != "poly":
+                return False
+            try:
+                return all(min(abs(float(x) - B[0]), abs(float(x) - B[2]), abs(float(y) - B[1]), abs(float(y) - B[3])) <= tol for x, y in d["pts"])
+            except (KeyError, TypeError, ValueError):
+                return False
+        for d in draws:
+            D = _pts_box(d)
+            if D and B[0] - 2 <= D[0] and D[2] <= B[2] + 2 and B[1] - 2 <= D[1] and D[3] <= B[3] + 2 and not on_edge(d):
+                inside.append((d, D, d.get("op") == "poly" and max(D[2] - D[0], D[3] - D[1]) <= 0.9 * lh))
+        big = [D for _, D, small in inside if not small]
+        icons = []
+        for d, D, small in inside:
+            if not _meet(D, R):
+                continue
+            grown = (D[0] - 0.2 * lh, D[1] - 0.2 * lh, D[2] + 0.2 * lh, D[3] + 0.2 * lh)
+            if small and not any(_meet(grown, G) for G in big):   # ① 글자 조각 낙서(큰 그림에 붙은 조각 = 모니터 받침 등은 그림의 일부라 남김 — 같은 날 실측)
+                drop.add(id(d))
+            else:
+                icons.append(D)
+        if not icons:
+            continue
+        I = (min(d[0] for d in icons), min(d[1] for d in icons), max(d[2] for d in icons), max(d[3] for d in icons))
+        cx = (B[0] + B[2]) / 2
+        pad = 0.15 * lh
+        if (I[0] + I[2]) / 2 >= cx:   # 그림이 오른쪽 — 빈 쪽 = 왼쪽
+            half, side = I[0] - pad - cx, (B[0] + pad, I[0] - pad)
+        else:
+            half, side = cx - I[2] - pad, (I[2] + pad, B[2] - pad)
+        k = 2 * half / max(R[2] - R[0], 1e-6)
+        if k >= 0.75:   # ② 가운데 그대로 조금만 줄임
+            b["font"] = max(2, round(f * min(1.0, k)))
+            continue
+        lines = str(b["label"]).split("\n")   # ② 빈 쪽 가운데 자유 글로
+        u = max(_units(s) for s in lines) or 1.0
+        w = side[1] - side[0]
+        nf = min(f, w / (u * 4 / 3 / SCALE), (B[3] - B[1]) * 0.85 / (len(lines) * 1.2 * 4 / 3 / SCALE))
+        if nf < 0.5 * f or w <= 0:
+            continue   # 빈 쪽이 너무 좁음 — 그대로 둠
+        tw, th = u * nf * 4 / 3 / SCALE, len(lines) * nf * 4 / 3 * 1.2 / SCALE
+        t = {"op": "text", "x": side[0] + (w - tw) / 2, "y": (B[1] + B[3]) / 2 - th / 2, "text": b["label"], "font": max(2, round(nf))}
+        for key in ("tcolor", "color"):
+            if b.get(key):
+                t["color"] = b[key]
+                break
+        b.pop("label", None)
+        b.pop("tcolor", None)
+        moved.append(t)
+    ops = [op for op in ops if id(op) not in drop] + moved
+    segs = [s for op in ops if isinstance(op, dict) and op.get("op") in ("line", "poly") for s in _segs(op)]
+    ts = [op for op in ops if isinstance(op, dict) and op.get("op") == "text" and str(op.get("text") or "").strip()
+          and not float(op.get("rot") or 0) % 360 and isinstance(op.get("font", 13), (int, float))]
+
+    def core(r):   # 글 가운데(가장자리 15% 뺌) — 선이 글 끝을 스치는 건 그대로
+        mx, my = 0.15 * (r[2] - r[0]), 0.15 * (r[3] - r[1])
+        return r[0] + mx, r[1] + my, r[2] - mx, r[3] - my
+
+    def bad(t, r):
+        c = core(r)
+        return any(_seg_cuts(p, q, c) for p, q in segs) or any(u is not t and _meet(r, _text_box(u)) for u in ts)
+
+    for t in ts:   # ③
+        r = _text_box(t)
+        c = core(r)
+        cut = [(p, q) for p, q in segs if _seg_cuts(p, q, c)]
+        if not cut:
+            continue
+        f = float(t.get("font", 13))
+        xs = [float(v[0]) for s in cut for v in s]
+        ys = [float(v[1]) for s in cut for v in s]
+        vert = all(abs(float(q[0]) - float(p[0])) <= abs(float(q[1]) - float(p[1])) for p, q in cut)
+        horz = all(abs(float(q[1]) - float(p[1])) < abs(float(q[0]) - float(p[0])) for p, q in cut)
+        if not (vert or horz):
+            continue
+        tries = []   # (배율, dx, dy) — 그대로 크기에서 비키기 먼저, 안 되면 조금 줄여 비키기(70%까지 — 「VSWR 1.1」은 옆 「- 10kW」 때문에 크기 그대로는 못 비킴)
+        for k in (1.0, 0.9, 0.8, 0.7):
+            w, h = (r[2] - r[0]) * k, (r[3] - r[1]) * k
+            gap = 0.2 * h
+            if vert:
+                cand = [(min(xs) - gap - w - r[0], 0.0), (max(xs) + gap - r[0], 0.0)]
+                lim = 0.5 * (r[2] - r[0])
+            else:
+                cand = [(0.0, min(ys) - gap - h - r[1]), (0.0, max(ys) + gap - r[1])]
+                lim = 1.0 * (r[3] - r[1])
+            tries += [(k, dx, dy) for dx, dy in sorted(cand, key=lambda v: abs(v[0]) + abs(v[1])) if abs(dx) + abs(dy) <= lim]
+        for k, dx, dy in tries:
+            nr = (r[0] + dx, r[1] + dy, r[0] + dx + (r[2] - r[0]) * k, r[1] + dy + (r[3] - r[1]) * k)
+            if not bad(t, nr):
+                t["x"], t["y"] = float(t["x"]) + dx, float(t["y"]) + dy
+                if k < 1.0:
+                    t["font"] = max(2, round(f * k))
+                break
+    same = {}   # 같은 글이 여러 번(「VSWR 1.1」 셋)이면 크기도 같게 — 가장 작은 것에 맞춤(하나만 줄어 들쭉날쭉했음)
+    for t in ts:
+        same.setdefault(str(t["text"]).strip(), []).append(t)
+    for group in same.values():
+        if len(group) > 1:
+            m = min(float(t["font"]) for t in group)
+            for t in group:
+                t["font"] = m
+    return {**spec, "ops": ops}
+
+
 def trace(key: str, png: bytes, *, width: float = 0, model: str = TRACE_MODEL, base_url: str | None = None,
           progress=None) -> dict:
     """그림 바이트 → {"items": .ecad 아이템들(왼쪽 위 = 0,0), "w", "h", "skipped", "tiles": 구역 로그}.
@@ -220,5 +394,5 @@ def trace(key: str, png: bytes, *, width: float = 0, model: str = TRACE_MODEL, b
     client = gw._client(key, base_url or gw.resolve_base_url(), timeout=600.0)
     spec, log = generate_ops_tiled(client, sent, model=model, progress=progress)
     scale = float(width) / W if width and width > 0 else SCALE
-    sk, skipped = ops_to_sketch(_scale_fonts(_untangle_texts(_even_box_fonts(spec)), scale / SCALE), dark=False, scale=scale)
+    sk, skipped = ops_to_sketch(_scale_fonts(_clear_lines(_untangle_texts(_even_box_fonts(spec))), scale / SCALE), dark=False, scale=scale)
     return {"items": sk._items, "w": W * scale, "h": H * scale, "skipped": skipped, "tiles": log, "model": model}

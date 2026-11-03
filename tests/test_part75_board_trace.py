@@ -291,3 +291,44 @@ def test_trace_untangle_raises_tiny_texts_and_fits_legend_box():
     x0, _, x1, _ = board_trace._text_box(out[4])
     assert x1 <= 1260 and 18 <= out[4]["font"] < 30                             # 범례 글은 틀 안으로(처음 크기의 60%까지)
     assert out[5]["font"] == spec["ops"][5]["font"] or out[5]["font"] <= 30
+
+
+def test_trace_clear_lines_box_names_scraps_icons_and_edge_strokes():
+    """글과 그림 겹침(2026-11-03 사용자): 상자 이름 위 작은 낙서(「송신기#1」의 「#」)는 빼고, 이름을 덮는 아이콘(「감시 서버」 모니터)이 있으면
+    이름을 빈 쪽 자유 글로 옮기고(아이콘에 붙은 작은 조각 = 받침은 남김), 테두리를 한 번 더 그은 겹선은 그림으로 안 침(「UPS · 발전기」)."""
+    spec = {"ops": [
+        {"op": "box", "x1": 0, "y1": 0, "x2": 120, "y2": 40, "label": "송신기 1", "font": 20},
+        {"op": "poly", "pts": [[58, 14], [62, 10], [64, 16]]},                                   # 이름 위 낙서
+        {"op": "box", "x1": 200, "y1": 0, "x2": 400, "y2": 60, "label": "감시 서버", "font": 30},
+        {"op": "poly", "pts": [[330, 12], [390, 12], [390, 44], [330, 44]], "closed": True},     # 모니터
+        {"op": "poly", "pts": [[356, 44], [356, 50], [364, 50]]},                               # 받침(모니터에 붙음)
+        {"op": "box", "x1": 500, "y1": 0, "x2": 700, "y2": 60, "label": "UPS · 발전기", "font": 30},
+        {"op": "poly", "pts": [[600, 2], [698, 2], [698, 58]]},                                   # 테두리 겹선
+    ]}
+    out = board_trace._clear_lines(spec)["ops"]
+    polys = [o for o in out if o["op"] == "poly"]
+    assert len(polys) == 3 and [[58, 14], [62, 10], [64, 16]] not in [p["pts"] for p in polys]   # 낙서만 빠짐
+    assert out[0]["label"] == "송신기 1"
+    server = [o for o in out if o["op"] == "box"][1]
+    assert "label" not in server
+    moved = [o for o in out if o["op"] == "text" and o["text"] == "감시 서버"][0]
+    x0, y0, x1, y1 = board_trace._text_box(moved)
+    assert 200 <= x0 and x1 <= 330 and 0 <= y0 and y1 <= 60                                   # 모니터 왼쪽 빈 곳 안
+    assert [o for o in out if o["op"] == "box"][2]["label"] == "UPS · 발전기"                   # 겹선 상자는 그대로
+
+
+def test_trace_clear_lines_moves_text_off_a_line_and_evens_repeats():
+    """세로선이 글 가운데를 지나면 옆으로 비킴(옆 글과 겹치면 조금 줄여서), 같은 글이 여러 번이면 크기를 같게(「VSWR 1.1」 셋)."""
+    spec = {"ops": [
+        {"op": "text", "x": 707, "y": 164, "text": "- 10kW", "font": 28},
+        {"op": "text", "x": 795, "y": 174, "text": "VSWR 1.1", "font": 34},
+        {"op": "line", "pts": [[880, 126], [881, 294]]},
+        {"op": "text", "x": 795, "y": 474, "text": "VSWR 1.1", "font": 34},
+    ]}
+    out = board_trace._clear_lines(spec)["ops"]
+    v = out[1]
+    r = board_trace._text_box(v)
+    assert r[2] < 880 and not board_trace._meet(r, board_trace._text_box(out[0]))              # 선 왼쪽으로, 「- 10kW」와 안 겹침
+    assert out[3]["font"] == v["font"] < 34                                                    # 같은 글 = 같은 크기
+    plain = {"ops": [{"op": "text", "x": 0, "y": 0, "text": "글", "font": 20}, {"op": "line", "pts": [[100, 0], [100, 50]]}]}
+    assert board_trace._clear_lines(plain)["ops"] == plain["ops"]                              # 안 겹치면 그대로
