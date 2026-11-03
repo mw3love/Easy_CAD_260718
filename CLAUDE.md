@@ -126,7 +126,7 @@ easycad/
 │   ├── board_image.py      웹 칠판 그림 — 「그려줘」 → KAIROS 그림 후보 2장(gpt-image-2.5-flare — 10-20 실측, §8 항목61 ③-4, 서버가 `<이름>.img/`에 두고 주소만) + 이어 고치기(`followup`)·원본 유지 편집(`input_images`)·인포그래픽
 │   ├── board_icon.py       웹 칠판 아이콘 — 「○○ 아이콘 그려 줘」 → KAIROS SVG 후보 둘(claude-sonnet-5-5 — 10-23 실측, 지시문은 데스크톱 `text_to_svg`) + 고른 아이콘 고치기·고른 그림 보고 그리기, 도형으로는 칠판 `svgin.js`(§8 항목63)
 │   ├── board_diagram.py    웹 칠판 🔷 도형 그리기 — 말 → 데스크톱 흐름도 설계서(`text_to_flow`) + 배치(`flow_spec.layout`, 글 폭은 글자 수 짐작) → 서버 `/api/chat` `kind: 'diagram'`(`spec`·`place`), 칠판은 `flowboard.js`가 지음 · 고치는 말(`FOLLOW_WORDS`) = 앞 설계서 고치기(claude-sonnet-5-5, 2026-11-03)
-│   ├── board_trace.py      웹 칠판 「도면으로 베끼기」 — 그림 → 데스크톱 베끼기 엔진 그대로(`photo_to_ops.generate_ops_tiled` → `photo_ops`) → .ecad 아이템, 서버 `/api/trace`(일감 방식, 2026-10-25 — 모서리 맞추기·부분 다시 없음)
+│   ├── board_trace.py      웹 칠판 「도면으로 베끼기」 — 그림 → 데스크톱 베끼기 엔진 그대로(`photo_to_ops.generate_ops_tiled` → `photo_ops`) → .ecad 아이템, 서버 `/api/trace`(일감 방식, 2026-10-25 — 모서리 맞추기·부분 다시 없음) + 결과 손질(2026-11-03 — 상자 글 크기·설명 글 겹침·선/아이콘 비키기·한 판 글 크기 고르기, 웹만)
 │   ├── board_ocr.py        웹 칠판 「그림 속 글 읽기」 — 그림 → KAIROS(claude-haiku-5-5, 10-21 실측) → 글, 서버 `/api/ocr` + 붙여 넣은 그림 설명 한두 줄 `describe` → 그림 `alt`(서버 `/api/describe`, 0.1크레딧 — 화면 시험은 `EASYCAD_DESCRIBE=off`, 2026-10-28)
 │   ├── meeting.py          웹 칠판 회의록 — 녹음 → KAIROS 받아쓰기(stt-async-v5, 올리기·기다리기) → 구간 합치기 → 요약 JSON(§8 항목61 ③-3, 서버 `/api/meeting` 뒤 일감) + 실시간 「🎙 회의」 요약만(`minutes_from_live`, `/api/meeting/<칠판>/live`)
 │   ├── deep_mode.py        웹 칠판 딥모드(§8 항목66) — 주제 + 질문지 답 → 편집장(claude-opus-5-5) 지면 계획 → 꼭지마다 재료(Exa·공공 데이터, 못 찾으면 웹) → 기자(claude-sonnet-5-5) 본문, 판은 칠판 `deepBoard`가 지음(서버 `/api/chat` `kind: 'deep'`) + 고른 꼭지만 다시 쓰기(`redo`, `step: 'section'`)
@@ -149,7 +149,7 @@ easycad/
 │   ├── web_board.py        데스크톱 ↔ 웹 칠판 서버 — 로그인·칠판 목록·받기·올리기(§8 항목61 ④-2, Qt 비의존, 「파일 › 웹 칠판」이 씀)
 │   ├── safe_write.py       안전 저장(임시 파일에 쓰고 바꿔치기) — .ecad·DXF·자동 저장 공용
 │   ├── autosave.py         자동 저장·복구 파일 관리(앱 데이터 `recovery` 폴더, 2026-10-03)
-│   ├── photo_ops.py        사진→도면 ops JSON → Sketch 아이템(글자 회전 rot, Qt 비의존)
+│   ├── photo_ops.py        사진→도면 ops JSON → Sketch 아이템(글자 회전 rot, 꾸밈 색·굵기·점선·칠 — 2026-11-03, Qt 비의존)
 │   ├── html_share.py       「HTML로 공유」 — 레이어별 SVG + 확대·이동 + 상자 정보(SHAPES)를 HTML 한 파일로(§8 항목46)
 │   └── pdf_import.py       벡터 PDF 열기(PyMuPDF, 쪽마다 빈 용지틀, §8 항목33)
 ├── fonts.py              보드 글꼴 Pretendard 등록(`resources/fonts/`, OFL — §8 항목60 ②) + 앱 화면 글꼴도 Pretendard(`apply_ui_font` — 창 만든 뒤에 불러야 함)
@@ -161,7 +161,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~82_*.py      테마별 회귀 스모크 1697종(2026-11-03 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~82_*.py      테마별 회귀 스모크 1707종(2026-11-03 기준, 개별·전체 pytest 실행 가능)
 web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + React 18 + TipTap 3.32.0(글 편집, 버전 고정). **2026-10-18 5단계 갈아탐: tldraw 뺌**(옛 tldraw 화면
 │                          src/main.jsx·shapes.jsx·cad.jsx·chat.jsx·boardStore.js·ecad.js·ecadExport.js는 지움 — git에 있음). 남은 공용: route.js(길 찾기 = 데스크톱
 │                          `_route_ortho` 옮김, `tools/export_route_cases.py`로 대조 시험)·ecadFormat.js(순수 변환, `npm test`)·symbols.json(`tools/export_web_symbols.py`가
