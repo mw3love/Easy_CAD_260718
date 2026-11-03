@@ -4,7 +4,7 @@
 // 가장 중요한 단계(focus) 하나만 코랄, 글자 = 기본 잉크(어두운 화면에선 흰색으로 바뀜), 화살표 = 「자동 길」 직각 + 두 끝 붙음(상자를 옮기면 따라옴).
 import { newId } from './model.js'
 import { textW } from './chart.js'
-import { resolveRoutes } from './arrows.js'
+import { applyRouting, resolveRoutes } from './arrows.js'
 import { polylineAt } from './geom.js'
 
 export const LANE_COLORS = ['#4a8fd9', '#3ea37a', '#8a6fd1', '#c9a227', '#2a9fb0', '#c2577f']   // 데스크톱 `_FLOW_LANE_COLORS`
@@ -143,33 +143,104 @@ export function clearLabelGaps(items, x0, x1) {
   return items
 }
 
+// 화살표 두 개 사이 꼬임 수 — 가로·세로 구간이 엇갈림(+1), 같은 줄에 포개짐(+1), 한 점에 들어오는 끝과 나가는 끝이 같이 붙음(+1).
+// 라벨 없는 화살표가 같은 점에서 갈라지거나 모이는 묶음선(조직도 갈래)은 포개져도 셈하지 않음. ra·rb = 칠판 좌표 꼭짓점
+const portKey = (it, k) => it['_' + k] + ':' + it[k + '_pt'].map(Math.round).join(',')
+function pairTangles(a, b, ra, rb) {
+  let n = (portKey(a, 'bind1') === portKey(b, 'bind2') || portKey(a, 'bind2') === portKey(b, 'bind1')) ? 1 : 0
+  const bundle = !a.labels?.[0]?.text && !b.labels?.[0]?.text && (portKey(a, 'bind1') === portKey(b, 'bind1') || portKey(a, 'bind2') === portKey(b, 'bind2'))
+  const segs = r => r.slice(1).map((q, j) => [r[j], q]).filter(([p, q]) => Math.abs(p[0] - q[0]) + Math.abs(p[1] - q[1]) > 0.5)
+  for (const [p, q] of segs(ra)) for (const [u, v] of segs(rb)) {
+    const hp = Math.abs(p[1] - q[1]) < 0.5, hu = Math.abs(u[1] - v[1]) < 0.5
+    if (hp !== hu) {   // 엇갈림 — 두 구간 모두 안쪽에서
+      const [h0, h1, vv0, vv1] = hp ? [p, q, u, v] : [u, v, p, q], y = h0[1], x = vv0[0]
+      if (Math.min(h0[0], h1[0]) + 1 < x && x < Math.max(h0[0], h1[0]) - 1 && Math.min(vv0[1], vv1[1]) + 1 < y && y < Math.max(vv0[1], vv1[1]) - 1) n++
+    } else if (!bundle) {   // 포개짐 — 같은 줄(4 안쪽)에서 4 넘게 겹침
+      const c = hp ? 1 : 0, o = 1 - c
+      if (Math.abs(p[c] - u[c]) < 4 && Math.min(Math.max(p[o], q[o]), Math.max(u[o], v[o])) - Math.max(Math.min(p[o], q[o]), Math.min(u[o], v[o])) > 4) n++
+    }
+  }
+  return n
+}
+/** 지은 도형의 화살표 꼬임 수(시험이 씀 — list를 주면 [화살표, 화살표, 수]를 담음) */
+export function tangles(items, list = null) {
+  const r = resolveRoutes(items), as = items.map((it, i) => (it.type === 'sarrow' ? { it, pts: (r.get(i) || it.pts).map(([x, y]) => [x + it.pos[0], y + it.pos[1]]) } : null)).filter(Boolean)
+  let n = 0
+  for (let i = 0; i < as.length; i++) for (let j = i + 1; j < as.length; j++) {
+    const k = pairTangles(as[i].it, as[j].it, as[i].pts, as[j].pts); n += k
+    if (k && list) list.push([as[i], as[j], k])
+  }
+  return n
+}
+
+/** 꼬인 화살표만 붙는 변을 바꿔 봄(처음 지을 때만): 꼬임에 낀 화살표마다 두 끝 변 16가지를 길 찾기로 그려 보고, 전체 꼬임이 가장 많이 주는 한 수를 둠 → 더 안 줄 때까지.
+ *  꼬임이 없는 도형은 그대로(흐름 방향 변 규칙 `linkSides`가 먼저). 2026-11-03 사용자(공개 칠판 18번 → 23번): 「필터 → 급전선」이 위로 나가 판을 크게 돌며
+ *  「출력 감시」와 엇갈리고 「제어」 되돌림 선과 같은 줄에 포개졌음 — 변 규칙은 화살표 하나씩만 봐서 서로 부딪히는 건 모름.
+ *  검토한 대안: 규칙 더하기(이 경우 = 오른쪽으로 나가기) — 판마다 다른 모양이라 끝이 없어 버림. */
+export function untangle(items) {
+  const arrows = items.filter(it => it.type === 'sarrow' && it._bind1 && it._bind2), box = new Map(items.filter(it => it.flow_step).map(it => [it._id, it]))
+  const route = it => applyRouting(it, items).map(([x, y]) => [x + it.pos[0], y + it.pos[1]])
+  const R = arrows.map(route), SIDES = ['r', 'l', 't', 'b'], memo = new Map()
+  const badOf = i => arrows.reduce((s, b, j) => s + (j === i ? 0 : pairTangles(arrows[i], b, R[i], R[j])), 0)
+  const len = r => r.slice(1).reduce((s, q, j) => s + Math.abs(q[0] - r[j][0]) + Math.abs(q[1] - r[j][1]), 0)
+  // 라벨 화살표는 라벨이 상자에 안 걸리고 놓일 자리가 있어야(바꾸기 전에 있었으면) — 상자 바로 옆으로 꺾는 짧은 길로 바뀌어 라벨 둘 데가 없어졌음(점검 재료 「아니오」)
+  const boxes = [...box.values()].map(it => ({ l: it.pos[0], t: it.pos[1], r: it.pos[0] + it.rect[2], b: it.pos[1] + it.rect[3] }))
+  const fits = (it, r) => { const L = it.labels?.[0]; return !L?.text || labelSpot(r.map(([x, y]) => ({ x, y })), labelW(L.text), L.t ?? 0.5, q => boxes.some(b => meet(q, b))) != null }
+  const fitNow = arrows.map((it, i) => fits(it, R[i]))
+  for (let round = 0; round < 8; round++) {
+    let best = null
+    arrows.forEach((it, i) => {
+      const now = badOf(i); if (!now) return
+      const keep = { pts: it.pts, b1: it.bind1_pt, b2: it.bind2_pt, h: it.route_hints }, a = box.get(it._bind1), b = box.get(it._bind2)
+      for (const s1 of SIDES) for (const s2 of SIDES) {
+        const p1 = sidePt(a.rect, s1), p2 = sidePt(b.rect, s2)
+        Object.assign(it, { bind1_pt: p1, bind2_pt: p2, route_hints: [], pts: [[a.pos[0] + p1[0], a.pos[1] + p1[1]], [b.pos[0] + p2[0], b.pos[1] + p2[1]]] })
+        const key = i + s1 + s2, r = memo.get(key) || memo.set(key, route(it)).get(key), old = R[i]; R[i] = r   // 길은 상자만 보고 찾으니 한 번만
+        const gain = fitNow[i] && !fits(it, r) ? 0 : now - badOf(i), cost = len(r)
+        R[i] = old
+        if (gain > 0 && (!best || gain > best.gain || (gain === best.gain && cost < best.cost))) best = { i, gain, cost, r, set: { bind1_pt: p1, bind2_pt: p2, route_hints: [], pts: it.pts } }
+      }
+      Object.assign(it, { pts: keep.pts, bind1_pt: keep.b1, bind2_pt: keep.b2, route_hints: keep.h })
+    })
+    if (!best) break
+    Object.assign(arrows[best.i], best.set); R[best.i] = best.r
+  }
+  return items
+}
+
 /** 라벨을 제 선 위 빈자리로(처음 지을 때만 — 손으로 옮긴 라벨은 안 건드림): 가운데(또는 갈림길 옆)부터 조금씩 앞뒤로 옮겨 보며
  *  남의 화살표 선·상자·먼저 놓은 라벨·화살촉에 안 걸리는 첫 자리. 다 걸리면 그대로.
  *  2026-11-03 실조건(공개 칠판 19번): 곧게 내려가는 「전원 공급」 라벨 밑을 남의 가로선이 지나갔고 「출력 샘플」·「제어」 라벨이 서로 겹쳤음.
  *  검토한 대안: 남의 선도 라벨 자리만큼 끊기·사각 바탕 — 2026-10-18에 버림(선이 끊겨 보이고 그림을 가림, render.jsx `halo`). */
 export function placeLabels(items) {
-  const routes = resolveRoutes(items), LH = LABEL_PT * PX * 1.3 + 10, fs = LABEL_PT * PX
-  const rect = (p, w) => ({ l: p.x - w / 2, r: p.x + w / 2, t: p.y - LH / 2, b: p.y + LH / 2 })
-  const meet = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b
+  const routes = resolveRoutes(items)
   const boxes = items.filter(it => it.flow_step).map(it => ({ l: it.pos[0], t: it.pos[1], r: it.pos[0] + it.rect[2], b: it.pos[1] + it.rect[3] }))
   const arrows = items.map((it, i) => (it.type === 'sarrow' ? { it, pts: (routes.get(i) || it.pts).map(([x, y]) => ({ x: x + it.pos[0], y: y + it.pos[1] })) } : null)).filter(Boolean)
   const segs = a => a.pts.slice(1).map((q, j) => ({ l: Math.min(q.x, a.pts[j].x) - 1, r: Math.max(q.x, a.pts[j].x) + 1, t: Math.min(q.y, a.pts[j].y) - 1, b: Math.max(q.y, a.pts[j].y) + 1 }))
   const taken = []
   for (const A of arrows) {
     const L = A.it.labels?.[0]; if (!L?.text) continue
-    const w = Math.max(...L.text.split('\n').map(t => textW(t, fs))) + 8, others = arrows.filter(o => o !== A).flatMap(segs)
-    const total = A.pts.slice(1).reduce((s, q, j) => s + Math.hypot(q.x - A.pts[j].x, q.y - A.pts[j].y), 0)
-    const ok = t => {
-      const { p, n } = polylineAt(A.pts, t), r = rect(p, w), ext = Math.abs(n.y) > 0.5 ? w / 2 : LH / 2   // 법선이 세로 = 가로 구간 → 라벨 폭만큼
-      return t * total >= ext + 4 && (1 - t) * total >= ext + 16 && !others.some(s => meet(r, s)) && !boxes.some(b => meet(r, b)) && !taken.some(b => meet(r, b))
-    }
-    const t0 = L.t ?? 0.5, cands = [t0]
-    for (let k = 1; k <= 9; k++) cands.push(t0 - 0.05 * k, t0 + 0.05 * k)
-    const t = cands.filter(x => x > 0.02 && x < 0.98).find(ok)
+    const w = labelW(L.text), others = arrows.filter(o => o !== A).flatMap(segs)
+    const t = labelSpot(A.pts, w, L.t ?? 0.5, r => others.some(s => meet(r, s)) || boxes.some(b => meet(r, b)) || taken.some(b => meet(r, b)))
     if (t != null) L.t = Math.round(t * 1000) / 1000
-    taken.push(rect(polylineAt(A.pts, L.t ?? 0.5).p, w))
+    taken.push(labelRect(polylineAt(A.pts, L.t ?? 0.5).p, w))
   }
   return items
+}
+const LH = LABEL_PT * PX * 1.3 + 10
+const labelW = text => Math.max(...text.split('\n').map(t => textW(t, LABEL_PT * PX))) + 8
+const labelRect = (p, w) => ({ l: p.x - w / 2, r: p.x + w / 2, t: p.y - LH / 2, b: p.y + LH / 2 })
+const meet = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b
+// 라벨이 놓일 t — t0에서 0.05씩 앞뒤로, 시작 끝·화살촉 쪽 여유를 지키고 hit(라벨 사각형)이 거짓인 첫 자리. 없으면 null. pts = [{x, y}] 칠판 좌표
+function labelSpot(pts, w, t0, hit) {
+  const total = pts.slice(1).reduce((s, q, j) => s + Math.hypot(q.x - pts[j].x, q.y - pts[j].y), 0)
+  const ok = t => {
+    const { p, n } = polylineAt(pts, t), r = labelRect(p, w), ext = Math.abs(n.y) > 0.5 ? w / 2 : LH / 2   // 법선이 세로 = 가로 구간 → 라벨 폭만큼
+    return t * total >= ext + 4 && (1 - t) * total >= ext + 16 && !hit(r)
+  }
+  const cands = [t0]
+  for (let k = 1; k <= 9; k++) cands.push(t0 - 0.05 * k, t0 + 0.05 * k)
+  return cands.filter(x => x > 0.02 && x < 0.98).find(ok) ?? null
 }
 
 /** 서버 자리(`place`) → { frame, items } — 프레임 왼쪽 위 (X, Y). 물건마다 `flow_of` = 프레임 _id(다시 지을 때 지울 것).
@@ -209,6 +280,7 @@ export function flowItems(place, X, Y, { id = newId(), no = 1, z = 1, zb = -1, s
       _bind1: a._id, bind1_pt: pa, bind1_group: null, _bind2: b._id, bind2_pt: pb, bind2_group: null, z: z + 1, flow_of: id }))
   })
   clearLabelGaps(out, ox, ox + place.width)
+  untangle(out)
   placeLabels(out)
   const W = place.width + 2 * PAD, H = place.height + 2 * PAD
   const frame = { ...base([X, Y], { type: 'frame', rect: [0, 0, W, H], name: place.title || '도형', no, z: zb }), _id: id, flow_spec: spec }

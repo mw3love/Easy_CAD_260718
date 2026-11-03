@@ -3,7 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { flowItems, flowSig, linkSides, PAD } from '../src/next/flowboard.js'
+import { flowItems, flowSig, linkSides, PAD, tangles } from '../src/next/flowboard.js'
 import { resolveRoutes } from '../src/next/arrows.js'
 import { textW } from '../src/next/chart.js'
 import { polylineAt } from '../src/next/geom.js'
@@ -109,5 +109,15 @@ test('라벨 자리 — 남의 선·상자·다른 라벨에 안 걸리는 제 �
       assert.ok(!boxes.some(b => meet(x.r, b)), `${name}: 「${x.L.text}」가 상자에 걸침`)
       assert.ok(!labs.some(y => y !== x && meet(x.r, y.r)), `${name}: 「${x.L.text}」가 다른 라벨과 겹침`)
     }
+  }
+})
+
+// 화살표끼리 엇갈림·포개짐(`tangles`) — 붙는 변 바꿔 보기(`untangle`) 뒤 재료마다 이 수를 넘지 않음(2026-11-03 사용자: 공개 칠판 23번 「필터 → 급전선」이 판을 크게 돌며
+// 「출력 감시」와 엇갈리고 「제어」와 포개졌음 — 풀기 전 합 36 · 18번 판 5). 남은 것 = 통로를 건너는 두 선이 서로 지나칠 수밖에 없는 자리 등
+const TANGLE_MAX = { 송신소_sonnet: 1, 점검_sonnet: 5, 조직도_sonnet: 0, 마인드맵_sol: 0, 송신소_칠판: 1, 송신소_칠판2: 0, 송신소_칠판3: 3, 송신소_칠판4: 0 }
+test('화살표 꼬임 — 엇갈림·포개짐이 재료마다 상한 이하', () => {
+  for (const name of Object.keys(ALL)) {
+    const n = tangles(flowItems(ALL[name].place, 0, 0).items)
+    assert.ok(n <= (TANGLE_MAX[name] ?? 0), `${name}: 꼬임 ${n}`)
   }
 })
