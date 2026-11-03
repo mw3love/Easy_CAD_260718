@@ -15,7 +15,7 @@ import time
 
 from easycad.ai import gateway as gw
 from easycad.ai.text_to_flow import generate_flow
-from easycad.fileio.flow_spec import best_wrap, layout, parse_spec
+from easycad.fileio.flow_spec import best_wrap, layout, parse_spec, ranks_of
 
 DIAGRAM_MODEL = "claude-sonnet-5-5"   # 사용자 선택(2026-11-03) — 「모델 설정」에서 terra 등으로 바꿀 수 있음
 
@@ -82,6 +82,25 @@ def box_sizes(spec) -> dict:
     return out
 
 
+GAP_MAJOR = 72.0                          # `flow_spec.layout` 기본 칸 간격
+# 라벨 양옆에 남길 선 = (화살촉 11 + 보이는 선 10) × 2 + 라벨 자리 비움 4(웹 render.jsx `arrowLabels` gap) — 2026-11-03 사용자:
+# 「예비 전원」 라벨이 72 간격을 다 덮어 화살촉만 살짝 보였음(라벨 폭 73)
+LABEL_ROOM = 46.0
+
+
+def label_gaps(spec) -> dict:
+    """가로 흐름에서 옆 칸 상자로 곧게 가는 라벨 화살표(같은 띠·바로 다음 칸)가 있으면 그 칸 뒤 간격을 라벨이 들어가게 넓힘 → {칸: 간격}."""
+    rank, lane = ranks_of(spec), {s.id: s.lane for s in spec.steps}
+    out: dict = {}
+    for k in spec.links:
+        if not k.text or rank.get(k.dst) != rank.get(k.src, -9) + 1 or lane.get(k.src) != lane.get(k.dst):
+            continue
+        need = max(text_w(t, LABEL_PT) for t in k.text.split("\n")) + LABEL_ROOM
+        if need > GAP_MAJOR:
+            out[rank[k.src]] = max(out.get(rank[k.src], 0.0), round(need, 1))
+    return out
+
+
 def place(spec_json: str) -> dict:
     """설계서 글 → 칠판이 지을 자리 {"steps": [{id, text(줄바꿈 반영), kind, lane, box: [x, y, w, h], seg}], "links": [{from, to, text}],
     "lanes": [{name, rect, head}], "title", "direction", "focus", "width", "height", "ranks": {id: 칸}}. 좌표는 왼쪽 위 = (0, 0)."""
@@ -95,8 +114,9 @@ def place(spec_json: str) -> dict:
     else:
         names = list(spec.lanes)
         head = HEAD_PT * PX * LINE + 26.0
-    wrap = best_wrap(spec, size_fn, head=head, icon_h=ICON_H)
-    lay = layout(spec, size_fn, head=head, icon_h=ICON_H, wrap=wrap)
+    gaps = label_gaps(spec) if horizontal else {}
+    wrap = best_wrap(spec, size_fn, head=head, icon_h=ICON_H, gaps=gaps)
+    lay = layout(spec, size_fn, head=head, icon_h=ICON_H, wrap=wrap, gaps=gaps)
     shown = dict(zip(spec.lanes, names))
     r = lambda t: [round(v, 1) for v in t]   # noqa: E731
     return {

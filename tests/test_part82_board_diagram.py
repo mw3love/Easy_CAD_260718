@@ -41,6 +41,25 @@ def test_place_boxes_fit_and_do_not_overlap():
     assert pl["ranks"]["s4"] == pl["ranks"]["s5"] == pl["ranks"]["s3"] + 1
 
 
+def test_label_arrow_gets_room():
+    """옆 칸으로 곧게 가는 라벨 화살표는 칸 간격이 라벨 + 양옆 선만큼(2026-11-03 사용자 — 「예비 전원」 라벨이 72 간격을 다 덮어 화살촉만 보였음)."""
+    spec = {"title": "전원", "direction": "LR", "lanes": ["송신기실"],
+            "steps": [{"id": "a", "text": "발전기 예비 전원", "lane": "송신기실"}, {"id": "b", "text": "수배전·UPS 전원", "lane": "송신기실"},
+                      {"id": "c", "text": "송신기", "lane": "송신기실"}],
+            "links": [{"from": "a", "to": "b", "text": "예비 전원"}, {"from": "b", "to": "c"}]}
+    pl = board_diagram.place(json.dumps(spec, ensure_ascii=False))
+    box = {s["id"]: s["box"] for s in pl["steps"]}
+    gap_ab = box["b"][0] - (box["a"][0] + box["a"][2])
+    gap_bc = box["c"][0] - (box["b"][0] + box["b"][2])
+    assert gap_ab >= board_diagram.text_w("예비 전원", board_diagram.LABEL_PT) + board_diagram.LABEL_ROOM - 0.5
+    assert abs(gap_bc - board_diagram.GAP_MAJOR) < 0.5                # 라벨 없는 칸은 그대로
+    spec["direction"] = "TD"                                         # 세로 흐름은 라벨 높이가 간격 안에 들어가 그대로
+    assert board_diagram.label_gaps(board_diagram.parse_spec(json.dumps(spec, ensure_ascii=False))) != {}   # 계산은 하지만
+    pl2 = board_diagram.place(json.dumps(spec, ensure_ascii=False))
+    b2 = {s["id"]: s["box"] for s in pl2["steps"]}
+    assert abs(b2["b"][1] - (b2["a"][1] + b2["a"][3]) - board_diagram.GAP_MAJOR) < 0.5   # 배치엔 안 씀
+
+
 def test_hierarchy_prompt_forbids_start_end():
     from easycad.ai.text_to_flow import build_prompt
     assert "조직도·마인드맵" in build_prompt("KBS 조직도 그려 줘")   # 0단계 실측: 모든 모델이 조직도 잎에 「끝」 모양을 씀

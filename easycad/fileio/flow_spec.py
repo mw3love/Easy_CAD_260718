@@ -258,10 +258,11 @@ def ranks_of(spec: FlowSpec) -> dict[str, int]:
 
 def layout(spec: FlowSpec, size_of, *, gap_major: float = 72.0, gap_minor: float = 34.0,
            lane_pad: float = 22.0, lane_gap: float = 10.0, head: float = 0.0, icon_h: float = 0.0,
-           wrap: int | None = None) -> FlowLayout:
+           wrap: int | None = None, gaps: dict | None = None) -> FlowLayout:
     """단계 자리 계산. `size_of(step) → (w, h)` 상자 크기. `head` = 띠 이름표 자리 두께(가로 흐름이면 띠 왼쪽 폭, 세로
     흐름이면 띠 위 높이). `icon_h` = 아이콘이 있는 단계 위에 비워 둘 높이(있는 단계가 하나라도 있으면 모든 줄에).
-    `wrap`(칸 수)을 주면 그만큼씩 꺾어 내린다(`best_wrap`이 고른다). 좌표는 왼쪽 위가 (0, 0)."""
+    `wrap`(칸 수)을 주면 그만큼씩 꺾어 내린다(`best_wrap`이 고른다). `gaps` = {칸: 그 칸 뒤 간격} — 없으면 `gap_major`
+    (웹 도형 그리기가 화살표 라벨이 들어가게 넓힘, 2026-11-03). 좌표는 왼쪽 위가 (0, 0)."""
     horizontal = spec.direction in ("LR", "RL")
     rank = ranks_of(spec)
     n_ranks = max(rank.values(), default=0) + 1
@@ -343,11 +344,12 @@ def layout(spec: FlowSpec, size_of, *, gap_major: float = 72.0, gap_minor: float
     col_at = [0.0] * n_ranks
     flow_total = 0.0
     for sg in range(n_seg):
-        a2 = hd + pad
+        a2, g = hd + pad, gap_major
         for r in range(sg * per, min(n_ranks, (sg + 1) * per)):
             col_at[r] = a2
-            a2 += col[r] + gap_major
-        flow_total = max(flow_total, a2 - gap_major + pad)
+            g = max(gap_major, (gaps or {}).get(r, gap_major))
+            a2 += col[r] + g
+        flow_total = max(flow_total, a2 - g + pad)
     flip = spec.direction in ("RL", "BT")
 
     boxes: dict[str, tuple[float, float, float, float]] = {}
