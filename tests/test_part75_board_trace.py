@@ -332,3 +332,26 @@ def test_trace_clear_lines_moves_text_off_a_line_and_evens_repeats():
     assert out[3]["font"] == v["font"] < 34                                                    # 같은 글 = 같은 크기
     plain = {"ops": [{"op": "text", "x": 0, "y": 0, "text": "글", "font": 20}, {"op": "line", "pts": [[100, 0], [100, 50]]}]}
     assert board_trace._clear_lines(plain)["ops"] == plain["ops"]                              # 안 겹치면 그대로
+
+
+def test_desktop_multiline_box_label_centers_each_line_and_reads_web_ha():
+    """데스크톱 상자 이름 여러 줄 = 줄마다 가운데(웹 `CenterLabel`과 같게 — 2026-11-03, 전엔 「마이크로웨이브 / 링크」의 「링크」가 왼쪽에 붙음),
+    웹 `label.ha`(왼쪽·오른쪽)는 도형 안 여백 끝에 붙음. 저장하면 `ha`는 그대로 돌아감."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QGraphicsScene
+    from easycad.fileio.document import insert_items, item_to_dict
+    base = {"type": "rect", "pos": [0, 0], "scale": 1, "rotation": 0, "z": 0, "origin": [0, 0], "rect": [0, 0, 200, 80],
+            "pen": "#ff000000", "width": 2, "fill": None}
+    sc = QGraphicsScene()
+    it, left = insert_items(sc, [{**base, "label": {"text": "마이크로웨이브\n링크", "color": "#ff000000", "font": 12, "bg": None}},
+                                 {**base, "label": {"text": "왼쪽", "color": "#ff000000", "font": 12, "bg": None, "ha": "left"}}])
+    lbl = it._label
+    assert lbl.document().defaultTextOption().alignment() & Qt.AlignmentFlag.AlignHCenter
+    lay = lbl.document().begin().next().layout().lineAt(0)
+    first = lbl.document().begin().layout().lineAt(0)
+    mid = lambda ln: ln.cursorToX(ln.textStart())[0] + ln.naturalTextWidth() / 2   # cursorToX = 정렬이 반영된 줄 시작
+    assert abs(mid(lay) - mid(first)) < 1.0                                   # 둘째 줄도 첫 줄과 같은 가운데
+    box = lbl.mapRectToParent(lbl.boundingRect())
+    assert abs(box.center().x() - 100) < 3                                    # 이름 덩어리는 상자 가운데
+    assert left._label.pos().x() < 30                                          # 여백 끝(폭 200 × 0.85 → 왼쪽 15)
+    assert item_to_dict(left)["label"]["ha"] == "left"

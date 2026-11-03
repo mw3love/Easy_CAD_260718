@@ -29,7 +29,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QPixmap, QImage, QPainter, QPen, QBrush, QColor, QPainterPath,
     QPainterPathStroker, QPolygonF, QFont, QFontMetricsF, QIcon, QCursor,
-    QConicalGradient,
+    QConicalGradient, QTextOption,
 )
 from PyQt6.QtWidgets import (
     QWidget, QGraphicsScene, QGraphicsView, QGraphicsRectItem,
@@ -2023,6 +2023,19 @@ class _CenterLabelMixin(_LabelMixin):
             f2 = lbl.font()
             f2.setPointSize(pt)
             lbl.setFont(f2)
+        # [우리 확장 2026-11-03] 여러 줄 이름은 줄마다 가운데(웹 render.jsx `CenterLabel`과 같게 — 전엔 덩어리만 가운데·줄은 왼쪽이라
+        # 「마이크로웨이브 / 링크」의 「링크」가 왼쪽에 붙었음). 줄 정렬은 글 폭을 정해야 먹으므로 가장 긴 줄 폭으로 고정하고 줄바꿈은 끔.
+        ha = self._label_ha()
+        opt = lbl.document().defaultTextOption()
+        opt.setAlignment({"left": Qt.AlignmentFlag.AlignLeft, "right": Qt.AlignmentFlag.AlignRight}.get(ha, Qt.AlignmentFlag.AlignHCenter))
+        opt.setWrapMode(QTextOption.WrapMode.NoWrap)
+        lbl.document().setDefaultTextOption(opt)
+        fm = QFontMetricsF(lbl.font())
+        lbl.setTextWidth(max((fm.horizontalAdvance(ln) for ln in lines), default=0.0) + margin + 1.0)
+
+    def _label_ha(self):
+        """웹이 정한 이름 정렬(`label.ha` — 'left'·'right', 없으면 가운데). 데스크톱은 웹 칸으로만 받는다(`document._WEB_ONLY` 보존 칸)."""
+        return (getattr(self, "_web_extra", None) or {}).get("label.ha")
 
     def _sync_label(self):
         if not self._label_alive():
@@ -2031,7 +2044,12 @@ class _CenterLabelMixin(_LabelMixin):
         a = self._label_anchor()
         br = self._label._content_rect()
         dy = _ink_center_dy(self._label)
-        self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0 + dy)
+        x = a.x() - br.width() / 2.0
+        ha = self._label_ha()
+        if ha in ("left", "right"):   # 웹과 같게 — 도형 안 여백 끝에 붙음(`CenterLabel` `L.ha`)
+            inner = max(1.0, self.rect().width() * self._label_inset_ratio())
+            x = a.x() - inner / 2.0 if ha == "left" else a.x() + inner / 2.0 - br.width()
+        self._label.setPos(x, a.y() - br.height() / 2.0 + dy)
 
     def setRect(self, *args):
         # rect가 바뀌면(그리기·박스 리사이즈·리베이크) 라벨을 새 중앙으로 재배치.

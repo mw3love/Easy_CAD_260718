@@ -703,7 +703,9 @@ def test_center_label_shrinks_not_wraps():
     d.ensure_label().setPlainText("검색 결과 있음 판정 오래된 것")   # 아주 긴 라벨
     d._sync_label()
     lbl = d._label
-    assert lbl.textWidth() == -1                                   # 줄바꿈 안 함(단일 줄)
+    from PyQt6.QtGui import QTextOption
+    assert lbl.document().defaultTextOption().wrapMode() == QTextOption.WrapMode.NoWrap   # 줄바꿈 안 함(2026-11-03부터 폭은 줄 가운데 맞춤용으로 고정 — 전엔 textWidth -1로 확인)
+    assert lbl.document().begin().layout().lineCount() == 1        # 단일 줄
     assert lbl.font().pointSize() < lbl._base_pt                   # 넘쳐서 축소됨
     assert lbl._content_rect().height() < d.rect().height()        # 세로로 안 넘침(spill 없음)
     # 짧은 라벨은 축소 없이 기준 크기 유지.
