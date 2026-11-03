@@ -371,3 +371,23 @@ def test_trace_clear_lines_pushes_text_past_legend_sample_arrow():
     out = board_trace._clear_lines(spec)["ops"]
     assert out[1]["x"] > 70                                     # 화살표 끝(70) 뒤로
     assert out[3]["x"] == 80 and out[5]["x"] == 280             # 그 밖은 그대로
+
+
+def test_trace_even_desc_fonts_neighbors_match_and_outliers_move_toward_median():
+    """한 판 설명 글 크기 고르기(2026-11-03 사용자 — 9차 「- 48kHz/24bit」가 옆 「- MPEG-2」보다 작음, 「수정/주의」만 1.6배):
+    같은 줄 바로 옆·한 줄씩 쌓인 글은 같은 크기(가장 작은 것), 아주 작은 글은 겹치지 않으면 가운데 값 쪽으로, 1.3배 넘는 설명 글은 1.3배로, 틀 밖으로는 안 키움."""
+    T = lambda x, y, s, f: {"op": "text", "x": x, "y": y, "text": s, "font": f}
+    ts = [T(0, 0, "- 48kHz/24bit", 29), T(0, 25, "- AES/EBU", 34),          # 쌓임(왼쪽 끝 같음)
+          T(160, 0, "- MPEG-2", 34),                                          # 같은 줄 바로 옆
+          T(600, 0, "- 30m", 20),                                             # 혼자 작음 → 키움
+          T(600, 300, "수정/주의", 54),                                        # 혼자 큼 → 1.3배로
+          T(900, 0, "- 10kW", 34), T(900, 300, "- 30kW", 34), T(1200, 300, "- 7/8인치", 34),
+          T(1010, 510, "신호선 (RF/오디오/데이터)", 20)]                        # 범례 틀 안 — 키우면 틀을 넘음
+    frames = [(1000, 500, 1150, 600)]
+    board_trace._even_desc_fonts(ts, lambda t, r: t["text"] == "- 48kHz/24bit", frames)   # 48kHz는 키우면 옆 글과 겹친다고 침(실제 9차와 같게)
+    f = [t["font"] for t in ts]
+    assert f[0] == f[1] == f[2] == 29                                           # 묶음 = 가장 작은 크기
+    assert f[3] > 20                                                            # 혼자 작은 글은 키움
+    assert abs(f[4] - 1.3 * 34) < 0.01                                          # 혼자 큰 설명 글은 1.3배로
+    x0, _, x1, _ = board_trace._text_box(ts[8])
+    assert f[8] == 20 and x1 > 1150                                             # 이미 넘치던 글은 그대로(키우지 않음 — 줄이기는 `_untangle_texts` 몫)

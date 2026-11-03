@@ -257,6 +257,57 @@ def _segs(op: dict) -> list:
     return [(p, q) for p, q in zip(pts, pts[1:]) if len(p) >= 2 and len(q) >= 2]
 
 
+def _even_desc_fonts(ts: list, bad, frames=()) -> None:
+    """한 판 안 설명 글 크기 고르기(2026-11-03 사용자 — 9차에서 「- 48kHz/24bit」가 옆 「- MPEG-2」보다 작음, 「수정/주의」만 1.6배).
+    기준 T = 자유 글 크기의 가운데 값. 설명 글 = T의 0.5~1.6배(그보다 큰 「범례」 같은 제목은 그대로).
+    ① 0.9T보다 작은 글은 T·0.95T·0.9T로 키워 봄 — 새로 겹치거나 선이 가운데를 지나면 안 키움(`bad`).
+    ② 1.3T보다 큰 설명 글은 1.3T로(줄이기만 — 새 겹침 없음).
+    ③ 한 줄씩 쌓인 글(왼쪽 끝이 같고 위아래로 붙음 — 「- 48kHz/24bit」/「- AES/EBU」)과 같은 줄 바로 옆 글은 한 묶음 — 가장 작은 크기로 같게."""
+    if len(ts) < 3:
+        return
+    fs = sorted(float(t["font"]) for t in ts)
+    T = fs[(len(fs) - 1) // 2]
+    desc = [t for t in ts if 0.5 * T <= float(t["font"]) <= 1.6 * T]
+    for t in desc:   # ①
+        f = float(t["font"])
+        if f >= 0.9 * T:
+            continue
+        for c in (T, 0.95 * T, 0.9 * T):
+            t["font"] = c
+            r = _text_box(t)
+            spill = any(b[0] <= r[0] < b[2] and b[1] <= r[1] < b[3] and r[2] > b[2] for b in frames)   # 범례 틀 밖으로 나가면 안 키움(같은 날 — 키웠더니 「신호선 (RF/…)」이 틀을 넘음)
+            if not spill and not bad(t, r):
+                break
+            t["font"] = f
+    for t in desc:   # ②
+        if float(t["font"]) > 1.3 * T:
+            t["font"] = 1.3 * T
+    root = {id(t): id(t) for t in desc}   # ③ 묶음 = 쌓인 줄(왼쪽 끝 같고 위아래로 붙음) + 같은 줄 바로 옆 글(「- 48kHz/24bit」 옆 「- MPEG-2」)
+
+    def find(k):
+        while root[k] != k:
+            root[k] = root[root[k]]
+            k = root[k]
+        return k
+    for i, a in enumerate(desc):
+        A = _text_box(a)
+        for b in desc[i + 1:]:
+            B = _text_box(b)
+            h = min(A[3] - A[1], B[3] - B[1])
+            stacked = abs(A[0] - B[0]) <= 0.5 * h and (0 <= B[1] - A[3] <= 0.6 * h or 0 <= A[1] - B[3] <= 0.6 * h)
+            row = abs(A[1] - B[1]) <= 0.3 * h and (0 <= B[0] - A[2] <= 1.0 * h or 0 <= A[0] - B[2] <= 1.0 * h)
+            if stacked or row:
+                root[find(id(a))] = find(id(b))
+    groups = {}
+    for t in desc:
+        groups.setdefault(find(id(t)), []).append(t)
+    for group in groups.values():
+        if len(group) > 1:
+            m = min(float(u["font"]) for u in group)
+            for u in group:
+                u["font"] = m
+
+
 def _clear_lines(spec: dict) -> dict:
     """글과 선·그림 겹침 줄이기(2026-11-03 사용자 — 「감시 서버」 위 모니터 그림, 세로선에 걸린 「VSWR 1.1」, 「송신기#1」의 「#」 낙서).
     ① 상자 이름 위의 작은 낙서(글자 높이보다 작은 poly — AI가 「#」 같은 글자 조각을 그림으로도 그림)는 뺀다(이름에 이미 있음).
@@ -341,6 +392,22 @@ def _clear_lines(spec: dict) -> dict:
         c = core(r)
         return any(_seg_cuts(p, q, c) for p, q in segs) or any(u is not t and _meet(r, _text_box(u)) for u in ts)
 
+    frames = []
+    for op in ops:
+        if isinstance(op, dict) and op.get("op") == "box" and not op.get("label"):
+            try:
+                frames.append(tuple(float(op[k]) for k in ("x1", "y1", "x2", "y2")))
+            except (KeyError, TypeError, ValueError):
+                pass
+    _even_desc_fonts(ts, bad, frames)   # 크기를 먼저 정하고(같은 날 — 나중에 줄이면 선이 글 가장자리에서 가운데로 들어왔음) ④·③이 그 크기로 비킴
+    same = {}   # 같은 글이 여러 번(「VSWR 1.1」 셋)이면 크기도 같게 — 가장 작은 것에 맞춤(하나만 줄어 들쭉날쭉했음)
+    for t in ts:
+        same.setdefault(str(t["text"]).strip(), []).append(t)
+    for group in same.values():
+        if len(group) > 1:
+            m = min(float(t["font"]) for t in group)
+            for t in group:
+                t["font"] = m
     for t in ts:   # ④(③보다 먼저 — ③이 글을 위로 올려 범례 줄이 어긋났음) 왼쪽에서 온 가로선이 글 머리 안에서 끝나면(범례 견본 화살표 끝이 「신호선 …」 머리에 걸림 — 같은 날 진짜 단추 시험) 글을 선 끝 뒤로
         r = _text_box(t)
         h = r[3] - r[1]
@@ -386,7 +453,7 @@ def _clear_lines(spec: dict) -> dict:
                 if k < 1.0:
                     t["font"] = max(2, round(f * k))
                 break
-    same = {}   # 같은 글이 여러 번(「VSWR 1.1」 셋)이면 크기도 같게 — 가장 작은 것에 맞춤(하나만 줄어 들쭉날쭉했음)
+    same = {}   # (③이 줄인 뒤 다시) 같은 글이 여러 번(「VSWR 1.1」 셋)이면 크기도 같게 — 가장 작은 것에 맞춤(하나만 줄어 들쭉날쭉했음)
     for t in ts:
         same.setdefault(str(t["text"]).strip(), []).append(t)
     for group in same.values():
