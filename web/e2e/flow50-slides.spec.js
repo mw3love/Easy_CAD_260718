@@ -33,7 +33,7 @@ test('발표 자료 — 질문지 → 장 계획(× 빼기) → 프레임 4장 +
   await expect(page.getByTestId('slides-show')).toContainText('프레임 5장')
   expect(seen[1].slides.step).toBe('build'); expect(seen[1].slides.plan.slides.map(s => s.title)).not.toContain('빼 볼 장')
   const its = (await liveDoc(page)).items, frames = its.filter(it => it.type === 'frame').sort((a, b) => a.no - b.no)
-  expect(frames.map(f => f.name)).toEqual(['1. 송신소 점검 공유', '2. 점검 결과', '3. 연료 기준', '4. 다음 할 일', '5. 출처'])
+  expect(frames.map(f => f.name)).toEqual(['송신소 점검 공유', '점검 결과', '연료 기준', '다음 할 일', '출처'])   // 이름 = 장 제목(번호는 프레임 번호 — 2026-11-03)
   expect(frames.every(f => f.rect[2] / f.rect[3] === 16 / 9)).toBe(true)
   expect(its.filter(it => it.type === 'memo' && it.lines[0]?.t?.startsWith('발표자 메모'))).toHaveLength(4)
   expect(its.some(it => it.type === 'text' && it.text.includes('•  2호기 교체 필요'))).toBe(true)

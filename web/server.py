@@ -276,7 +276,7 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:   # 게이트웨이 오류는 대화창에 그대로 보여 준다(갈아타는 건 「모델 없음」일 때만, 답에 「대신」으로 — `model_pick`)
             return self._json(502, {"error": gw.friendly_error(e)})
         sys.stderr.write("[대화] %s %.1f초\n" % (out["model"], out["elapsed"]))
-        return self._json(200, out)
+        return self._json(200, board_chat.split_svg(out))   # SVG 코드가 섞이면 그림 칸으로(2026-11-03 사용자 검토)
 
     def _deep(self, req: dict, key: str):
         """딥모드 → step plan: {"kind": "deep", "plan"(본문 없이), "estimate", "model", "elapsed"} · step build: {"kind": "deep", "plan"(꼭지마다 body + sources), "model", "elapsed", "missing"}

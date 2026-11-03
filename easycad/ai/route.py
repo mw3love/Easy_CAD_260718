@@ -66,9 +66,10 @@ def adjust(text: str, choice: str, conf: float, probs: dict) -> str:
     「그려 줘」가 분명하면 그림(최신 정보가 필요하면 서버가 검색 → 그리기로 이음), 확신이 낮고 검색이 1·2등이면 검색."""
     if board_chat.is_icon(text):
         return "icon"
-    if choice == "image" and board_chat._DIAGRAM_WORDS.search(text or ""):
+    style = board_chat._STYLE_WORDS.search(text or "")   # 「손으로 그린 듯한·연필 스케치」 = 흐름도라도 그림(2026-11-03 사용자 검토)
+    if choice == "image" and board_chat._DIAGRAM_WORDS.search(text or "") and not style:
         return "chat"
-    if board_chat._IMAGE_WORDS.search(text or "") and not board_chat._DIAGRAM_WORDS.search(text or ""):
+    if board_chat._IMAGE_WORDS.search(text or "") and (not board_chat._DIAGRAM_WORDS.search(text or "") or style):
         return "image"   # 2026-10-20 사용자: 「내일의 전주 날씨를 고흐 느낌으로 그려줘」가 검색(0.56)으로 감 — 그림 0.35~0.41로 헷갈림
     top2 = sorted(probs, key=lambda k: -float(probs[k] or 0))[:2]
     if conf < LOW_CONF and "search" in top2 and choice in ("chat", "search"):
@@ -95,6 +96,9 @@ def decide(api_key: str, text: str, has_context: bool = False, *, prefs: dict | 
     if board_chat.maybe_icon(text):   # 「아이콘·로고·심볼」 — 판단 모델엔 아이콘 길이 없어 점수로는 못 봄(0단계: 「펭귄 아이콘」 image 1.0) → 낱말로
         pick = (prefs or {}).get("icon|image")
         return (pick, "rules", []) if pick in ("image", "icon") else ("image", "rules", ["image", "icon"])
+    if board_chat.maybe_diagram(text):   # 「계통도 그려 줘」 — 그림 vs 고칠 도형(2026-11-03 사용자 검토: 전엔 대화로 떨어져 SVG 코드 글). 아이콘 되묻기와 같은 갈림길·같은 기억
+        pick = (prefs or {}).get("icon|image")
+        return (pick, "rules", []) if pick in ("image", "icon") else ("icon", "rules", ["icon", "image"])
     rules = board_chat.guess_kind(text, has_context)
     if os.environ.get("EASYCAD_ROUTE") == "rules" or not state["ai"] or not api_key:
         return rules, "rules", []

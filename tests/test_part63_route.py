@@ -52,7 +52,7 @@ def test_route_uses_model_choice_and_sends_criteria():
 
 
 def test_route_fixes_diagram_image_and_low_confidence_search():
-    assert _route("방송 송출 흐름도 그려 줘", ("image", 0.95, {"image": 0.95}))[0] == "chat"   # 흐름도는 칠판 도형으로
+    assert _route("방송 송출 흐름도 그려 줘", ("image", 0.95, {"image": 0.95}))[0] == "icon"   # 흐름도 그리기 = 그림 vs 고칠 도형 되묻기, 안 물었으면 도형(2026-11-03 — 전엔 대화로 떨어져 SVG 코드 글)
     assert _route("KBS 수신료 지금 어떻게 걷어?", ("chat", 0.5, {"chat": 0.5, "search": 0.45}))[0] == "search"   # 애매하면 출처 붙는 쪽
     assert _route("엑셀 VLOOKUP", ("chat", 0.9, {"chat": 0.9, "search": 0.05}))[0] == "chat"
 

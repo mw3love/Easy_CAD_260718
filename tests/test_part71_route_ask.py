@@ -112,3 +112,30 @@ def test_server_typed_reply_and_remembered_flag(server):
     out = _post(base, ask_pref={"icon|image": "icon"}, messages=[{"role": "user", "content": "펭귄 아이콘 그려줘"}])
     assert out["remembered"] == {"key": "icon|image", "choices": ["image", "icon"]}   # 대화창이 「그림으로 바꾸기」를 붙임
     assert "remembered" not in _post(base, kind="icon", messages=[{"role": "user", "content": "펭귄 아이콘 그려줘"}])   # 버튼·이름표로 고른 건 기억이 아님
+
+
+def test_diagram_draw_asks_and_style_words_mean_picture():
+    """2026-11-03 사용자 검토 — 「손으로 그린 듯한 … 계통도를 그려 줘. 연필 스케치 느낌」이 「계통도」 때문에 대화로 떨어져 SVG 코드 글이 나왔음.
+    그림 느낌 말 = 그림, 없이 「계통도 그려 줘」 = 그림 vs 고칠 도형 한 번 물음(도형 먼저 — 고칠 수 있는 쪽), 같은 갈림길 기억(`icon|image`) 따름."""
+    mine = "손으로 그린 듯한 방송 송신소 계통도를 그려 줘. 흰 종이에 연필 스케치 느낌. 상자 5개를 화살표로 연결."
+    assert board_chat.guess_kind(mine) == "image" and route.adjust(mine, "image", 0.6, {"image": 0.6, "chat": 0.3}) == "image"
+    assert route.decide("k", mine)[0] == "image"
+    assert route.decide("k", "송신소 계통도 그려 줘") == ("icon", "rules", ["icon", "image"])
+    assert route.decide("k", "송신소 계통도 그려 줘", prefs={"icon|image": "image"}) == ("image", "rules", [])
+    assert route.decide("k", "흐름도 그리는 방법 알려 줘")[2] == [] and route.decide("k", "구성도를 표로 정리해 줘")[2] == []
+
+
+def test_chat_answer_svg_code_goes_to_picture_slot():
+    """대화 답에 섞인 SVG 코드 = 코드는 빼서 그림 칸(`svgs` — 누르면 칠판에 도형), 「저장해 브라우저에서 열면」 문장도 뺌(2026-11-03 사용자 검토)."""
+    ans = "**연필 느낌 계통도**입니다. 아래를 `송신소.svg`로 저장해 브라우저에서 열면 그림으로 볼 수 있습니다.\n\n```svg\n<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"9\" height=\"9\"/></svg>\n```"
+    out = board_chat.split_svg({"content": ans, "model": "m"})
+    assert out["svgs"] == ['<svg xmlns="http://www.w3.org/2000/svg"><rect width="9" height="9"/></svg>'] and out["model"] == "m"
+    assert "<svg" not in out["content"] and ".svg" not in out["content"] and "브라우저" not in out["content"]
+    assert out["content"].startswith("**연필 느낌 계통도**입니다.") and out["content"].endswith(board_chat.SVG_NOTE)
+    assert board_chat.split_svg({"content": "그냥 답"}) == {"content": "그냥 답"}
+
+
+def test_link_and_site_words_need_web_meaning():
+    """「마이크로웨이브 링크」·「송신 사이트」 = 장비·현장 말이라 검색 아님(2026-11-03 실검증 — 손그림 요청이 그리기 전 웹 검색을 거쳐 출처 5개가 붙었음)."""
+    assert not board_chat._SEARCH_WORDS.search("스튜디오 → 마이크로웨이브 링크 → 송신기") and not board_chat._SEARCH_WORDS.search("송신 사이트 점검 순서")
+    assert board_chat._SEARCH_WORDS.search("관련 링크 알려 줘") and board_chat._SEARCH_WORDS.search("KBS 웹사이트 주소 알려 줘")

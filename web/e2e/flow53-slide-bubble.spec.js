@@ -39,7 +39,7 @@ test('장 말풍선 — 그 장만 다시 지음 · 원래대로 ↔ 바꾼 것 
   expect(seen[0].item).toMatchObject({ type: 'frame', edit: 'slide', deck: '송신소 점검', slide: { title: '점검 결과' } })
   doc = await liveDoc(page)
   expect(texts(doc, f2.uid)).toContain('70%'); expect(texts(doc, f2.uid)).not.toContain('안테나 정상')
-  expect(doc.items.find(it => it.uid === f2.uid)).toMatchObject({ name: '2. 점검 숫자', slide: { layout: '숫자' } })
+  expect(doc.items.find(it => it.uid === f2.uid)).toMatchObject({ name: '점검 숫자', slide: { layout: '숫자' } })
   expect(JSON.stringify(pieces(doc, f1.uid))).toBe(keep1); expect(JSON.stringify(pieces(doc, f3.uid))).toBe(keep3)   // 다른 장은 그대로
   expect(pieces(doc, f2.uid).find(it => it.type === 'memo').lines[1].t).toBe('숫자로 봅니다.')                        // 발표자 메모도
 

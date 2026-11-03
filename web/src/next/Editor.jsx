@@ -969,7 +969,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     pages.forEach((s, i) => {
       const X = at.x + (i % PER) * (W + GX), Y = at.y + Math.floor(i / PER) * ROW, spec = { ...s, layout: s.small ? '출처' : s.layout || (i === 0 ? '표지' : '글머리') }
       const cv = i === 0 && deck.cover?.data && deck.cover.w ? { data: deck.cover.data, w: deck.cover.w, h: deck.cover.h, alt: `표지 그림 — ${deck.title || s.title}` } : null
-      const fr = base([X, Y], { type: 'frame', rect: [0, 0, W, H], name: `${i + 1}. ${s.title}`, no: no0 + i, ratio: '16:9', z: zb, slide: slideSpec(spec), slide_n: i + 1, ...(deck.title ? { slide_deck: deck.title } : {}) })   // 장을 적어 둠 = 말풍선이 그 장만 고쳐 다시 지음(2026-10-28)
+      const fr = base([X, Y], { type: 'frame', rect: [0, 0, W, H], name: s.title, no: no0 + i, ratio: '16:9', z: zb, slide: slideSpec(spec), slide_n: i + 1, ...(deck.title ? { slide_deck: deck.title } : {}) })   // 장을 적어 둠 = 말풍선이 그 장만 고쳐 다시 지음(2026-10-28)
       const pcs = slidePieces(spec, i, X, Y, z, cv).map(p => ({ ...p, slide_of: fr._id }))
       out.push({ ...fr, slide_sig: slideSig(pcs, X, Y) }, ...pcs); ids.push(fr._id)
     })
@@ -1028,7 +1028,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const cv = cov && spec.layout === '표지' ? { data: cov.data, w: cov.rect[2], h: cov.rect[3], alt: cov.alt } : null
     const [X, Y] = fr.pos, z = old.length ? Math.max(...old.map(it => it.z ?? 0)) : topZ(m.items) + 1
     const pcs = slidePieces({ ...spec, layout: spec.layout || '글머리' }, (fr.slide_n || 1) - 1, X, Y, z, cv).map(p => ({ ...p, slide_of: id }))
-    const name = /^\d+\.\s/.test(fr.name || '') ? fr.name.replace(/^(\d+\.\s).*$/, `$1${spec.title}`) : fr.name
+    // 이름 = 장 제목(2026-11-03 사용자 — 「10 · 2. 제목」처럼 프레임 번호와 장 번호가 겹쳐 헷갈림, 장 순서는 `slide_n`). 옛 「N. 제목」·제목 그대로였으면 새 제목, 손으로 바꾼 이름은 둠
+    const name = /^\d+\.\s/.test(fr.name || '') || fr.name === fr.slide?.title ? spec.title : fr.name
     commit([...m.items.filter(it => it.slide_of !== id).map(it => (it._id === id ? { ...it, slide: slideSpec(spec), slide_sig: slideSig(pcs, X, Y), name } : it)), ...pcs], R.current.sel, label)
     return fr.slide
   }
