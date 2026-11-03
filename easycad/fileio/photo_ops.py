@@ -14,12 +14,44 @@ ops 어휘(좌표는 원본 사진 픽셀, x 오른쪽·y 아래):
     poly     {"pts":[[x,y],...],"closed"?}                     장식 꺾은선(안테나·스위치 내부 등)
     circle   {"id"?,"cx","cy","r"}
     dashrect {"x1","y1","x2","y2"}                             1점쇄선 테두리 영역
+꾸밈(모두 생략 가능 — 2026-11-03 사용자 「베끼기에 색·굵기 같은 부가 요소」):
+    color "#RRGGBB" 선·글자·테두리 색(검정에 가까운 색은 무시 = 기본 잉크, 어두운 화면에서도 보이게)
+    w     1~3 굵기 배수(box·line·poly·circle·dashrect) · dash true = 파선(line·poly·box·circle)
+    fill  "#RRGGBB" 상자·원 안쪽 색 · tcolor(box) = 상자 이름 색(앱이 안 글자를 상자 이름으로 합칠 때 붙임)
 """
 from easycad.fileio.sketch_build import Sketch, _argb
 
 SCALE = 2.0      # 원본 픽셀 → 캔버스 좌표 배율(글자가 읽힐 크기)
 WIDTH = 2.0      # 선 두께
 _DASHDOT = 4     # Qt.PenStyle.DashDotLine
+_DASH = 2        # Qt.PenStyle.DashLine
+
+
+def _color(v):
+    """ops 색 → "#rrggbb" 또는 None(없음·틀린 형식·검정에 가까움 = 기본 잉크)."""
+    if not isinstance(v, str):
+        return None
+    try:
+        a = _argb(v)
+    except ValueError:
+        return None
+    r, g, b = (int(a[i:i + 2], 16) for i in (3, 5, 7))
+    if max(r, g, b) < 70 and max(r, g, b) - min(r, g, b) < 40:   # 검정·짙은 회색 = 보통 잉크
+        return None
+    return "#" + a[3:]
+
+
+def _fill(v):
+    """칠한 색 — 흰색에 가까우면 칠하지 않은 것으로(종이 바탕)."""
+    c = _color(v) if isinstance(v, str) else None
+    if c and min(int(c[i:i + 2], 16) for i in (1, 3, 5)) > 245:
+        return None
+    return c
+
+
+def _width(op) -> float:
+    w = op.get("w")
+    return WIDTH * max(1.0, min(3.0, float(w))) if isinstance(w, (int, float)) else WIDTH
 
 
 def _line_height(font: int) -> float:
@@ -57,19 +89,28 @@ def ops_to_sketch(spec: dict, *, dark: bool = False, scale: float = SCALE,
     for op in shapes + lines:
         try:
             k = op["op"]
+            col = _color(op.get("color"))
+            pen = _argb(col) if col else ink
             if k == "box":
-                n = s.box(*rect_of(op), op.get("label") or None, width=WIDTH)
+                n = s.box(*rect_of(op), op.get("label") or None, color=col, width=_width(op), fill=_fill(op.get("fill")))
                 if op.get("label"):
                     s._items[-1]["label"]["font"] = int(op.get("font", 15))
+                    tc = _color(op.get("tcolor"))
+                    if tc:
+                        s._items[-1]["label"]["color"] = _argb(tc)
+                if op.get("dash"):
+                    s._items[-1]["style"] = _DASH
                 if op.get("id"):
                     ids[op["id"]] = n
             elif k == "dashrect":
                 s._items.append(dict(s._common(), type="rect", rect=list(rect_of(op)),
-                                     pen=ink, width=WIDTH, fill=None, style=_DASHDOT))
+                                     pen=pen, width=_width(op), fill=None, style=_DASHDOT))
             elif k == "circle":
                 cx, cy, r = float(op["cx"]), float(op["cy"]), float(op["r"])
                 n = s.ellipse((cx - r) * scale + ox, (cy - r) * scale + oy, 2 * r * scale, 2 * r * scale,
-                              width=WIDTH)
+                              color=col, width=_width(op), fill=_fill(op.get("fill")))
+                if op.get("dash"):
+                    s._items[-1]["style"] = _DASH
                 if op.get("id"):
                     ids[op["id"]] = n
             elif k == "text":
@@ -79,17 +120,19 @@ def ops_to_sketch(spec: dict, *, dark: bool = False, scale: float = SCALE,
                 if rot % 360.0:
                     # 축 = 글줄 가운데 왼쪽 끝(로컬 (0, h/2)). pos+origin이 (x,y)에 오게.
                     half = _line_height(font) / 2.0
-                    s.text(x, y - half, op["text"], font=font)
+                    s.text(x, y - half, op["text"], font=font, color=col)
                     s._items[-1].update(rotation=rot, origin=[0.0, half])
                 else:
-                    s.text(x, y, op["text"], font=font)
+                    s.text(x, y, op["text"], font=font, color=col)
             elif k == "line":
                 q = [P(*p) for p in op["pts"]]
                 if len(q) < 2:
                     raise ValueError("pts<2")
                 d = s._common()
-                d.update(type="sarrow", pts=q, color=ink, width=WIDTH, head=bool(op.get("head", False)),
+                d.update(type="sarrow", pts=q, color=pen, width=_width(op), head=bool(op.get("head", False)),
                          auto_route=False, routing="straight", curve_r=0.0)
+                if op.get("dash"):
+                    d["style"] = _DASH
                 src, dst = ids.get(op.get("src")), ids.get(op.get("dst"))
                 if src is not None:
                     d.update(bind1=src.idx, bind1_pt=q[0])
@@ -103,7 +146,9 @@ def ops_to_sketch(spec: dict, *, dark: bool = False, scale: float = SCALE,
                 d = s._common()
                 d.update(type="polygon", closed=bool(op.get("closed", False)),
                          rect=[min(xs), min(ys), max(max(xs) - min(xs), 1), max(max(ys) - min(ys), 1)],
-                         pts=q, pen=ink, width=WIDTH, fill=None)
+                         pts=q, pen=pen, width=_width(op), fill=None)
+                if op.get("dash"):
+                    d["style"] = _DASH
                 s._items.append(d)
             else:
                 skipped += 1

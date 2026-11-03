@@ -59,7 +59,9 @@ def _texts_into_boxes(spec: dict) -> dict:
                 inside.append((ty, tx, ti, f))
         if inside and len(inside) <= 3 and all(_units(str(ops[ti]["text"])) <= 14 for _, _, ti, _ in inside):   # 범례·설명 상자(줄 많음·긴 글)는 그대로 — 합치면 선 견본과 어긋났음(같은 날)
             inside.sort()
-            label_of[bi] = ("\n".join(str(ops[ti]["text"]).strip() for _, _, ti, _ in inside), max(f for *_, f in inside))
+            cols = {ops[ti].get("color") for _, _, ti, _ in inside}
+            label_of[bi] = ("\n".join(str(ops[ti]["text"]).strip() for _, _, ti, _ in inside), max(f for *_, f in inside),
+                            cols.pop() if len(cols) == 1 else None)   # 글 색이 하나면 상자 이름 색으로(2026-11-03 꾸밈)
             taken.update(ti for _, _, ti, _ in inside)
     if not label_of:
         return spec
@@ -69,6 +71,8 @@ def _texts_into_boxes(spec: dict) -> dict:
             continue
         if i in label_of:
             op = {**op, "label": label_of[i][0], "font": label_of[i][1]}
+            if label_of[i][2]:
+                op["tcolor"] = label_of[i][2]
         out.append(op)
     return {**spec, "ops": out}
 

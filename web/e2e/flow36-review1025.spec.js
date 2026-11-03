@@ -59,7 +59,8 @@ test('그림 우클릭 「도면으로 베끼기」 → 그림 옆 구역 스켈
     return r.fulfill({ json: { status: 'done', result: { elapsed: 48, credits: 150.9, w: 400, h: 300, items: [
       { type: 'rect', pos: [0, 0], scale: 1, rotation: 0, z: 0, origin: [0, 0], rect: [20, 20, 120, 60], pen: '#ff000000', width: 2, fill: null, label: { text: 'TX-A', color: '#ff000000', font: 13, bg: null } },
       { type: 'text', pos: [200, 40], scale: 1, rotation: 0, z: 1, origin: [0, 0], text: '연주소', color: '#ff000000', font: 13, bg: null },
-      { type: 'sarrow', pos: [0, 0], scale: 1, rotation: 0, z: 2, origin: [0, 0], pts: [[140, 50], [260, 50]], color: '#ff000000', width: 2, head: true, auto_route: false, routing: 'straight', curve_r: 0, bind1: 0, bind1_pt: [140, 50] }] } } })
+      { type: 'sarrow', pos: [0, 0], scale: 1, rotation: 0, z: 2, origin: [0, 0], pts: [[140, 50], [260, 50]], color: '#ff000000', width: 2, head: true, auto_route: false, routing: 'straight', curve_r: 0, bind1: 0, bind1_pt: [140, 50] },
+      { type: 'text', pos: [200, 90], scale: 1, rotation: 0, z: 3, origin: [0, 0], text: 'N+1', color: '#ffd32f2f', font: 13, bg: null }] } } })
   })
   await openBoard(page, name); await setCam(page)
   await dropPng(page, await toPage(page, 200, 200))
@@ -74,10 +75,12 @@ test('그림 우클릭 「도면으로 베끼기」 → 그림 옆 구역 스켈
   await expect(sk).toBeHidden({ timeout: 10_000 })
   expect(sent.data).toBe(img.data); expect(sent.width).toBeGreaterThan(0)                    // 칠판 그림 그대로 + 놓일 폭
   const d = await liveDoc(page), its = d.items.filter(it => it.type !== 'image')
-  expect(its.map(it => it.type).sort()).toEqual(['rect', 'sarrow', 'text'])
+  expect(its.map(it => it.type).sort()).toEqual(['rect', 'sarrow', 'text', 'text'])
+  expect(its.find(it => it.text === 'N+1').color).toBe('#ffd32f2f')                          // 원본에서 읽은 빨강은 그대로(2026-11-03)
+  expect(its.find(it => it.text === '연주소').color).not.toBe('#ff000000')                   // 기본 검정만 지금 펜 색으로
   expect(its[0].group_id).toBeTruthy(); expect(its.every(it => it.group_id === its[0].group_id)).toBe(true)   // 묶음 하나
   const rect = its.find(it => it.type === 'rect'), arrow = its.find(it => it.type === 'sarrow')
   expect(arrow.bind1).toBe(d.items.indexOf(rect))                                            // 연결 그대로
   expect(rect.pos[0] + rect.rect[0]).toBeGreaterThan(img.pos[0] + img.rect[2])               // 그림 오른쪽 옆
-  await expect(page.getByTestId('status-toast')).toContainText('도면으로 베낌 — 도형 3개 묶음 · 48초 · 150.9크레딧')   // 저장 알림 뒤에도 보임(sayLater)
+  await expect(page.getByTestId('status-toast')).toContainText('도면으로 베낌 — 도형 4개 묶음 · 48초 · 150.9크레딧')   // 저장 알림 뒤에도 보임(sayLater)
 })

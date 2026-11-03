@@ -2187,8 +2187,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         res = st.result; break
       }
       const m = R.current.model, z0 = topZ(m.items) + 1, g = 'g' + newId(), pen = sticky.current.color
+      const ink = c => (!c || /^#(ff)?000000$/i.test(c) ? pen : c)   // 기본 잉크(검정)만 지금 펜으로 — 원본에서 읽은 빨강·파랑은 그대로(2026-11-03 베끼기 꾸밈)
       const its = fromEcad({ items: res.items }).items.map((it, i) => ({ ...base([0, 0], {}), ...it, _id: it._id, z: z0 + i, group_id: g, layer_id: null,
-        ...(it.type === 'sarrow' || it.type === 'text' ? { color: pen } : { pen }), ...(it.label ? { label: { ...it.label, color: pen } } : null) }))   // 색 = 지금 펜(SVG 넣기와 같게 — 다크에서도 보이게)
+        ...(it.type === 'sarrow' || it.type === 'text' ? { color: ink(it.color) } : { pen: ink(it.pen) }), ...(it.label ? { label: { ...it.label, color: ink(it.label.color) } } : null) }))   // 색 = 지금 펜(SVG 넣기와 같게 — 다크에서도 보이게)
       if (!its.length) throw new Error('그림에서 도면으로 옮길 것을 못 찾았어요')
       const placed = moveItems(its, its.map(it => it._id), at.x, at.y)
       commit([...m.items, ...placed], placed.map(it => it._id), '도면으로 베끼기')

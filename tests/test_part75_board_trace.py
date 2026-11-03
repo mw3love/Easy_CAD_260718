@@ -190,3 +190,57 @@ def test_trace_legend_like_box_keeps_its_texts():
     """줄이 넷 넘거나 긴 글이 든 상자(범례·설명)는 합치지 않음 — 합치면 가운데 정렬돼 선 견본과 어긋났음(2026-11-02 실검증)."""
     spec = {"ops": [{"op": "box", "x1": 0, "y1": 0, "x2": 300, "y2": 200}] + [{"op": "text", "x": 40, "y": 20 + 30 * i, "text": f"선 {i}", "font": 10} for i in range(4)]}
     assert board_trace._texts_into_boxes(spec)["ops"] == spec["ops"]
+
+
+def test_trace_ops_keep_color_width_dash_fill():
+    """베끼기 꾸밈(2026-11-03 사용자 「색·굵기 같은 부가 요소」 — 빨간 수정 글·굵은 전원선·점선 감시선이 다 검정 실선이었음):
+    color·w·dash·fill이 .ecad 칸으로. 검정에 가까운 색·흰 칠은 기본(어두운 화면에서 보이게), 이상한 값은 무시."""
+    from easycad.fileio.photo_ops import ops_to_sketch, WIDTH
+    spec = {"ops": [
+        {"op": "box", "id": "b", "x1": 0, "y1": 0, "x2": 50, "y2": 30, "label": "송신기", "color": "#d32f2f", "w": 2, "fill": "#fff3c4"},
+        {"op": "box", "x1": 60, "y1": 0, "x2": 90, "y2": 30, "color": "#111111", "fill": "#ffffff", "dash": True, "w": 9},
+        {"op": "text", "x": 0, "y": 40, "text": "수정", "color": "#e53935"},
+        {"op": "text", "x": 0, "y": 60, "text": "보통", "color": "빨강"},
+        {"op": "line", "pts": [[0, 80], [100, 80]], "w": 3},
+        {"op": "line", "pts": [[0, 90], [100, 90]], "dash": True, "color": "#1e88e5", "src": "b"},
+        {"op": "poly", "pts": [[0, 100], [10, 110]], "dash": True},
+        {"op": "circle", "cx": 5, "cy": 5, "r": 3, "color": "#2e7d32"},
+    ]}
+    sk, skipped = ops_to_sketch(spec, dark=False, scale=1)
+    it = sk._items
+    assert skipped == 0
+    assert it[0]["pen"] == "#ffd32f2f" and it[0]["label"]["color"] == "#ffd32f2f" and it[0]["width"] == WIDTH * 2 and it[0]["fill"] == "#fffff3c4"
+    assert it[1]["pen"] == "#ff000000" and it[1]["fill"] is None and it[1]["style"] == 2 and it[1]["width"] == WIDTH * 3   # 굵기는 3배까지
+    assert it[2]["color"] == "#ffe53935" and it[3]["color"] == "#ff000000"
+    assert it[5]["type"] == "ellipse" and it[5]["pen"] == "#ff2e7d32"                   # 원(선은 맨 뒤로 감)
+    lines = [d for d in it if d["type"] == "sarrow"]
+    assert lines[0]["width"] == WIDTH * 3 and "style" not in lines[0]
+    assert lines[1]["style"] == 2 and lines[1]["color"] == "#ff1e88e5" and "bind1" in lines[1]
+    poly = [d for d in it if d["type"] == "polygon"][0]
+    assert poly["style"] == 2
+    # 꾸밈 없는 옛 결과는 그대로(검정·기본 굵기·실선)
+    plain, _ = ops_to_sketch(SPEC, dark=False, scale=1)
+    assert all("style" not in d for d in plain._items) and plain._items[0]["width"] == WIDTH
+
+
+def test_trace_colored_text_inside_box_colors_its_label():
+    """상자 안 빨간 글이 상자 이름이 되면 이름도 빨강(색이 섞이면 기본)."""
+    from easycad.fileio.photo_ops import ops_to_sketch
+    spec = {"ops": [{"op": "box", "x1": 0, "y1": 0, "x2": 100, "y2": 50},
+                    {"op": "text", "x": 10, "y": 10, "text": "N+1", "font": 10, "color": "#d32f2f"}]}
+    ops = board_trace._texts_into_boxes(spec)["ops"]
+    assert ops[0]["tcolor"] == "#d32f2f"
+    sk, _ = ops_to_sketch({"ops": ops}, dark=False, scale=1)
+    assert sk._items[0]["label"]["color"] == "#ffd32f2f" and sk._items[0]["pen"] == "#ff000000"
+
+
+def test_trace_seam_join_keeps_colors_apart():
+    """구역 경계에서 잘린 선 잇기 — 색이 다르면 안 이음, 굵기만 다르면 이음(구역마다 굵기를 다르게 읽을 수 있음)."""
+    from easycad.ai.photo_to_ops import _seam_join
+    def piece(tile, pts, cut_at_end, **style):
+        ends = [{"cut": not cut_at_end, "node": None, "head": False}, {"cut": cut_at_end, "node": None, "head": False}]
+        return {"tile": tile, "base": {"op": "line", **style}, "pts": [list(p) for p in pts], "ends": ends, "closed": False}
+    same = _seam_join([piece(0, [[0, 0], [50, 0]], True, w=2), piece(1, [[50, 0], [100, 0]], False)])
+    assert len(same) == 1
+    apart = _seam_join([piece(0, [[0, 0], [50, 0]], True, color="#d32f2f"), piece(1, [[50, 0], [100, 0]], False)])
+    assert len(apart) == 2

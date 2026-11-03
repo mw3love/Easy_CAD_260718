@@ -24,6 +24,12 @@ TASK = """이 사진 속 도면을 CAD 앱에서 편집할 수 있는 도형으�
 - {{"op":"circle","id":"..","cx":..,"cy":..,"r":..}}
 - {{"op":"dashrect","x1":..,"y1":..,"x2":..,"y2":..}}  ← 점선 테두리 영역.
 
+꾸밈(원본에 보일 때만 붙인다 — 보통 검정·연필 선과 보통 굵기면 생략):
+- "color":"#d32f2f"  ← 선·글자·테두리 색(모든 op). 빨강·파랑·초록 펜, 형광펜처럼 검정이 아닌 색만.
+- "w":2  ← 선 굵기(box·line·poly·circle·dashrect). 1=보통, 2=굵게, 3=아주 굵게.
+- "dash":true  ← 점선·파선으로 그린 선(line·poly·box·circle).
+- "fill":"#fff3c4"  ← 칠한 상자·원의 안쪽 색(box·circle).
+
 규칙:
 - 원본의 위치·크기를 그대로 따른다(재배치 금지).
 - 원본에 실제로 그려진 것만 그린다. 있을 법한 선이나 글자를 지어내지 않는다.
@@ -281,7 +287,8 @@ def _seam_join(pieces):
             ax, ay = a["pts"][-1]
             best, best_d = None, SEAM_TOL
             for b in alive:
-                if b is a or b["base"].get("op") != a["base"].get("op") or b["tile"] == a["tile"]:
+                if b is a or b["base"].get("op") != a["base"].get("op") or b["tile"] == a["tile"] \
+                        or b["base"].get("color") != a["base"].get("color"):   # 색이 다른 선끼리는 안 이음(2026-11-03 — 굵기·점선은 구역마다 다르게 읽을 수 있어 이음)
                     continue
                 for end in (0, 1):
                     if not b["ends"][end]["cut"]:
