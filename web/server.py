@@ -842,8 +842,9 @@ class Handler(SimpleHTTPRequestHandler):
     # ── 예시 칠판(2026-10-28 사용자: 처음 들어온 사람이 「이렇게 쓰는 거구나」를 바로 알게 — 기능 소개로 가득 찬 칠판 + KAIROS 대화, 만져 보다 망가지면 한 번에 처음으로).
     # 원본 = `web/examples/<예시>/`(이름 + 「.」으로 시작하는 파일·폴더), 사람마다 자기 사본(만져도 남에게 안 감). 처음 방문과 「처음 모습으로」가 같은 복사 —
     # 그림 주소 속 칠판 이름(`/api/img/<이름>/`)을 바꿔 쓰고, 판 번호는 지금보다 크게(열어 둔 창이 받아 감). 이미 있는 칠판은 예시 칠판일 때만(남의 칠판을 덮지 않게)
-    def _example_copy(self, name: str, tpl: str = EXAMPLE) -> str:
-        """"" = 됨, 아니면 까닭("none" 원본 없음 · "taken" 예시가 아닌 칠판)."""
+    def _example_copy(self, name: str, tpl: str = EXAMPLE, taken=None) -> str:
+        """"" = 됨, 아니면 까닭("none" 원본 없음 · "taken" 예시가 아닌 칠판).
+        taken = 이 사람의 다른 칠판 이름들 — 원본 이름이 이미 있으면 「원본 이름 2」·「3」…(「★ 예시 칠판」을 여러 번 누를 때). 「처음 모습으로」는 지금 이름 그대로."""
         from urllib.parse import quote
         src = os.path.join(EXAMPLES, tpl)
         if not os.path.isfile(os.path.join(src, tpl + ".ecad")):
@@ -877,6 +878,13 @@ class Handler(SimpleHTTPRequestHandler):
             with open(os.path.join(src, tpl + ".ecad"), encoding="utf-8") as f:
                 doc = json.loads(swap(f.read()))
             doc["rev"], doc["example"] = int((old or {}).get("rev") or 0) + 1, tpl
+            if old and old.get("title"):
+                doc["title"] = old["title"]
+            elif taken and doc.get("title") in taken:
+                k = 2
+                while f"{doc['title']} {k}" in taken:
+                    k += 1
+                doc["title"] = f"{doc['title']} {k}"
             doc["example_rev"] = doc["rev"]   # 이 판 그대로면 「받기만 하고 안 고침」 — 자동 정리가 7일 뒤 치움(`cleanup.stale`)
             collab.ensure_uids(doc)
             self._doc_save(name, doc)
@@ -1189,7 +1197,9 @@ class Handler(SimpleHTTPRequestHandler):
             name = self._name(m.group(1))
             if not name or self._gone(name):
                 return self._send(400, b'{"error":"bad name"}')
-            why = self._example_copy(name)
+            req = self._body(256 * 1024)
+            taken = [str(t) for t in (req.get("taken") or [])][:500] if isinstance(req, dict) else []   # 이 브라우저 「내 칠판」 이름들 — 겹치면 「… 2」(2026-11-04)
+            why = self._example_copy(name, taken=taken)
             if why:
                 return self._json(404 if why == "none" else 409, {"error": why})
             sys.stderr.write("[예시] %s ← %s\n" % (name, EXAMPLE))

@@ -38,7 +38,7 @@ test('칠판 칸 — 이름 칸 없음 · 「＋ 새 칠판」 = 바로 새 칠�
   await expect(form.getByPlaceholder('새 칠판 이름', { exact: false })).toHaveCount(0)
   await expect(form.getByRole('button', { name: '파일 열기' })).toHaveCount(0)               // 파일 = 「▾ › 파일로 새 칠판」·줄 ⋯ 내려받기(2026-10-28)
   await form.getByTestId('board-new-more').click()
-  await expect(page.getByTestId('board-new-menu').locator('button')).toHaveText(['#칠판 코드로 열기', '↥파일로 새 칠판', '★예시 칠판 열기'])   // 새 칠판은 옆 큰 단추(메뉴엔 없음)
+  await expect(page.getByTestId('board-new-menu').locator('button')).toHaveText(['#칠판 코드로 열기', '↥파일로 새 칠판'])   // 새 칠판은 옆 큰 단추(메뉴엔 없음) · 예시는 판 맨 위 「★ 예시 칠판」(2026-11-04)
   await page.keyboard.press('Escape'); await expect(page.getByTestId('board-new-menu')).toHaveCount(0)
   await form.getByTestId('board-new').click()
   await expect(page).toHaveURL(/board=[a-z2-9]{8}$/)

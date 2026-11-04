@@ -162,6 +162,15 @@ const MiniFaces = ({ list, myId, me }) => { if (!list?.length) return null
 const MENU_BOX = { position: 'fixed', zIndex: 40, minWidth: 190, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 4, boxShadow: '0 6px 18px rgba(0,0,0,.22)', font: "400 12.5px 'Pretendard', sans-serif", color: C.ink }
 const MENU_ROW = { all: 'unset', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '5px 10px', borderRadius: 5, cursor: 'pointer' }
 const menuHover = hoverBg   // 마우스 올림 = 회색(2026-11-02 디자인 규칙 ③ — `ui.jsx`)
+// 「★ 예시 칠판」(2026-11-04 사용자 — 「＋ 새 칠판」은 늘 빈 칠판, 예시는 따로 단추: 누를 때마다 최신 예시의 새 사본을 마음껏 고침). 처음 방문도 빈 칠판(+ 첫 안내의 「예시 칠판 보기」).
+// 이름이 겹치면 서버가 「… 2」(이름을 나중에 바꾸면 「고친 사본」이 돼 7일 자동 정리에서 빠짐)
+async function openExample() {
+  const n = newBoardName()
+  if (!(await api.example(n, myBoards().map(b => b.title).filter(Boolean)))) return false
+  rememberBoard(n)   // 내가 만든 칠판 — 안 적으면 옮겨 간 칠판이 「남의 링크」로 이름을 물음(2026-11-04 자체 확인)
+  location.href = `${location.pathname}?board=${encodeURIComponent(n)}`; return true
+}
+
 function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, children }) {   // docked = 왼쪽 판 「칠판」 칸(2026-10-23 — 위 막대 팝업에서 옮김), open = 비밀번호 없는 서버, myId·me = 내 접속 이름표(줄 동그라미의 「나」), onDownload = 지금 칠판 내려받기, children = 서버 없을 때 파일 단추들
   // 처음엔 지난번 서버 답으로 그림(「불러오는 중…」 → 목록으로 바뀌며 아래가 출렁였음 — 2026-10-28 사용자 「새 칠판 누르면 살짝 깜빡」)
   const cached = () => myBoards().filter(b => b.ok !== false || b.name === DOC_NAME).map(b => ({ name: b.name, title: b.title, mtime: b.mtime || 0, c: b.c || b.t }))
@@ -197,7 +206,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
     let doc; try { doc = parseDoc(await f.text()) } catch (err) { setWhy(`파일을 못 읽었어요 — ${err.message}`); return }
     const n = newBoardName(), body = doc.title ? doc : { ...doc, title: f.name.replace(/\.(ecad|json)$/i, '').slice(0, 60) }
     if (await api.putDoc(n, body)) goTo(n); else setWhy('새 칠판에 못 올렸어요 — 서버 연결을 확인해 주세요') }
-  const exampleNew = async () => { closeMenu(); const n = newBoardName(); if (await api.example(n)) goTo(n); else setWhy('예시 칠판을 못 열었어요 — 서버 연결을 확인해 주세요') }   // 예시 칠판 하나 더(2026-10-28 — 처음 방문 때 받은 예시를 지웠을 때도)
+  const exampleNew = async () => { closeMenu(); if (!(await openExample())) setWhy('예시 칠판을 못 열었어요 — 서버 연결을 확인해 주세요') }   // 예시 칠판 하나 더(2026-10-28 — 처음 방문 때 받은 예시를 지웠을 때도)
   const myNames = new Set((mine || []).map(b => b.name))
   const others = (list || []).filter(b => !myNames.has(b.name)), shown = others.filter(b => all || !TEST_BOARD.test(b.name)), hidden = others.length - shown.length
   // 접속자 = 판이 열린 동안 3초마다(서버는 기억만 읽음 — 신호는 각 칠판 창이 보냄)
@@ -250,16 +259,17 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
       {!making && <div style={{ display: 'flex' }}>   {/* 갈라진 단추(2026-10-28 사용자 고름) — 왼쪽 = 바로 새 칠판(한 번), ▾ = 칠판 코드로 열기·파일로 새 칠판 */}
         <button data-testid="board-new" onClick={startNew} title={open ? '새 칠판 만들기 — 누르면 바로 새 칠판으로 옮겨 가요(이름은 나중에 목록에서 두 번 눌러서)' : '새 칠판 만들기 — 이름을 정하면 그 칠판으로 옮겨 가요'}
           style={{ ...accent, padding: '3px 8px 3px 10px', borderRadius: '6px 0 0 6px' }}>＋ 새 칠판</button>
-        <button ref={moreRef} data-testid="board-new-more" aria-label="새 칠판 메뉴" aria-expanded={!!newMenu} title="칠판 코드로 열기 · 파일로 새 칠판 · 예시 칠판 열기"
+        <button ref={moreRef} data-testid="board-new-more" aria-label="새 칠판 메뉴" aria-expanded={!!newMenu} title="칠판 코드로 열기 · 파일로 새 칠판"
           onClick={e => { if (newMenu) { closeMenu(); return } const r = e.currentTarget.getBoundingClientRect(); setNewMenu({ x: Math.max(RAIL_W + 4, r.right - 200), y: r.bottom + 4 }) /* 아이콘 줄은 안 덮게 */ }}
           style={{ ...accent, padding: '3px 6px', borderRadius: '0 6px 6px 0', borderLeft: '1px solid rgba(255,255,255,.45)', fontSize: 10 }}>▾</button>
       </div>}
     </div>
+    {!making && <button data-testid="board-example-new" onClick={exampleNew} title="기능마다 진짜로 만든 예시가 담긴 칠판 — 마음껏 고쳐 보세요. 누를 때마다 최신 예시로 새로 열려요(지금 칠판은 그대로)"
+      style={{ all: 'unset', cursor: 'pointer', boxSizing: 'border-box', padding: '4px 8px', borderRadius: 6, border: `1px solid ${C.line}`, color: C.ink, fontWeight: 500, textAlign: 'center', whiteSpace: 'nowrap' }} {...menuHover}>★ 예시 칠판 열기</button>}   {/* 윗줄은 좁아 꺾임 — 한 줄 따로(2026-11-04 자체 확인) */}
     {newMenu && <div ref={menuRef} data-testid="board-new-menu" style={{ ...MENU_BOX, left: newMenu.x, top: newMenu.y, width: 200 }}>
       {!codeOn ? <>
         <button data-testid="board-code-open" onClick={() => setCodeOn(true)} style={MENU_ROW} {...menuHover} title="받은 칠판 코드(QR 밑 8자)나 칠판 주소를 넣어 그 칠판으로"><span style={{ width: 14, textAlign: 'center' }}>#</span>칠판 코드로 열기</button>
         <button data-testid="board-file-new" onClick={() => fileRef.current?.click()} style={MENU_ROW} {...menuHover} title=".ecad 파일을 새 칠판으로 열어요(지금 칠판은 그대로)"><span style={{ width: 14, textAlign: 'center' }}>↥</span>파일로 새 칠판</button>
-        <button data-testid="board-example-new" onClick={exampleNew} style={MENU_ROW} {...menuHover} title="기능 소개로 채운 예시 칠판을 하나 더 열어요(지금 칠판은 그대로 — 예시를 지웠을 때도)"><span style={{ width: 14, textAlign: 'center' }}>★</span>예시 칠판 열기</button>
       </> : <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 6 }}>
         <span style={{ fontSize: 11, color: C.muted }}>받은 칠판 코드(QR 밑 8자)나 주소</span>
         <div style={{ display: 'flex', gap: 6 }}>
@@ -591,7 +601,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
     // 서버에 없는 칠판 = 빈 칠판을 먼저 만들고 그 판 번호로 엶(2026-10-28 사용자: 아무것도 안 쓴 칠판이 목록에서 사라졌음 — 칠판 코드로도 못 찾았음).
     // 받아 오기를 켜기 전에 만들어야 함 — 고치기 시작한 뒤에 도착하면 남의 변경처럼 합쳐져 되돌리기가 어긋났음(flow35)
     // 처음 온 사람(이 브라우저에 칠판이 하나도 없음) = 예시 칠판 사본부터(2026-10-28 사용자 — 들어오자마자 「이렇게 쓰는 거구나」, 원본 없으면 빈 칠판 그대로)
-    ;(AUTO_BOARD === 'new' ? api.example() : Promise.resolve()).then(loadServerDoc).then(async r => { const fresh = r.server && !r.doc, rev = fresh ? await api.patch({ upsert: [], delete: [] }) : null
+    ;loadServerDoc().then(async r => { const fresh = r.server && !r.doc, rev = fresh ? await api.patch({ upsert: [], delete: [] }) : null
       if (typeof rev === 'number') r = { ...r, doc: { ...emptyDoc(), rev } }
       setExample(r.doc?.example || '')
       setServer(r.server); setSrvKnown(true); if (r.doc) open(r.doc, r.doc.title ? `「${r.doc.title}」` : `서버 「${DOC_NAME}」`, true, true);   // 알림 = 칠판 이름(처음 온 사람에겐 코드가 뜻 없음 — 2026-11-03 UX 검토), 이름 없으면 전처럼
@@ -774,7 +784,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
         {symAdd && <SymAddForm init={symAdd} folders={mySyms.folders} onClose={() => setSymAdd(null)} onOk={(name, folder) => {
           const ok = myApi.addSymbol(name, folder, symAdd.items); setSymAdd(null)
           if (ok) { setDockTab('shape'); setStatus(`「${name}」을 내 심볼 「${folder}」에 넣었어요 — 이 브라우저에 저장`) } else setStatus('이 브라우저 저장 공간이 모자라요 — 그림이 든 것은 클 수 있어요') }} />}
-        {!model.items.length && !meetSt && !aiBusy && <EmptyGuide onAsk={() => { setChatOpen(true); setChatFocus({ id: Date.now() }) }} onDeep={() => { setChatOpen(true); setChatFocus({ id: Date.now(), tool: 'deep' }) }}
+        {!model.items.length && !meetSt && !aiBusy && <EmptyGuide onExample={() => openExample()} onAsk={() => { setChatOpen(true); setChatFocus({ id: Date.now() }) }} onDeep={() => { setChatOpen(true); setChatFocus({ id: Date.now(), tool: 'deep' }) }}
           onMeet={() => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : ed.current?.meetStart())} />}
         <span data-testid="save-note" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{saveNote}</span>
         {status && <div data-testid="status-toast" role="status" title={status} style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 6, maxWidth: 'min(640px, max(240px, calc(100% - 480px)))', padding: '6px 14px', borderRadius: 99,
