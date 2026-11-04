@@ -34,7 +34,7 @@ import { arrowKindOf, swapArrowKind } from './arrowkind.js'
 import { shapeWH, symbolPath } from './symbols.js'
 import { cssColor } from '../ecadFormat.js'
 import { colEdges, colFracs, frameTag, frameTagFs, itemTransform, rowEdges } from './geom.js'
-import { orderedFrames, presentFrames, setFrameOrder } from './edit.js'
+import { orderedFrames, presentFrames, frameLinks, setFrameOrder } from './edit.js'
 import { Presenter } from './present.jsx'
 import { layersOf, layerIdOf } from './layers.jsx'
 import { buildSvg, download, exportPdf, exportPng, exportSvg, fontFaces, pngBlob, usesBoardFont, weightsOf } from './exporter.jsx'
@@ -971,20 +971,29 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const BW = cols * W + (cols - 1) * GX, BH = rows * ROW, c = R.current.cam, view = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
     const at = nearSpot({ x: view.x + view.w / 2, y: view.y + view.h / 2 }, hitPool().map(it => sceneBox(it, textBox)), BW, BH, { pad: 48, step: 96 })
     const zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, z = topZ(m.items) + 1, out = [], ids = []
-    let no = nextFrameNo(m.items)
+    let no = nextFrameNo(m.items), prevMain = null
     pages.forEach((s, i) => {
       const X = at.x + (i % PER) * (W + GX), Y = at.y + Math.floor(i / PER) * ROW
       const cover = i === 0 && ok(deck.cover) ? { data: deck.cover.data, w: deck.cover.w, h: deck.cover.h, alt: `표지 그림 — ${deck.title || s.title}` } : null
       const main = slideFrame(s, i, X, Y, no++, z, zb, deck.title, cover, i === pages.length - 1)
       out.push(...main); ids.push(main[0]._id)
       const br = branch(s)
-      if (br) { const f = slideFrame(br, i, X, Y + ROW, no++, z, zb, deck.title, null, false, { slide_branch: main[0]._id, name: `${s.title} · 그림` }); out.push(...f); ids.push(f[0]._id) }
+      if (br) { const f = slideFrame(br, i, X, Y + ROW, no++, z, zb, deck.title, null, false, { slide_branch: main[0]._id, name: `${s.title} · 그림` }); out.push(...f); ids.push(f[0]._id); out.push(slideArrow(main[0], f[0], 'down', z)) }
+      if (anyBranch && i > 0) out.push(slideArrow(prevMain, main[0], 'right', z))   // 갈래가 있는 책 = 장끼리 → · 장 → 판 ↓(③ 화살표 발표 — 발표가 이 화살표를 따라감)
+      prevMain = main[0]
     })
     commit([...m.items, ...out], ids, '발표 자료')
     bringIn({ x: at.x, y: at.y, w: BW, h: BH }); setTool('select')
     const np = pages.filter(s => s.layout === '그림' && ok(s.pic)).length, nb = pages.filter(branch).length
     setStatus(`발표 자료 ${pages.length}장${np || nb ? `(${[np && `그림 장 ${np}`, nb && `아래 그림 판 ${nb}`].filter(Boolean).join(' · ')})` : ''} — 위 막대 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모`)
     return { ids, frames: ids.length }
+  }
+  // 장 사이 화살표(작은 책 ③, 2026-11-04) — 프레임 테두리에 붙음(프레임을 옮기면 따라옴). right = 오른쪽 변 → 왼쪽 변(높이 450 — 3:2 그림 장과 16:9 글 장이 섞여도 곧게),
+  // down = 아래 변 → 위 변(가로 3/4 자리 — 장 밑 발표자 메모(왼쪽)를 비켜 감). 발표는 칠판의 프레임 사이 화살표를 따라감(사람이 그은 것도)
+  function slideArrow(a, b, dir, z) {
+    const pa = dir === 'down' ? [1200, a.rect[3]] : [a.rect[2], 450], pb = dir === 'down' ? [1200, 0] : [0, 450]
+    return base([0, 0], { type: 'sarrow', pts: [[a.pos[0] + pa[0], a.pos[1] + pa[1]], [b.pos[0] + pb[0], b.pos[1] + pb[1]]], color: '#ff9ca3af', width: 6, head: true, head_start: false, head_scale: 1.6, style: 1,
+      auto_route: true, routing: 'ortho', curve_r: 20, route_hints: [], labels: [], _bind1: a._id, bind1_pt: pa, bind1_group: null, _bind2: b._id, bind2_pt: pb, bind2_group: null, z: z + 1, slide_link: true })
   }
   // 장 프레임 하나 + 조각(`slidesBoard`·`slideBranch` 공용) — s = 장(pic = 그림 장 그림 { data, w, h }), cover = 표지 그림, last = 끝 장(그림을 못 받은 그림 장 = 마무리). [프레임, ...조각]
   const slidePic = s => (s.layout === '그림' && s.pic?.data && s.pic.w && s.pic.h ? s.pic : null)
@@ -1020,7 +1029,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const no = Math.max(...fam.map(x => x.no ?? 0)) + 1, z = topZ(m.items) + 1, zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1
     const made = slideFrame(s, (root.slide_n || 1) - 1, at.x, at.y, no, z, zb, root.slide_deck, null, false, { slide_branch: root._id, name: `${spec.title} · ${kind === 'pic' ? '그림' : '글'}` })
     const items = m.items.map(x => (x.type === 'frame' && x.no != null && x.no >= no ? { ...x, no: x.no + 1 } : x))   // 뒤 번호 밀기 = 발표 때 그 장 바로 다음
-    commit([...items, ...made], [made[0]._id], '다른 판 더하기')
+    const last = fam.reduce((a, x) => ((x.no ?? 0) > (a.no ?? 0) ? x : a), root)   // 화살표 ↓ = 그 장의 마지막 판에서(판이 차례로 아래로)
+    commit([...items, ...made, slideArrow(last, made[0], 'down', z)], [made[0]._id], '다른 판 더하기')
     bringIn(sceneBox(made[0], textBox)); setStatus(`「${spec.title}」 아래에 ${kind === 'pic' ? '그림' : '글'} 판 — 발표 때 그 장 다음에 나와요(왼쪽 「프레임」 판에서 하나만 남길 수 있어요)`)
     return made[0]._id
   }
@@ -2806,7 +2816,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         if (clip.current?.items?.length) { if (has) out.push('-'); out.push(['붙여넣기', 'Ctrl+V', act(paste)]) }
         return out })()} />}
       {present != null && (() => { const fr = presentFrames(items.filter(it => !hiddenL.has(layerIdOf(it))))
-        return <Presenter frames={fr.map(f => ({ id: f._id, name: f.name, box: sceneBox(f, textBox) }))} order={order.filter(([it]) => it.type !== 'frame' || isDeepPaper(it)).map(([it, i]) => (isDeepPaper(it) ? [deepPaper(it), i] : [it, i]))} onBoard={onBoard} routes={routes}
+        return <Presenter frames={fr.map(f => ({ id: f._id, name: f.name, box: sceneBox(f, textBox) }))} links={frameLinks(items, fr)} order={order.filter(([it]) => it.type !== 'frame' || isDeepPaper(it)).map(([it, i]) => (isDeepPaper(it) ? [deepPaper(it), i] : [it, i]))} onBoard={onBoard} routes={routes}
           start={Math.min(present, fr.length - 1)} dark={dark} simple={phone} onClose={endPresent} onAdd={addPenNotes} onUndo={undo} onFlipArrow={() => { const m = R.current.model, a = m.items.filter(it => it.layer_id === PEN_LAYER && it.type === 'sarrow').sort((p, q) => (q.z ?? 0) - (p.z ?? 0))[0]   // 방금(맨 위) 그린 판서 화살표 방향 뒤집기
             if (a) commit(m.items.map(it => (it._id === a._id ? { ...it, pts: [...it.pts].reverse() } : it)), R.current.sel, '화살표 뒤집기') }} onClearNotes={box => { const m = R.current.model, inBox = it => { const b = sceneBox(it, textBox), cx = b.x + b.w / 2, cy = b.y + b.h / 2; return cx >= box.x && cx <= box.x + box.w && cy >= box.y && cy <= box.y + box.h }   // 이 장(프레임) 안 판서만
             const ids = m.items.filter(it => it.layer_id === PEN_LAYER && inBox(it)).map(it => it._id); if (ids.length) commit(removeItems(m.items, ids), R.current.sel, '이 장 판서 지움') }}

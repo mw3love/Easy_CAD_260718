@@ -53,7 +53,7 @@ function useGlide(target, ms) {
 
 // frames = [{ id, name, box }] 순서대로, order = 그릴 [아이템, 순번](프레임 자신은 뺀 것), start = 시작 장, dark = 칠판 화면이 어두운가
 // onAdd(아이템 설계[]) = 판서 레이어에 넣기, onErase(칠판 점, 허용 거리) = 그 자리 판서 지우기, onUndo = 되돌리기
-export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dark0 = false, onAdd, onErase, onUndo, onClearNotes, onFlipArrow, onClose, simple = false }) {   // simple = 휴대폰(2026-11-03 UX 검토): 막대 = ◀ 장 ▶ 끝만·늘 보임, 톡 = 다음(왼쪽 1/3 = 이전) — 판서 도구 막대가 화면 밖으로 넘쳐 넘기기를 못 했음
+export function Presenter({ frames, links = [], order, onBoard, routes, start = 0, dark: dark0 = false, onAdd, onErase, onUndo, onClearNotes, onFlipArrow, onClose, simple = false }) {   // simple = 휴대폰(2026-11-03 UX 검토): 막대 = ◀ 장 ▶ 끝만·늘 보임, 톡 = 다음(왼쪽 1/3 = 이전) — 판서 도구 막대가 화면 밖으로 넘쳐 넘기기를 못 했음
   const tapAt = useRef(null)   // onClearNotes(칠판 상자) = 그 안 판서 지우기
   const [list, setList] = useState(null), listRef = useRef(null)   // 장 목록(Tab — 2026-10-18 사용자: 발표 중 특정 장으로 바로) = { typed: 입력 중 번호 }
   const [i, setI] = useState(start), [glide, setGlide] = useState(true), [vw, setVw] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }))
@@ -69,7 +69,14 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   }, [])   // eslint-disable-line react-hooks/exhaustive-deps
   const n = frames.length
   const iRef = useRef(i); iRef.current = i
-  const go = d => { const k = iRef.current; if (k + d >= n) { flash('마지막 장이에요 — 끝내려면 Esc'); return } if (k + d < 0) { flash('첫 장이에요'); return } setI(k + d) }   // 마지막 장에서 멈춤(2026-10-18 사용자: 휠로 넘기다 꺼지지 않게)
+  // 다음 = 화살표 길(작은 책 ③, 2026-11-04): 이 장에서 나가는 화살표가 있으면 그 장으로 — 갈림길(둘 이상)은 기본 = 앞 차례(같은 장의 판부터 = 다 보기), ↓ = 아래 판, → = 옆 장.
+  // 화살표가 없으면 차례대로(전과 같음). 이전 = 지나온 길을 거슬러(갈림길을 건너뛰었으면 건너뛴 대로), 마지막 장에서 멈춤(2026-10-18 사용자: 휠로 넘기다 꺼지지 않게)
+  const hist = useRef([])
+  const go = (d, way = '') => { const k = iRef.current
+    if (d < 0) { if (hist.current.length) { setI(hist.current.pop()); return } if (k - 1 < 0) { flash('첫 장이에요'); return } setI(k - 1); return }
+    const outs = links[k] || [], t = way === 'down' ? outs.find(o => o.dir === 'down') : way === 'right' ? outs.find(o => o.dir !== 'down') : outs[0]
+    const j = t ? t.j : k + 1; if (j >= n) { flash('마지막 장이에요 — 끝내려면 Esc'); return }
+    hist.current.push(k); setI(j) }
   const toolRef = useRef(tool); toolRef.current = tool
   // Q = 이 칠판 QR을 TV에 크게(2026-10-28 대회 시연 — 객석이 휴대폰으로 바로 들어옴). 게시했으면 보기 링크(고치기 없음), 아니면 칠판 주소(같이 고침)
   const [qr, setQr] = useState(null), qrRef = useRef(null); qrRef.current = qr
@@ -110,7 +117,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
       if (code === 'KeyF' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); yt.current.f(); return }   // 유튜브 크게 보기 ⇄ 원래(2026-10-20 사용자: F 손버릇 — 유튜브 자체 F는 겹친 전체 화면이 돼 발표가 깨졌음)
       if (k === ' ' && yt.current.space()) { e.preventDefault(); return }   // 영상 있는 장의 Space = 재생/일시정지(키보드를 발표가 가지므로 유튜브 대신), 없으면 아래 다음 장
       if (k === 'Escape') { e.preventDefault(); if (menuRef.current) setMenu(null); else if (tool) setTool(null); else onClose(); return }
-      if (['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter'].includes(k)) { e.preventDefault(); go(1) }
+      if (['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter'].includes(k)) { e.preventDefault(); go(1, k === 'ArrowDown' ? 'down' : k === 'ArrowRight' ? 'right' : '') }   // 갈림길에서 ↓ = 아래 판 · → = 옆 장
       else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(k)) { e.preventDefault(); go(-1) }
       else if (k === 'Home') setI(0); else if (k === 'End') setI(n - 1)
       else if (code === 'KeyM') setGlide(g => !g)
@@ -243,7 +250,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     <div style={{ display: 'flex', background: 'rgba(255,255,255,.08)', borderRadius: 6, padding: 1 }}>{opts.map(([v, name, tip]) => <button key={name} title={tip || name} onClick={() => set(v)}
       style={{ all: 'unset', cursor: 'pointer', padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', font: "600 12px 'Pretendard', sans-serif", color: cur === v ? '#fff' : 'rgba(255,255,255,.6)', background: cur === v ? 'var(--mb-accent)' : 'transparent' }}>{name}</button>)}</div>
     <span style={{ fontSize: 11, color: 'rgba(255,255,255,.6)', whiteSpace: 'nowrap' }}>{label}</span></div>
-  return <div ref={root} tabIndex={-1} data-testid="presenter" onPointerDown={down} onPointerMove={move} onPointerUp={up} onContextMenu={e => e.preventDefault()}
+  return <div ref={root} tabIndex={-1} data-testid="presenter" data-cur={frames[i]?.id} onPointerDown={down} onPointerMove={move} onPointerUp={up} onContextMenu={e => e.preventDefault()}
     style={{ position: 'fixed', inset: 0, zIndex: 1000, outline: 'none', background: '#000', cursor: laserShown ? LASER_CURSOR : show ? (tool && tool !== 'erase' ? 'crosshair' : zoom?.card ? 'zoom-out' : 'default') : 'none', ...th }}>
     <svg width={W} height={H} style={{ display: 'block' }}>
       {!zoom?.card && <rect x={hx - g} y={hy - g} width={hw + 2 * g} height={hh + 2 * g} fill={th['--mb-board']} />}
@@ -288,6 +295,12 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,.1)' }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>{m[0]}</button>)}
       </div> })()}
     {/* 아래 막대 — 마우스를 움직이면 나타남, 2초 가만히 있으면 숨음(도구를 쓰는 중엔 계속) */}
+    {(links[i] || []).length > 1 && <div data-testid="present-fork" onPointerDown={e => e.stopPropagation()}   // 갈림길 = 갈 곳을 늘 보여 줌(누르면 그 장)
+      style={{ position: 'absolute', left: '50%', bottom: 76, transform: 'translateX(-50%)', zoom: barZoom, display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 10, background: 'rgba(24,24,27,.78)', color: '#fff', font: "500 13px 'Pretendard', sans-serif" }}>
+      <span style={{ opacity: 0.7 }}>갈림길</span>
+      {links[i].map(o => <button key={o.j} data-j={o.j} onClick={() => { hist.current.push(i); setI(o.j) }} title={o.dir === 'down' ? '아래 판 (↓)' : '옆 장 (→)'}
+        style={{ all: 'unset', cursor: 'pointer', padding: '3px 9px', borderRadius: 7, background: 'rgba(255,255,255,.14)', whiteSpace: 'nowrap' }}>{o.dir === 'down' ? '↓' : '→'} {frames[o.j]?.name || `${o.j + 1}장`}</button>)}
+    </div>}
     <div data-testid="present-bar" onPointerDown={e => e.stopPropagation()} onPointerEnter={() => { barHover.current = true; setNearBottom(true) }} onPointerLeave={() => { barHover.current = false; wake() }}
       style={{ position: 'absolute', left: '50%', bottom: 16, transform: 'translateX(-50%)', zoom: barZoom, display: 'flex', alignItems: 'center', gap: 2, padding: 4, borderRadius: 10, background: 'rgba(24,24,27,.86)',
         boxShadow: '0 4px 16px rgba(0,0,0,.4)', opacity: barShow || simple ? 1 : 0, pointerEvents: barShow || simple ? 'auto' : 'none', transition: 'opacity .25s' }}>

@@ -365,4 +365,16 @@ export function orderedFrames(items) {
 }
 // 발표에 나오는 프레임(2026-10-28 사용자) — 프레임 `skip: true` = 「발표 안 함」(칠판엔 그대로, 발표·「프레임만」 내보내기에서 빠짐 — 토론용 묶음 등)
 export const presentFrames = items => orderedFrames(items).filter(f => !f.skip)
+// 발표 길(작은 책 ③, 2026-11-04 사용자 「화살표 형식으로 발표」) — 발표에 나오는 프레임(fr, 차례대로) 사이의 붙은 화살표 → 장마다 나가는 길 [{ j: 갈 장 차례, dir: 'down' | 'right' }].
+// dir = 갈 장이 아래쪽이면 down(같은 장의 다른 판), 아니면 right. 길 차례 = 장 차례(번호 순 — 판이 그 장 바로 뒤라 「다음」 = 판부터 = 다 보기)
+export function frameLinks(items, fr) {
+  const at = new Map(fr.map((f, j) => [f._id, j])), out = fr.map(() => [])
+  for (const a of items) {
+    if (a.type !== 'sarrow' || !at.has(a._bind1) || !at.has(a._bind2) || a._bind1 === a._bind2) continue
+    const i = at.get(a._bind1), j = at.get(a._bind2), p = fr[i], q = fr[j]
+    const dx = (q.pos[0] + q.rect[2] / 2) - (p.pos[0] + p.rect[2] / 2), dy = (q.pos[1] + q.rect[3] / 2) - (p.pos[1] + p.rect[3] / 2)
+    if (!out[i].some(o => o.j === j)) out[i].push({ j, dir: dy > Math.abs(dx) ? 'down' : 'right' })
+  }
+  return out.map(o => o.sort((a, b) => a.j - b.j))
+}
 export function setFrameOrder(items, ids) { const no = new Map(ids.map((id, i) => [id, i + 1])); return items.map(it => (no.has(it._id) ? { ...it, no: no.get(it._id) } : it)) }

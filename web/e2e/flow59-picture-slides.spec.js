@@ -168,3 +168,28 @@ test('입구 합치기 — 「+ › Deep Mode」 질문지 맨 위에서 한 판
   await shape.locator('[data-v="deep"]').click()
   await expect(ask.locator('[data-q="누구에게"]')).toBeVisible()
 })
+
+test('작은 책 ③ — 갈래가 있는 책은 장끼리 →·장에서 판으로 ↓ 화살표(프레임에 붙음) · 발표가 화살표를 따라감(갈림길 ↓/→·이전 = 지나온 길)', async ({ page }) => {
+  const name = boardName('picarrow')
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { slides: 'm' } } }))
+  await openBoard(page, name); await setCam(page)
+  const pic = { data: PNG.toString('base64'), w: 3, h: 2 }
+  await page.evaluate(d => window.__mb.ed.slidesBoard(d), { title: '전파', sources: [], slides: [{ title: '표지', layout: '표지', bullets: ['a'] },
+    { title: '송신소', layout: '글머리', bullets: ['쏜다'], alt_pic: pic }, { title: '중계소', layout: '글머리', bullets: ['넘긴다'] }, { title: '끝', layout: '마무리', bullets: ['b'] }] })
+  const doc = await liveDoc(page), fr = doc.items.filter(it => it.type === 'frame').sort((a, b) => a.no - b.no), id = fr.map(f => f.uid)
+  const arrows = doc.items.filter(it => it.type === 'sarrow' && it.slide_link)
+  expect(arrows.map(a => [id.indexOf(doc.items[a.bind1].uid), id.indexOf(doc.items[a.bind2].uid)]).sort())   // 저장 꼴 bind = 목록 순번.toEqual([[0, 1], [1, 2], [1, 3], [3, 4]].sort())   // 표지→송신소→중계소→끝, 송신소↓판
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: '발표', exact: true }).click()
+  const pr = page.getByTestId('presenter'), fork = page.getByTestId('present-fork')
+  await expect(pr).toHaveAttribute('data-cur', id[0]); await expect(fork).toHaveCount(0)
+  await page.keyboard.press(' '); await expect(pr).toHaveAttribute('data-cur', id[1])
+  await expect(fork).toContainText('↓ 송신소 · 그림'); await expect(fork).toContainText('→ 중계소')   // 갈림길 = 갈 곳을 보여 줌
+  await page.keyboard.press('ArrowRight'); await expect(pr).toHaveAttribute('data-cur', id[3])    // → = 판을 건너 옆 장
+  await page.keyboard.press('ArrowLeft'); await expect(pr).toHaveAttribute('data-cur', id[1])     // 이전 = 지나온 길
+  await page.keyboard.press('ArrowDown'); await expect(pr).toHaveAttribute('data-cur', id[2])     // ↓ = 아래 판
+  await page.keyboard.press(' '); await expect(pr).toHaveAttribute('data-cur', id[3])             // 판 다음 = 차례대로 옆 장
+  await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowLeft'); await expect(pr).toHaveAttribute('data-cur', id[1])
+  await page.keyboard.press(' '); await expect(pr).toHaveAttribute('data-cur', id[2])             // 기본(스페이스) = 판부터 = 다 보기
+  await page.keyboard.press('ArrowLeft'); await fork.getByRole('button', { name: /중계소/ }).click(); await expect(pr).toHaveAttribute('data-cur', id[3])   // 갈림길 단추
+})
