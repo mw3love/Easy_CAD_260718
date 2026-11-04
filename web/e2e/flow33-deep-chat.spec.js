@@ -34,7 +34,7 @@ test('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 
   await page.getByTestId('plus').click()
   await page.getByRole('menuitemradio', { name: /Deep Mode/ }).click()
   await expect(page.getByTestId('tool-chip')).toHaveText('📰 Deep Mode ✕')
-  await page.getByPlaceholder('어떤 주제로 한 판', { exact: false }).click()
+  await page.getByPlaceholder('어떤 주제로', { exact: false }).click()
   await page.keyboard.type('어텐션이 뭐야? 신입 교육용으로'); await page.keyboard.press('Enter')
   const ask = page.getByTestId('deep-ask')
   await expect(ask).toBeVisible()

@@ -58,8 +58,17 @@ const TOOLS = [['image', '🎨 이미지 만들기', '사진·일러스트 같�
   ['icon', '✏️ 아이콘 만들기 (SVG)', '선으로 된 도형 — 칠판에서 고칠 수 있어요', '무엇의 아이콘? 예: 파라볼라 안테나'],
   ['diagram', '🔷 도형 그리기 (흐름도·계통도)', '상자와 화살표 — 상자를 옮기면 화살표가 따라와요(약 15크레딧)', '무엇을 그릴까요? 예: 송신소 계통도'],
   ['live', '▶ 인터랙티브 HTML', '원리를 직접 만져 보는 HTML 카드 하나(고른 것이 재료, 약 45크레딧)', '무엇을 움직여 볼까요? 예: 가격 × 물량 = 수출액'],
-  ['deep', '📰 Deep Mode', '한 주제로 칠판 한 판 — 질문지 → 지면 계획 → 만들기(크레딧 많이)', '어떤 주제로 한 판? 예: 신입에게 어텐션 설명'],
-  ['slides', '📽 발표 자료', '고른 자료나 주제로 프레임 여러 장 — 질문지 → 장 계획 → 만들기, 바로 발표', '무엇을 발표할까요? 예: 고른 점검 메모로 팀 공유 발표']]   // 딥모드는 서버가 할 수 있을 때만(/api/models `jobs.deep`)
+  // 딥모드 + 발표 자료 = 입구 하나(2026-11-04 사용자 — 질문지·계획·재료가 같고 결과 모양만 다름). 질문지 맨 위에서 모양: 한 판(지면) / 여러 장(작은 책 — 글·그림 장, 바로 발표)
+  ['deep', '📰 Deep Mode', '한 주제를 깊게 — 한 판(신문 지면) 또는 여러 장(작은 책·발표 자료)', '어떤 주제로? 예: 신입에게 전파가 집까지 오는 길 설명']]   // 서버가 할 수 있을 때만(/api/models `jobs.deep`·`jobs.slides`)
+// 「+」 메뉴 미리보기(2026-11-04 사용자 — 「아이콘 + 글 + 설명으로는 4번째부터 한 번에 이해가 안 감」) — 마우스를 올리면 옆에 실제 결과 그림 + 언제 쓰나.
+// 그림 = `web/public/plus/`(진짜 KAIROS 결과를 칠판에 놓고 찍음 — 찍은 방법은 `docs/history/2026-11.md` 「11-04」)
+const PREVIEW = {
+  image: [['image.jpg'], '사진·일러스트·설명 그림 한 장 — 후보 둘 중에 골라요'],
+  icon: [['icon.jpg'], '선으로 된 아이콘 — 칠판에서 선·색을 고칠 수 있어요'],
+  diagram: [['diagram.jpg'], '흐름도·계통도 — 상자를 옮기면 화살표가 따라와요'],
+  live: [['live.jpg'], '원리를 직접 눌러 보는 카드 — 값을 바꾸면 그림이 바로 바뀌어요'],
+  deep: [['deep.jpg', 'book.jpg'], '위 = 한 판(신문 지면) · 아래 = 여러 장(작은 책 — 글 장·그림 장, 바로 발표). 질문지에서 골라요'],
+}
 const CUT_MORE = '끊긴 곳부터 이어서 계속 써 줘. 앞 내용은 되풀이하지 말고 끊긴 문장부터.'   // 끊긴 답 「이어서 쓰기」(2026-10-27)
 const EMPTY_ASK = { report: '정리해 줘' }   // 이름표만 두고 빈 칸으로 보내면
 const BOARD_JOBS = new Set(['report', 'deep-build', 'deep-section', 'slides-build'])   // 칠판을 바꾸거나 칠판 자료로 만드는 일 — 칠판 위에도 알약(main `aiBusy`)
@@ -344,8 +353,10 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     if (last?.kind === 'deep' && last.step === 'ask' && !last.done) { deepGo(li, t); return true }
     if (last?.kind === 'deep' && last.step === 'plan' && !last.built && !last.stale && t && (!kind || kind === 'deep')) { deepReplan(li, t); return true }
     if (kind !== 'deep' || !t) return false
-    const at = Date.now()
-    update([...msgs.filter(m => m.role !== 'error'), { role: 'user', content: t, at, deep: true }, { role: 'assistant', kind: 'deep', step: 'ask', topic: t, brief: {}, at: at + 1 }])
+    // 모양은 질문지에서(한 판 ↔ 여러 장) — 여러 장으로 바꿀 때 쓰게 고른 것도 붙잡아 둠(발표 자료와 같게)
+    const at = Date.now(), material = contextText(sel), imgIds = selImgs.length ? ed.current?.selImageIds?.() || [] : [], k = models?.jobs?.deep ? 'deep' : 'slides'
+    update([...msgs.filter(m => m.role !== 'error'), { role: 'user', content: t, at, deep: true }, { role: 'assistant', kind: k, step: 'ask', topic: t, brief: {}, shapes: true,
+      ...(material || imgIds.length ? { material, ctxCount: sel.length + imgIds.length } : {}), ...(imgIds.length ? { imgIds } : {}), at: at + 1 }])
     setDraft(''); setPickTool(''); if (mic !== 'off') micStop.current?.()
     return true
   }
@@ -564,7 +575,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   useEffect(() => { if (!cfgOpen) return; const close = e => { if (!e.target.closest?.('[data-model-set]')) setCfgOpen(false) }; window.addEventListener('pointerdown', close, true); return () => window.removeEventListener('pointerdown', close, true) }, [cfgOpen])   // 「모델 설정」 = 바깥 누르면 닫힘
   useEffect(() => { if (menuAt == null) return; const close = e => { if (!e.target.closest?.('[data-answer-menu]')) setMenuAt(null) }; window.addEventListener('pointerdown', close, true); return () => window.removeEventListener('pointerdown', close, true) }, [menuAt])
   // 「+」 도구(2026-10-23 사용자 — Gemini·ChatGPT·Claude처럼): 기본은 앱이 길을 고르고, 고르면 이름표가 남아 그 길로만(× = 다시 자동). 「아이콘」처럼 뜻이 둘인 말을 위해
-  const [pickTool, setPickTool] = useState(''), [plusOpen, setPlusOpen] = useState(false)
+  const [pickTool, setPickTool] = useState(''), [plusOpen, setPlusOpen] = useState(false), [peek, setPeek] = useState('')   // peek = 「+」 메뉴에서 마우스 올린 도구(미리보기)
   useEffect(() => { if (!plusOpen) return; const close = e => { if (!e.target.closest?.('[data-plus-menu]')) setPlusOpen(false) }; const esc = e => { if (e.key === 'Escape') { e.stopPropagation(); setPlusOpen(false) } }   // Esc로도 닫힘(화면 규칙 — 메뉴는 바깥·Esc, 2026-11-03 UX 검토)
     window.addEventListener('pointerdown', close, true); window.addEventListener('keydown', esc, true); return () => { window.removeEventListener('pointerdown', close, true); window.removeEventListener('keydown', esc, true) } }, [plusOpen])
   function saveKey(v) { setKairosKey(v.trim()); setMyKey(!!v.trim()); setKeyDraft(''); setKeyOpen(false) }
@@ -580,7 +591,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   // 일을 아직 모를 때(서버가 짐작 — 「정리 문서로 만들어 줘」를 쳐서 물음)는 모델 이름을 안 씀: 고른 모델이 아닐 수 있음(2026-10-20 실화면)
   useEffect(() => { onBusy?.(busy && BOARD_JOBS.has(busyJob) ? busyLine : '') }, [busyLine])   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => onBusy?.(''), [])   // eslint-disable-line react-hooks/exhaustive-deps
-  const lastM = msgs.filter(m => m.role !== 'error').at(-1), tools = TOOLS.filter(t => (t[0] !== 'deep' && t[0] !== 'live' && t[0] !== 'slides') || models?.jobs?.[t[0]])   // 딥모드·움직이는 카드 = 서버가 할 수 있을 때만
+  const lastM = msgs.filter(m => m.role !== 'error').at(-1), tools = TOOLS.filter(t => (t[0] !== 'deep' && t[0] !== 'live') || models?.jobs?.[t[0]] || (t[0] === 'deep' && models?.jobs?.slides))   // 딥모드(한 판·여러 장)·움직이는 카드 = 서버가 할 수 있을 때만
   const ta = useRef(null)
   // 첨부(2026-10-28 사용자) — 대화창에 놓기·붙여넣기·「+ › 파일 올리기…」 = 칠판 빈자리에 놓고 고른 채(`ed.attachFiles`), 자료는 칠판에 남음
   const fileIn = useRef(null), [dropIn, setDropIn] = useState(false)
@@ -665,11 +676,11 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
               {m.kind === 'deep' ? (m.step === 'section' ? <><Answer text={m.content} />{m.root && <DeepFlip ed={ed} root={m.root} last={msgs.findLastIndex(x => x.kind === 'deep' && x.step === 'section' && x.root === m.root) === i} css={css} />}</>
                 : m.step === 'confirm' ? <DeepConfirm m={m} busy={busy} css={css} yes={() => deepConfirm(i)} no={() => setMsg(i, { done: 'no' })} />
                 : m.step === 'ask'
-                ? <DeepAsk m={m} busy={busy} css={css} set={(q, v) => setMsg(i, { brief: { ...m.brief, [q]: v } })} go={() => deepGo(i, draft.trim())} />
+                ? <DeepAsk m={m} busy={busy} css={css} shape={m.shapes && !m.done && models?.jobs?.deep && models?.jobs?.slides ? k => setMsg(i, { kind: k, brief: {} }) : null} set={(q, v) => setMsg(i, { brief: { ...m.brief, [q]: v } })} go={() => deepGo(i, draft.trim())} />
                 : <DeepPlan m={m} busy={busy} css={css} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
                   build={() => deepBuild(i)} show={() => ed.current?.showIds([m.built]) || setGone(g => ({ ...g, [m.at + ':deep']: true }))} />)
                 : m.kind === 'slides' ? (m.step === 'ask'
-                  ? <DeepAsk m={m} busy={busy} css={css} qs={SLIDES_QS} slides set={(q, v) => setMsg(i, { brief: { ...m.brief, [q]: v } })} go={() => slidesGo(i, draft.trim())} />
+                  ? <DeepAsk m={m} busy={busy} css={css} qs={SLIDES_QS} slides shape={m.shapes && !m.done && models?.jobs?.deep && models?.jobs?.slides ? k => setMsg(i, { kind: k, brief: {} }) : null} set={(q, v) => setMsg(i, { brief: { ...m.brief, [q]: v } })} go={() => slidesGo(i, draft.trim())} />
                   : <SlidesPlan m={m} busy={busy} css={css} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
                     flip={k => setMsg(i, { pics: { ...(m.pics || {}), [k]: nextPic(picOf(m, k)) } })}
                     build={() => slidesBuild(i)} show={() => ed.current?.showIds([m.built]) || setGone(g => ({ ...g, [m.at + ':slides']: true }))} />)
@@ -771,8 +782,13 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
           <span data-plus-menu style={{ position: 'relative' }}>
             <button data-testid="plus" style={{ ...css.ghost, padding: '2px 9px', ...(plusOpen || pickTool ? { color: 'var(--mb-accent)', borderColor: 'var(--mb-accent)' } : null) }} aria-expanded={plusOpen} onClick={() => setPlusOpen(o => !o)}
               title="도구 고르기 — 이미지·아이콘(SVG)·인터랙티브 HTML·Deep Mode(안 고르면 앱이 말을 보고 골라요 — 최신 정보가 필요하면 웹 검색도 알아서) · 파일 올리기">＋</button>
-            {plusOpen && <div role="menu" style={{ ...css.menu, minWidth: 250 }}><style>{'.mb-mi:hover:not(:disabled){background:var(--mb-seg)}'}</style>
+            {plusOpen && <div role="menu" style={{ ...css.menu, minWidth: 250 }} onMouseLeave={() => setPeek('')}><style>{'.mb-mi:hover:not(:disabled){background:var(--mb-seg)}'}</style>
+              {peek && PREVIEW[peek] && <div data-testid="plus-preview" data-k={peek} aria-hidden style={{ position: 'absolute', right: 'calc(100% + 8px)', bottom: 0, width: 300, display: 'flex', flexDirection: 'column', gap: 6, padding: 8,
+                background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, boxShadow: '0 6px 18px rgba(0,0,0,.18)', pointerEvents: 'none' }}>
+                {PREVIEW[peek][0].map(f => <img key={f} src={`/plus/${f}`} alt="" style={{ width: '100%', borderRadius: 6, border: `1px solid ${C.line}`, background: '#fff', display: 'block' }} />)}
+                <span style={{ ...css.meta, fontSize: 12, whiteSpace: 'normal' }}>{PREVIEW[peek][1]}</span></div>}
               {tools.map(([k, label, tip]) => <button key={k} role="menuitemradio" aria-checked={pickTool === k} className="mb-mi" style={{ ...css.item, display: 'flex', flexDirection: 'column', gap: 1, whiteSpace: 'normal' }}
+                onMouseEnter={() => setPeek(k)} onFocus={() => setPeek(k)}
                 onClick={() => { setPickTool(t => (t === k ? '' : k)); setPlusOpen(false) }}>
                 <span>{label}{pickTool === k ? ' ✓' : ''}</span><span style={{ ...css.meta, fontWeight: 400 }}>{tip}</span></button>)}
               <div style={{ borderTop: `1px solid ${C.line}`, margin: '4px 0' }} />

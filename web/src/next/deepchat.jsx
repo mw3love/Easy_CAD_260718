@@ -12,6 +12,8 @@ export const DEEP_QS = [
   ['재료', ['웹 검색', '이 칠판', '둘 다']],
 ]
 export const AUTO = '알아서'
+// Deep Mode 모양(2026-11-04 입구 합치기) — [메시지 kind, 이름, 설명]
+export const SHAPES = [['deep', '📰 한 판', '신문 지면처럼 한 화면에 — 읽는 자료'], ['slides', '📖 여러 장', '작은 책·발표 자료 — 글 장·그림 장을 한 장씩']]
 // 📽 발표 자료(§8 항목69, 2026-10-28) 질문지 — 같은 카드(`DeepAsk qs=`), 답은 서버 `slides.make_plan`이 그대로 지시문에
 export const SLIDES_QS = [
   ['장 수', ['5장', '8장', '12장']],
@@ -26,9 +28,16 @@ const SOURCE = { ai: 'AI 설명', web: '웹 검색', kr: '공공 데이터', ima
 export const keptPlan = m => ({ ...m.plan, sections: (m.plan.sections || []).filter((_, i) => !(m.drop || []).includes(i)) })   // × 뺀 꼭지 빼고
 
 // 질문지 — m = { topic, brief, done }. set(질문, 값) · go() = 「지면 계획 짜기」(입력 칸 글을 「더」로 같이)
-export function DeepAsk({ m, set, go, busy, css, qs = DEEP_QS, slides = false }) {
+// shape = 모양 바꾸기(한 판 ↔ 여러 장 — 2026-11-04 입구 합치기, 대화창 「+ › Deep Mode」에서 온 질문지만) — 누르면 그 모양의 질문지로
+export function DeepAsk({ m, set, go, busy, css, qs = DEEP_QS, slides = false, shape = null }) {
   const b = m.brief || {}, lock = !!m.done || !!busy
   return <div data-testid="deep-ask" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    {shape && <div data-testid="deep-shape" style={{ display: 'flex', gap: 6 }}>
+      {SHAPES.map(([k, name, tip]) => { const on = (slides ? 'slides' : 'deep') === k
+        return <button key={k} data-v={k} aria-pressed={on} disabled={lock} onClick={() => !on && shape(k)} title={tip}
+          style={{ ...(on ? css.pin : css.ghost), ...(on ? { background: 'rgba(218,119,86,.12)' } : null), flex: 1, padding: '6px 8px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1, textAlign: 'left', cursor: lock ? 'default' : 'pointer' }}>
+          <span style={{ fontWeight: 700 }}>{name}</span><span style={{ ...css.meta, fontWeight: 400, whiteSpace: 'normal' }}>{tip}</span></button> })}
+    </div>}
     <div style={{ fontWeight: 700 }}>「{m.topic}」 — {slides ? '발표 자료를 짜기 전에 몇 가지만' : '한 판을 짜기 전에 몇 가지만'}</div>
     {slides && m.ctxCount > 0 && <span style={css.meta}>칠판에서 고른 것 {m.ctxCount}개를 재료로 같이 보내요</span>}
     {qs.map(([q, opts, multi]) => { const cur = b[q], on = v => (multi ? (cur || []).includes(v) : (cur || AUTO) === v)
