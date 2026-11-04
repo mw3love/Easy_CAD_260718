@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 
 from easycad.ai import deep_mode, gateway as gw, see
@@ -17,12 +18,17 @@ SOURCES = ("ai", "web", "board")
 MAX_SLIDES = 15
 MAX_MATERIAL = 40000
 LAYOUTS = ("표지", "글머리", "숫자", "단계", "한마디", "마무리")   # 장 모양 — 칠판 `slidesBoard`가 그릴 줄 아는 것(2단계)
+PIC = "그림"   # 그림 장(2026-11-04 사용자 「작은 책」 ① — 글 장과 그림 장을 섞음): 장 전체 = KAIROS 그림 한 장, 글은 발표자 메모·대체 글로
+PIC_WORKERS = 4   # 그림 장 동시에 그리기(실측 2026-11-04: 3장 동시 15.5초 — 장당 약 15초·11.22크레딧)
+PIC_CREDITS, PIC_SECONDS = 12, 16
 
 PLANNER = """너는 발표 자료를 짜는 기획자다. 사용자의 주제(와 칠판에서 고른 자료)로 **장 계획**만 세운다(본문은 아직 쓰지 않는다).
-- JSON 하나만: {{"title": "발표 제목", "slides": [{{"title": "장 제목(짧게)", "point": "이 장에서 말할 한 줄", "source": "ai|web|board", "query": "웹 검색 문장 또는 null"}}]}}
+- JSON 하나만: {{"title": "발표 제목", "slides": [{{"title": "장 제목(짧게)", "point": "이 장에서 말할 한 줄", "source": "ai|web|board", "query": "웹 검색 문장 또는 null", "pic": true|false}}]}}
 - 장 수는 {n}장 안팎(첫 장 = 표지, 끝 장 = 정리·다음 할 일). 한 장에 생각 하나.
 - source: ai = 일반 지식으로 설명, web = 최신 사실·숫자가 필요(query에 혼자 통하는 검색 문장), board = 아래 [고른 자료]에서.
   [고른 자료]가 있으면 그것을 중심으로 짠다. 숫자·사실은 web이나 board에서만 — 계획에는 숫자를 쓰지 않는다.
+- pic = 이 장을 **그림 한 장**(설명 그림 — 제목·짧은 글이 든 일러스트)으로 보여 줄지. 장면·구조·흐름·비유처럼 보면 바로 이해되는 장이 true,
+  숫자 비교·목록·출처가 중요한 장은 false. 첫 장(표지)은 늘 false. 질문지 「그림 장」: 알아서 = 알맞은 장만(셋에 하나쯤), 조금 = 1~2장, 반쯤 = 절반, 전부 = 표지 빼고 모두, 없음 = 모두 false.
 - 듣는 사람·발표 시간·바라는 점(질문지 답)을 따른다. 「알아서」는 네가 정한다."""
 
 WRITER = """너는 발표 자료를 쓰는 사람이다. 장 계획의 장마다 **화면에 띄울 글**과 **발표자 메모**를 쓴다. 듣는 사람: {audience}. 오늘: {today}.
@@ -57,16 +63,18 @@ def clean_plan(plan) -> dict:
         src = s.get("source") if s.get("source") in SOURCES else "ai"
         q = str(s.get("query") or "").strip() or None
         out.append({"title": str(s["title"]).strip()[:60], "point": str(s.get("point") or "").strip()[:200], "source": "web" if src == "web" or (src == "ai" and q) else src,
-                    "query": q if src != "board" else None})
+                    "query": q if src != "board" else None, "pic": s.get("pic") is True and bool(out)})   # 표지(첫 장)는 그림 장 아님
     if len(out) < 2:
         raise ValueError("장이 너무 적어요 — 다시 짜 주세요")
     return {"title": str(plan.get("title") or out[0]["title"]).strip()[:80], "slides": out}
 
 
 def estimate(plan: dict) -> dict:
-    """「이대로 만들기」 어림 — 웹 장 하나 약 3초·5크레딧(딥모드 3-0 실측), 본문 sonnet 장 수만큼. 추정."""
+    """「이대로 만들기」 어림 — 웹 장 하나 약 3초·5크레딧(딥모드 3-0 실측), 본문 sonnet 장 수만큼, 그림 장은 본문 뒤에 넷씩 동시(장당 약 12크레딧·16초). 추정."""
     n, web = len(plan["slides"]), sum(1 for s in plan["slides"] if s["source"] == "web")
-    return {"credits": [10 + 3 * n + 5 * web, 20 + 5 * n + 6 * web], "seconds": [15 + 2 * n, 30 + 4 * n]}
+    pics = sum(1 for s in plan["slides"] if s.get("pic"))
+    pc, ps = PIC_CREDITS * pics, PIC_SECONDS * -(-pics // PIC_WORKERS)
+    return {"credits": [10 + 3 * n + 5 * web + pc, 20 + 5 * n + 6 * web + pc], "seconds": [15 + 2 * n + ps, 30 + 4 * n + ps]}
 
 
 def make_plan(client, topic: str, brief: dict, *, material: str = "", prev: dict | None = None, fix: str = "", model: str = PLAN_MODEL, images=None) -> dict:
@@ -77,7 +85,7 @@ def make_plan(client, topic: str, brief: dict, *, material: str = "", prev: dict
     if material or images:
         user += f"\n\n[고른 자료]\n{material[:MAX_MATERIAL]}{see.note(len(images))}"
     if prev:
-        user += f"\n\n[앞 계획]\n" + "\n".join(f"{i + 1}. {s.get('title')} — {s.get('point')}" for i, s in enumerate(prev.get("slides") or [])) + f"\n\n[고칠 점]\n{fix}\n앞 계획에서 고칠 점만 반영해 다시."
+        user += f"\n\n[앞 계획]\n" + "\n".join(f"{i + 1}. {s.get('title')} — {s.get('point')}{' (그림 장)' if s.get('pic') else ''}" for i, s in enumerate(prev.get("slides") or [])) + f"\n\n[고칠 점]\n{fix}\n앞 계획에서 고칠 점만 반영해 다시."
     r = client.chat.completions.create(model=model, max_tokens=3000, messages=see.attach([
         {"role": "system", "content": PLANNER.format(n=count_of(brief))}, {"role": "user", "content": user}], images))
     plan = clean_plan(deep_mode.parse_json(r.choices[0].message.content or ""))
@@ -107,14 +115,44 @@ def cover_prompt(plan: dict) -> str:
     return COVER.format(title=plan["title"], points=" · ".join(s["title"] for s in plan["slides"][1:5]))
 
 
+# 그림 장 지시(2026-11-04 시험 3장: 한글 정확·그림체 같음 — 다만 「3장 중 k장째」라고 했더니 한 장에만 번호 동그라미가 붙어 번호 말은 뺌).
+# 모든 장이 같은 그림체 머리를 받아 한 권처럼. 숫자는 그 장 글에 있는 것만(출처 번호 [n]은 그림엔 안 넣음 — 대체 글·발표자 메모에 남음)
+PIC_STYLE = ("[그림체 — 이 발표의 모든 그림 장 공통] 발표 화면을 꽉 채우는 가로 설명 그림 한 장. 흰 바탕, 남색(#1e3a5f)·코랄(#da7756) 두 색 + 회색, 평면 벡터 일러스트. "
+             "왼쪽 위에 큰 제목(남색 한 가지 색), 가운데 그림, 아래에 짧은 설명 1~3줄. 한글 글자는 정확하게, 글자는 적게. 장 번호·로고·워터마크는 넣지 않는다. "
+             "아래 [장 글]에 없는 숫자·날짜는 넣지 않는다.")
+
+
+def pic_prompt(deck_title: str, slide: dict) -> str:
+    """장 하나(본문까지 쓴 것) → 그림 장 지시. 제목 = 그림 위 큰 제목, 화면 글 = 설명 줄의 재료."""
+    lines = [*(slide.get("bullets") or []), *(f"{x['value']} — {x['label']}" for x in slide.get("numbers") or []), *(slide.get("steps") or []), slide.get("message") or ""]
+    body = "\n".join("- " + re.sub(r"\s*\[\d+\]", "", str(x)).strip() for x in lines if str(x).strip())
+    return f"{PIC_STYLE}\n\n[발표] {deck_title}\n[제목] {slide['title']}\n[장 글]\n{body}"
+
+
+def draw_pics(out: dict, plan: dict, image, ex) -> None:
+    """그림 장(`plan` 장의 pic) = 본문을 쓴 뒤 넷씩 동시에 그려 `out["deck"]["slides"][i]`에 layout 「그림」 + pic {img, w, h, model}.
+    못 그린 장은 글 장 그대로 두고 `out["pic_errors"]`에 제목(장은 늘 나옴)."""
+    slides = out["deck"]["slides"]
+    jobs = {i: ex.submit(image, pic_prompt(out["deck"]["title"], slides[i])) for i, s in enumerate(plan["slides"]) if s.get("pic") and i < len(slides)}
+    for i, fut in jobs.items():
+        try:
+            got = fut.result()
+            slides[i]["layout"], slides[i]["pic"] = PIC, {k: got[k] for k in ("img", "w", "h", "model") if k in got}
+        except Exception as e:
+            out.setdefault("pic_errors", []).append(f"{slides[i]['title']}: {type(e).__name__}: {e}"[:200])
+
+
 def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: str = gw.BASE_URL, material: str = "", model: str = WRITER_MODEL, exa=None, image=None, images=None) -> dict:
-    """장 계획 → {"deck": {"title", "slides": [{title, layout, bullets, notes, …}], "sources", "cover"?}, "model", "elapsed", "missing"}. exa = 시험용.
-    image = 표지 그림 그리기(서버 `_deep_image` — 지시문 → {"img", "w", "h", "model"}), 장 본문을 쓰는 동안 같이(3단계 — 그림 약 12초·12크레딧이 기다림에 안 더해지게)."""
+    """장 계획 → {"deck": {"title", "slides": [{title, layout, bullets, notes, pic?, …}], "sources", "cover"?}, "model", "elapsed", "missing", "pic_errors"?}. exa = 시험용.
+    image = 그림 그리기(서버 `_deep_image` — 지시문 → {"img", "w", "h", "model"}): 표지 그림은 장 본문을 쓰는 동안 같이(3단계 — 그림 약 12초·12크레딧이 기다림에 안 더해지게),
+    그림 장(계획의 pic)은 본문을 쓴 뒤 그 장 글로(그림 속 설명이 본문과 같게 — 2026-11-04)."""
     if image is not None:   # 표지 그림은 장 계획만으로 그림 — 본문과 동시에
         from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(image, cover_prompt(clean_plan(plan)))
+        clean = clean_plan(plan)
+        with ThreadPoolExecutor(max_workers=PIC_WORKERS) as ex:
+            fut = ex.submit(image, cover_prompt(clean))
             out = build(key, client, topic, brief, plan, base_url=base_url, material=material, model=model, exa=exa, images=images)
+            draw_pics(out, clean, image, ex)
             try:
                 got = fut.result()
                 out["deck"]["cover"] = {k: got[k] for k in ("img", "w", "h", "model") if k in got}
@@ -165,7 +203,8 @@ REDO_SLIDE = """너는 발표 자료의 **장 하나**를 고치는 사람이다
   layout = 표지|글머리|숫자|단계|한마디|마무리 — 숫자 = numbers 2~3개({{"value": "8자 안팎", "label"}}) · 단계 = steps 3~5줄 · 한마디 = message 25자 안팎 · 어느 모양이든 bullets도(2~4줄, 25자 안팎).
   지금 장·[장 안 글]에 없는 숫자·사실은 지어내지 않는다(출처 번호 [n]은 그대로 둠). 그때 reply는 무엇을 바꿨는지 한 문장.
 - 묻는 말이면 slide는 null, reply에 답(짧게, 결론 먼저).
-- 그림이 함께 오면 그 그림도 장 안의 재료다."""
+- 그림이 함께 오면 그 그림도 장 안의 재료다.
+- 지금 장의 layout이 「그림」이면 화면은 그림 한 장이다 — 글(bullets·notes)만 고칠 수 있고 그림은 못 바꾼다. 그림을 바꿔 달라는 말이면 slide는 null, reply에 「장 안의 그림을 골라 말풍선에 말해 주세요」."""
 
 
 def redo_slide(client, slide: dict, ask: str, *, text: str = "", deck: str = "", history=None, model: str = WRITER_MODEL, images=None) -> dict:
@@ -187,5 +226,7 @@ def redo_slide(client, slide: dict, ask: str, *, text: str = "", deck: str = "",
         new.pop("_empty", None)
         if slide.get("small"):
             new["small"] = True
+        if slide.get("layout") == PIC:   # 그림 장 = 그림은 그대로(칠판이 그 장 그림을 다시 씀) — 글(발표자 메모·대체 글)만 고침. 그림을 바꾸려면 그림을 골라 말풍선
+            new["layout"] = PIC
         out["edit"], out["content"] = new, out["content"] or "이 장을 고쳤어요."
     return out

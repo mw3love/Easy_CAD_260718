@@ -1757,3 +1757,4 @@
 - ⚠ (2026-11-03) 웹 베끼기·SVG 넣기는 받은 도형 색을 지금 펜 색으로 바꿈 — 원본 색이 뜻이 있는 결과(베끼기 빨간 수정)는 기본 검정만 바꿀 것.
 - ⚠ (2026-11-03) Qt `QTextDocument` 줄 정렬(가운데·오른쪽)은 `setTextWidth(-1)`이면 안 먹음 — 폭을 정하고 줄바꿈을 꺼야 함. 정렬된 줄 시작은 `QTextLine.x()`가 아니라 `cursorToX(textStart())`로 잼.
 - ⚠ (2026-11-03) `git stash push`는 pre-push doc-sync 훅이 push로 잘못 알아 막음 — `git stash -- <경로>`로.
+- 화면 시험(e2e)에서 칠판 물건을 고를 땐 `liveDoc`(= `toEcad`)의 `uid`로 — 편집기 속 `_id`는 저장 꼴에 없음(2026-11-04, flow59).

@@ -24,7 +24,7 @@ export const weightsOf = items => { const s = new Set([400, 700]); for (const it
 export async function buildSvg(entries, src, { page = 'A4', orient = null, margin = 10, transparent = false, frame = null, tight = false, clip = false, format = 'pdf' }, onBoard, routes, embedFonts = true) {   // clip = 프레임(틀 안만 — 여백 없이 그 영역, PDF는 고른 용지에 맞춤)
   let pageKey = page, land, m = margin, box = src
   if (frame) { pageKey = frame.size in PAPERS ? frame.size : 'A4'; land = frame.orient === 'landscape'; m = 0; box = frame.box }   // 용지틀 = 정확한 용지 경계
-  else if (clip) { box = src; land = orient ? orient === 'landscape' : box.w >= box.h; if (format !== 'pdf') { tight = true } }   // PNG·SVG = 프레임 비율 그대로
+  else if (clip) { box = src; land = orient ? orient === 'landscape' : box.w >= box.h; if (format !== 'pdf' || page === 'frame') { tight = true } }   // PNG·SVG·PDF 용지 「프레임」(2026-11-04 — 여백 없는 책·그림 장) = 프레임 비율 그대로
   else { const pad = Math.max(src.w, src.h) * 0.02; box = { x: src.x - pad, y: src.y - pad, w: src.w + 2 * pad, h: src.h + 2 * pad }; land = orient ? orient === 'landscape' : box.w >= box.h }
   let [a, b] = PAPERS[pageKey] || PAPERS.A4, pw = land ? b : a, ph = land ? a : b
   if (tight) { m = 0; pw = box.w * 25.4 / 96; ph = box.h * 25.4 / 96; if (clip) { const up = Math.max(1, 297 / Math.max(pw, ph)); pw *= up; ph *= up } }   // 프레임 그림은 긴 변 297mm 이상(작게 그린 틀도 선명하게)   // 그림으로 복사 — 용지 없이 화면 100% 크기(96dpi)

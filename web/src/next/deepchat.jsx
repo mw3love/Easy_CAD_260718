@@ -18,6 +18,7 @@ export const SLIDES_QS = [
   ['듣는 사람', ['처음 보는 사람', '아는 동료', '윗사람(보고)']],
   ['발표 시간', ['5분', '10분', '20분']],
   ['재료', ['고른 자료', '웹 검색', '둘 다']],
+  ['그림 장', ['없음', '조금', '반쯤', '전부']],   // 장 전체가 그림 한 장(2026-11-04 사용자 「작은 책」 ① — 글 장과 그림 장 섞기, 서버 `slides.PLANNER` pic)
 ]
 // 보낼 답 — 안 고른 것은 「알아서」, 여럿 고르기는 목록(없으면 「알아서」), 입력 칸 글 = 「더」
 export const briefOf = (b = {}, more = '', qs = DEEP_QS) => ({ ...Object.fromEntries(qs.map(([q, , multi]) => [q, multi ? (b[q]?.length ? b[q] : AUTO) : b[q] || AUTO])), ...(more ? { 더: more } : {}) })
@@ -100,10 +101,13 @@ export function DeepFlip({ ed, root, last, css }) {
 }
 
 // 📽 발표 자료 장 계획(§8 항목69) — m = { plan: { title, slides: [{ title, point, source }] }, drop, estimate, built, frames, stale }. drop(i) · build() · show()
-export const keptSlides = m => ({ ...m.plan, slides: (m.plan.slides || []).filter((_, i) => !(m.drop || []).includes(i)) })
-export function SlidesPlan({ m, drop, build, show, busy, css }) {
-  const sl = m.plan?.slides || [], dropped = new Set(m.drop || []), left = sl.length - dropped.size, lock = !!m.built || !!m.stale || !!busy
-  const est = m.estimate, rng = (a, u) => (Array.isArray(a) ? `${a[0]}~${a[1]}${u}` : '')
+export const keptSlides = m => ({ ...m.plan, slides: (m.plan.slides || []).map((s, i) => ((m.flip || []).includes(i) ? { ...s, pic: !s.pic } : s)).filter((_, i) => !(m.drop || []).includes(i)) })   // flip = 🖼 글 ↔ 그림 바꾼 장
+const PIC_CREDITS = 12   // 그림 장 한 장(서버 `slides.PIC_CREDITS` — 2026-11-04 실측 11.22)
+export function SlidesPlan({ m, drop, flip, build, show, busy, css }) {
+  const sl = m.plan?.slides || [], dropped = new Set(m.drop || []), flipped = new Set(m.flip || []), left = sl.length - dropped.size, lock = !!m.built || !!m.stale || !!busy
+  const isPic = i => !!sl[i]?.pic !== flipped.has(i), extra = [...flipped].filter(i => !dropped.has(i)).reduce((a, i) => a + (isPic(i) ? PIC_CREDITS : -PIC_CREDITS), 0)   // 🖼 바꾼 만큼 어림을 고침
+  const est = m.estimate && { ...m.estimate, credits: m.estimate.credits?.map(c => Math.max(0, c + extra)) }, rng = (a, u) => (Array.isArray(a) ? `${a[0]}~${a[1]}${u}` : '')
+  const pics = sl.filter((_, i) => !dropped.has(i) && isPic(i)).length
   return <div data-testid="slides-plan" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
     <div style={{ fontWeight: 700 }}>{m.plan?.title || '장 계획'}</div>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -111,6 +115,10 @@ export function SlidesPlan({ m, drop, build, show, busy, css }) {
         <span style={{ ...css.kind, flex: 'none', minWidth: 22, textAlign: 'center' }}>{i + 1}</span>
         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: dropped.has(i) ? 'line-through' : 'none' }} title={s.point || s.title}>{s.title}</span>
         <span style={{ ...css.meta, flex: 'none' }}>{SOURCE[s.source] || ''}</span>
+        {/* 🖼 = 이 장을 그림 한 장으로(켜짐 = 코랄 테두리). 표지(첫 장)는 글 장만 */}
+        {i > 0 && <button data-testid="slides-pic" aria-pressed={isPic(i)} disabled={lock || dropped.has(i)} onClick={() => flip(i)}
+          title={isPic(i) ? '그림 장 — 장 전체가 설명 그림 한 장(누르면 글 장으로)' : '글 장 — 누르면 그림 장으로(설명 그림 한 장, 약 12크레딧)'}
+          style={{ ...(isPic(i) ? css.pin : css.ghost), padding: '0 5px', flex: 'none', opacity: isPic(i) ? 1 : 0.55, cursor: lock ? 'default' : 'pointer' }}>🖼</button>}
         {!lock && <button data-testid="slides-x" aria-label={dropped.has(i) ? `「${s.title}」 되살리기` : `「${s.title}」 빼기`} title={dropped.has(i) ? '되살리기' : '이 장 빼기'}
           disabled={!dropped.has(i) && left <= 2} onClick={() => drop(i)} style={{ ...css.ghost, padding: '0 6px', flex: 'none' }}>{dropped.has(i) ? '↺' : '×'}</button>}
       </div>)}
@@ -121,6 +129,6 @@ export function SlidesPlan({ m, drop, build, show, busy, css }) {
       : m.stale ? <span style={css.meta}>아래에 고친 계획이 있어요</span>
       : <><button data-testid="slides-build" style={{ ...css.pin, alignSelf: 'flex-start', padding: '4px 12px' }} disabled={!!busy} onClick={build}>
           이대로 만들기{est ? ` · 약 ${rng(est.credits, '크레딧')}` : ''}</button>
-        <span style={css.meta}>{est?.seconds ? `${rng(est.seconds, '초')} 걸려요(추정) · ` : ''}{left}장 · 고칠 점은 아래 칸에 말하면 계획을 다시 짜요</span></>}
+        <span style={css.meta}>{est?.seconds ? `${rng(est.seconds, '초')} 걸려요(추정) · ` : ''}{left}장{pics ? `(그림 장 ${pics})` : ''} · 🖼 = 그림 장 켜고 끄기 · 고칠 점은 아래 칸에 말하면 계획을 다시 짜요</span></>}
   </div>
 }

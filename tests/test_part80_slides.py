@@ -151,3 +151,40 @@ def test_server_slide_bubble_goes_to_redo_slide(server, monkeypatch):
     assert out["kind"] == "bubble" and out["edit"]["title"] == "새" and out["content"] == "고쳤어요"
     slide, ask, kw = calls[-1]
     assert slide == SLIDE and ask == "더 짧게" and kw["text"] == "장 글" and kw["deck"] == "점검" and kw["model"] == slides.WRITER_MODEL
+
+
+def test_picture_slides_plan_estimate_and_build():
+    """그림 장(2026-11-04 「작은 책」 ①) — 계획의 pic(표지는 늘 글), 어림에 그림 값, 본문 뒤에 그 장 글로 그림, 못 그리면 글 장 그대로."""
+    p = slides.clean_plan({"title": "전파", "slides": [{"title": "표지", "pic": True}, {"title": "송신소", "pic": True}, {"title": "중계소", "pic": "yes"}, {"title": "끝"}]})
+    assert [s["pic"] for s in p["slides"]] == [False, True, False, False]                       # 첫 장 = 표지라 그림 아님, true만 그림
+    no_pic = slides.estimate({**p, "slides": [{**s, "pic": False} for s in p["slides"]]})
+    assert slides.estimate(p)["credits"][0] - no_pic["credits"][0] == slides.PIC_CREDITS
+    ans = json.dumps({"slides": [{"title": "표지", "bullets": ["부제"]}, {"title": "송신소", "bullets": ["전파를 쏜다 [1]"], "notes": "n"},
+                                 {"title": "중계소", "bullets": ["산을 넘긴다"]}, {"title": "끝", "bullets": ["정리"]}]}, ensure_ascii=False)
+    asked = []
+    def draw(prompt):
+        asked.append(prompt)
+        return {"img": f"/api/img/b/{len(asked)}.png", "w": 1536, "h": 1024, "model": "img-m"}
+    out = slides.build("k", fake_client(ans, []), "전파", {}, p, model="w", image=draw)
+    sl = out["deck"]["slides"]
+    assert sl[1]["layout"] == slides.PIC and sl[1]["pic"]["w"] == 1536 and "notes" in sl[1] and sl[1]["bullets"] == ["전파를 쏜다 [1]"]   # 글은 대체 글·발표자 메모로 남음
+    assert sl[2]["layout"] != slides.PIC and "pic" not in sl[2] and "cover" in out["deck"]
+    pic_ask = next(a for a in asked if "[제목] 송신소" in a)
+    assert "전파를 쏜다" in pic_ask and "[1]" not in pic_ask and "그림체" in pic_ask             # 그 장 글로, 출처 번호 빼고, 같은 그림체 머리
+    def half(prompt):
+        if "[제목]" in prompt:
+            raise RuntimeError("busy")
+        return {"img": "/c.png", "w": 4, "h": 3}
+    out = slides.build("k", fake_client(ans, []), "전파", {}, p, model="w", image=half)
+    assert out["deck"]["slides"][1]["layout"] == "글머리" and "송신소" in out["pic_errors"][0]   # 못 그린 그림 장 = 글 장
+    out = slides.build("k", fake_client(ans, []), "전파", {}, p, model="w")
+    assert out["deck"]["slides"][1]["layout"] != slides.PIC                                      # 그림 그리기가 없으면(칠판 이름 없음) 글 장
+
+
+def test_redo_slide_keeps_picture_slide():
+    pic = {"title": "송신소", "layout": slides.PIC, "bullets": ["전파를 쏜다"], "notes": "n"}
+    ans = json.dumps({"reply": "메모를 줄였어요", "slide": {"title": "송신소", "layout": "글머리", "bullets": ["전파를 쏜다"], "notes": "짧게"}}, ensure_ascii=False)
+    sent = []
+    out = slides.redo_slide(fake_client(ans, sent), pic, "메모 줄여")
+    assert out["edit"]["layout"] == slides.PIC and out["edit"]["notes"] == "짧게"                 # 그림 장은 그림 장 그대로(칠판이 그림을 다시 씀)
+    assert "「그림」이면" in sent[0]["messages"][0]["content"]

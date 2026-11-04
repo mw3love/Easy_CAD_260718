@@ -963,20 +963,25 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const used = new Set([...JSON.stringify(sl.map(s => [s.title, s.bullets, s.numbers, s.steps, s.message])).matchAll(/\[(\d+)\]/g)].map(m => +m[1]))
     const all = deck.sources || [], cited = all.filter(x => used.has(x.n)), src = (cited.length ? cited : all).slice(0, 24)
     const pages = src.length ? [...sl, { title: '출처', bullets: src.map(x => `[${x.n}] ${String(x.title || x.url).replace(/\s+/g, ' ').trim()} · ${siteOf(x.url)}`), notes: '', small: true }] : sl
-    const m = R.current.model, W = 1600, H = 900, GX = 160, ROW = H + 760, PER = 3, cols = Math.min(PER, pages.length), rows = Math.ceil(pages.length / PER)
+    // 그림 장(2026-11-04 「작은 책」 ①) = 프레임 비율이 그림 비율(KAIROS 그림은 3:2 — 16:9를 달라 해도), 여백 없이 꽉. 그림을 못 받았으면 글 장으로
+    const picOf = s => (s.layout === '그림' && s.pic?.data && s.pic.w && s.pic.h ? s.pic : null), hOf = s => (picOf(s) ? Math.round(1600 * picOf(s).h / picOf(s).w) : 900)
+    const m = R.current.model, W = 1600, H = 900, GX = 160, ROW = Math.max(H, ...pages.map(hOf)) + 760, PER = 3, cols = Math.min(PER, pages.length), rows = Math.ceil(pages.length / PER)
     const BW = cols * W + (cols - 1) * GX, BH = rows * ROW, c = R.current.cam, view = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
     const at = nearSpot({ x: view.x + view.w / 2, y: view.y + view.h / 2 }, hitPool().map(it => sceneBox(it, textBox)), BW, BH, { pad: 48, step: 96 })
     const no0 = nextFrameNo(m.items), zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, z = topZ(m.items) + 1, out = [], ids = []
     pages.forEach((s, i) => {
-      const X = at.x + (i % PER) * (W + GX), Y = at.y + Math.floor(i / PER) * ROW, spec = { ...s, layout: s.small ? '출처' : s.layout || (i === 0 ? '표지' : '글머리') }
-      const cv = i === 0 && deck.cover?.data && deck.cover.w ? { data: deck.cover.data, w: deck.cover.w, h: deck.cover.h, alt: `표지 그림 — ${deck.title || s.title}` } : null
-      const fr = base([X, Y], { type: 'frame', rect: [0, 0, W, H], name: s.title, no: no0 + i, ratio: '16:9', z: zb, slide: slideSpec(spec), slide_n: i + 1, ...(deck.title ? { slide_deck: deck.title } : {}) })   // 장을 적어 둠 = 말풍선이 그 장만 고쳐 다시 지음(2026-10-28)
+      const pic = picOf(s), X = at.x + (i % PER) * (W + GX), Y = at.y + Math.floor(i / PER) * ROW
+      const spec = { ...s, pic: undefined, layout: s.small ? '출처' : s.layout === '그림' && !pic ? (i === pages.length - 1 ? '마무리' : '글머리') : s.layout || (i === 0 ? '표지' : '글머리') }
+      const cv = pic ? { data: pic.data, w: pic.w, h: pic.h, alt: picAlt(s) }
+        : i === 0 && deck.cover?.data && deck.cover.w ? { data: deck.cover.data, w: deck.cover.w, h: deck.cover.h, alt: `표지 그림 — ${deck.title || s.title}` } : null
+      const fr = base([X, Y], { type: 'frame', rect: [0, 0, W, hOf(s)], name: s.title, no: no0 + i, ratio: pic ? `${pic.w}:${pic.h}` : '16:9', z: zb, slide: slideSpec(spec), slide_n: i + 1, ...(deck.title ? { slide_deck: deck.title } : {}) })   // 장을 적어 둠 = 말풍선이 그 장만 고쳐 다시 지음(2026-10-28)
       const pcs = slidePieces(spec, i, X, Y, z, cv).map(p => ({ ...p, slide_of: fr._id }))
       out.push({ ...fr, slide_sig: slideSig(pcs, X, Y) }, ...pcs); ids.push(fr._id)
     })
     commit([...m.items, ...out], ids, '발표 자료')
     bringIn({ x: at.x, y: at.y, w: BW, h: BH }); setTool('select')
-    setStatus(`발표 자료 ${pages.length}장 — 위 막대 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모`)
+    const np = pages.filter(picOf).length
+    setStatus(`발표 자료 ${pages.length}장${np ? `(그림 장 ${np})` : ''} — 위 막대 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모`)
     return { ids, frames: pages.length }
   }
   // 🔷 도형 그리기(2026-11-03) — 서버 자리(`board_diagram.place`) → 프레임 안 띠·상자·붙은 화살표(flowboard.js), Ctrl+Z 한 번.
@@ -1013,7 +1018,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 장 하나 그리기(발표 자료 2단계 모양 — 서버 `slides.LAYOUTS`): 표지 = 왼쪽 코랄 띠 + 큰 제목 · 글머리·마무리 = 제목 밑 코랄 줄 + 줄 글 · 숫자 = 큰 숫자 칸 2~3개 · 단계 = 번호 붙은 둥근 줄 · 한마디 = 큰 한 문장.
   // s = 장(`slide`, layout 정해진 것), i = 몇째 장(0부터 — 발표자 메모 머리), X·Y = 프레임 왼쪽 위, cv = 표지 그림 { data, w, h, alt }. 프레임 밖 아래 = 발표자 메모
   function slidePieces(s, i, X, Y, z, cv = null) {
-    const W = 1600, H = 900, L = X + 96, CW = W - 192, kind = s.layout, lines = (s.bullets || []).filter(Boolean), out = []
+    const W = 1600, L = X + 96, CW = W - 192, kind = s.layout, lines = (s.bullets || []).filter(Boolean), out = []
+    const H = kind === '그림' && cv ? Math.round(W * cv.h / cv.w) : 900   // 그림 장 = 그림 비율
     const CORAL = '#ffda7756', SOFT = '#fffdf1ec', GRAY = '#fff4f4f5', MUTE = '#ff6b6b75'
     const box = (x, y, w, h, fill, r = 0) => base([x, y], { type: 'rect', rect: [0, 0, w, h], fill, pen: fill, width: 1, style: 0, ...(r ? { radius: r } : {}), z })
     const txt = (x, y, text, font, extra = {}) => base([x, y], { type: 'text', text, color: INK, font, bg: null, z, ...extra })
@@ -1021,7 +1027,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const lw = (t, f, wt) => layoutText(t, null, f * PT, 'app', wt).w + 2 * TEXT_MARGIN
     const fit = (t, f, w, wt = 400, min = 20) => { const v = lw(t, f, wt); return v <= w ? f : Math.max(min, Math.floor(f * w / v)) }
     const wrap = (t, f, w, wt = 400) => String(t).split('\n').map(p => layoutText(p, null, f * PT, 'app', wt, w - 2 * TEXT_MARGIN).lines.map(l => l.parts.map(q => q.text).join('').trimEnd()).join('\n')).join('\n')
-    if (kind === '표지') {
+    if (kind === '그림' && cv) {   // 그림 장 = 프레임을 꽉 채운 그림 한 장(제목·설명은 그림 속 — 화면 글은 대체 글로, 찾기·AI가 읽음)
+      out.push(base([X, Y], { type: 'image', rect: [0, 0, W, H], data: cv.data, z, alt: cv.alt, slide_role: 'pic' }))
+    } else if (kind === '표지') {
       const dy = cv ? 200 : 0   // 표지 그림(3단계) = 오른쪽 위, 제목은 그 밑으로
       if (cv) { const iw = 560, ih = Math.min(400, iw * cv.h / cv.w); out.push(base([X + W - 96 - iw, Y + 64], { type: 'image', rect: [0, 0, iw, ih], data: cv.data, z, alt: cv.alt, slide_role: 'cover' })) }
       out.push(box(X, Y, 28, H, CORAL), box(L + 24, Y + 300 + dy, 120, 10, CORAL, 5), txt(L + 24, Y + 340 + dy, wrap(s.title, cv ? 48 : 56, CW - 24, 700), cv ? 48 : 56, { weight: 700 }))
@@ -1050,14 +1058,17 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     return out
   }
   // 프레임에 적어 두는 장(말풍선이 고칠 재료) · 지은 모습 지문(프레임 기준 자리 — 프레임째 옮기면 그대로, 손으로 고치면 달라짐 → 다시 짓기 전에 물음)
+  const picAlt = s => [s.title, ...(s.bullets || [])].filter(Boolean).join(' — ').replace(/\s*\[\d+\]/g, '').slice(0, 300)   // 그림 장 대체 글 = 화면 글(출처 번호 뺌)
   const slideSpec = s => Object.fromEntries(['title', 'layout', 'bullets', 'numbers', 'steps', 'message', 'notes', 'small'].filter(k => s[k] != null).map(k => [k, s[k]]))
   const slideSig = (pcs, X, Y) => JSON.stringify(pcs.map(p => [p.type, Math.round(p.pos[0] - X), Math.round(p.pos[1] - Y), p.rect?.map(Math.round), p.text, p.lines, p.fill, p.font, p.data?.length]))
   const slideEdited = fr => { const pcs = R.current.model.items.filter(it => it.slide_of === fr._id); return !!fr.slide_sig && slideSig(pcs, fr.pos[0], fr.pos[1]) !== fr.slide_sig }
   // 장 다시 짓기(발표 자료 말풍선, 2026-10-28) — 그 장 조각(`slide_of`)만 지우고 새 장으로(표지 그림은 그대로 다시 씀), 프레임 이름 「N. 제목」도. Ctrl+Z 한 번. 바꾸기 전 장(없으면 null)
   function slideRebuild(id, spec, label = 'AI 말풍선') {
     const m = R.current.model, fr = m.items.find(x => x._id === id); if (readOnly || !fr?.slide || !spec?.title) return null
-    const old = m.items.filter(it => it.slide_of === id), cov = old.find(it => it.slide_role === 'cover')
-    const cv = cov && spec.layout === '표지' ? { data: cov.data, w: cov.rect[2], h: cov.rect[3], alt: cov.alt } : null
+    const old = m.items.filter(it => it.slide_of === id), cov = old.find(it => it.slide_role === 'cover'), pic = old.find(it => it.slide_role === 'pic')
+    const cv = cov && spec.layout === '표지' ? { data: cov.data, w: cov.rect[2], h: cov.rect[3], alt: cov.alt }
+      : pic && spec.layout === '그림' ? { data: pic.data, w: pic.rect[2], h: pic.rect[3], alt: picAlt(spec) } : null   // 그림 장 = 그 그림 그대로(말풍선은 글만 고침)
+    if (spec.layout === '그림' && !cv) spec = { ...spec, layout: '글머리' }   // 그림을 지운 그림 장 = 글 장으로
     const [X, Y] = fr.pos, z = old.length ? Math.max(...old.map(it => it.z ?? 0)) : topZ(m.items) + 1
     const pcs = slidePieces({ ...spec, layout: spec.layout || '글머리' }, (fr.slide_n || 1) - 1, X, Y, z, cv).map(p => ({ ...p, slide_of: id }))
     // 이름 = 장 제목(2026-11-03 사용자 — 「10 · 2. 제목」처럼 프레임 번호와 장 번호가 겹쳐 헷갈림, 장 순서는 `slide_n`). 옛 「N. 제목」·제목 그대로였으면 새 제목, 손으로 바꾼 이름은 둠
