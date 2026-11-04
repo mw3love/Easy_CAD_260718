@@ -16,6 +16,7 @@ export const AUTO = '알아서'
 export const SHAPES = [['deep', '📰 한 판', '신문 지면처럼 한 화면에 — 읽는 자료'], ['slides', '📖 여러 장', '작은 책·발표 자료 — 글 장·그림 장을 한 장씩']]
 // 📽 발표 자료(§8 항목69, 2026-10-28) 질문지 — 같은 카드(`DeepAsk qs=`), 답은 서버 `slides.make_plan`이 그대로 지시문에
 export const SLIDES_QS = [
+  ['내용', ['설명', '이야기']],   // 이야기 = 동화처럼 장면이 이어지는 책 — 그림 장이 첫 그림을 참고로 같은 인물·장소(작은 책 ⑤, 서버 `slides.is_story` — 그림 값 약 2배)
   ['장 수', ['5장', '8장', '12장']],
   ['듣는 사람', ['처음 보는 사람', '아는 동료', '윗사람(보고)']],
   ['발표 시간', ['5분', '10분', '20분']],
@@ -117,7 +118,8 @@ export const keptSlides = m => ({ ...m.plan, slides: (m.plan.slides || []).map((
 const PIC_CREDITS = 12   // 그림 장 한 장(서버 `slides.PIC_CREDITS` — 2026-11-04 실측 11.22)
 export function SlidesPlan({ m, flip, drop, build, show, busy, css }) {
   const sl = m.plan?.slides || [], dropped = new Set(m.drop || []), left = sl.length - dropped.size, lock = !!m.built || !!m.stale || !!busy
-  const drawn = v => (v ? 1 : 0), extra = Object.keys(m.pics || {}).map(Number).filter(i => !dropped.has(i)).reduce((a, i) => a + (drawn(picOf(m, i)) - drawn(sl[i]?.pic)) * PIC_CREDITS, 0)   // 🖼 바꾼 만큼 어림을 고침
+  const per = PIC_CREDITS * (m.brief?.['내용'] === '이야기' ? 2 : 1)   // 이야기 책 = 참고 그림을 같이 보내 약 2배(서버 `slides.estimate`)
+  const drawn = v => (v ? 1 : 0), extra = Object.keys(m.pics || {}).map(Number).filter(i => !dropped.has(i)).reduce((a, i) => a + (drawn(picOf(m, i)) - drawn(sl[i]?.pic)) * per, 0)   // 🖼 바꾼 만큼 어림을 고침
   const est = m.estimate && { ...m.estimate, credits: m.estimate.credits?.map(c => Math.max(0, c + extra)) }, rng = (a, u) => (Array.isArray(a) ? `${a[0]}~${a[1]}${u}` : '')
   const live = sl.map((_, i) => i).filter(i => !dropped.has(i)), pics = live.filter(i => picOf(m, i) === true).length, both = live.filter(i => picOf(m, i) === 'both').length
   return <div data-testid="slides-plan" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

@@ -22,6 +22,7 @@ PIC = "그림"   # 그림 장(2026-11-04 사용자 「작은 책」 ① — 글 
 BOTH = "both"   # 글 장 + 그림 판 둘 다(작은 책 ② 갈래 — 2026-11-04 사용자 「병렬은 원하는 장에만」). AI 계획은 안 고르고 사람이 계획 카드 🖼로
 PIC_WORKERS = 4   # 그림 장 동시에 그리기(실측 2026-11-04: 3장 동시 15.5초 — 장당 약 15초·11.22크레딧)
 PIC_CREDITS, PIC_SECONDS = 12, 16
+STORY_Q, STORY = "내용", "이야기"   # 질문지 「내용」 = 설명 / 이야기(작은 책 ⑤, 2026-11-04) — 이야기면 그림 장이 같은 인물·장소로 이어짐(첫 그림 장을 참고 그림으로 — 시험: 장당 약 2배·24초)
 
 PLANNER = """너는 발표 자료를 짜는 기획자다. 사용자의 주제(와 칠판에서 고른 자료)로 **장 계획**만 세운다(본문은 아직 쓰지 않는다).
 - JSON 하나만: {{"title": "발표 제목", "slides": [{{"title": "장 제목(짧게)", "point": "이 장에서 말할 한 줄", "source": "ai|web|board", "query": "웹 검색 문장 또는 null", "pic": true|false}}]}}
@@ -31,6 +32,15 @@ PLANNER = """너는 발표 자료를 짜는 기획자다. 사용자의 주제(�
 - pic = 이 장을 **그림 한 장**(설명 그림 — 제목·짧은 글이 든 일러스트)으로 보여 줄지. 장면·구조·흐름·비유처럼 보면 바로 이해되는 장이 true,
   숫자 비교·목록·출처가 중요한 장은 false. 첫 장(표지)은 늘 false. 질문지 「그림 장」: 알아서 = 알맞은 장만(셋에 하나쯤), 조금 = 1~2장, 반쯤 = 절반, 전부 = 표지 빼고 모두, 없음 = 모두 false.
 - 듣는 사람·발표 시간·바라는 점(질문지 답)을 따른다. 「알아서」는 네가 정한다."""
+
+# 이야기 책(작은 책 ⑤) — 계획 지시에 덧붙임
+STORY_PLAN = """
+- 이 발표는 **이야기**(동화·사례 이야기처럼 장면이 이어지는 책)다. 장마다 한 장면 — point에 누가·어디서·무엇을 하는지.
+  주인공·장소는 첫 장면 장에서 정하고 끝까지 같은 인물·같은 장소로 이어 간다(새 인물은 꼭 필요할 때만). 설명·목록 장보다 장면 장을 많이."""
+
+
+def is_story(brief: dict) -> bool:
+    return str((brief or {}).get(STORY_Q) or "") == STORY
 
 WRITER = """너는 발표 자료를 쓰는 사람이다. 장 계획의 장마다 **화면에 띄울 글**과 **발표자 메모**를 쓴다. 듣는 사람: {audience}. 오늘: {today}.
 - JSON 하나만: {{"slides": [{{"title": "장 제목", "layout": "표지|글머리|숫자|단계|한마디|마무리", "bullets": ["화면 글 한 줄", …], "numbers": [{{"value": "70%", "label": "발전기 연료 [1]"}}], "steps": ["단계 한 줄", …], "message": "핵심 한 문장", "notes": "발표자가 말할 내용 2~4문장"}}]}}
@@ -70,11 +80,14 @@ def clean_plan(plan) -> dict:
     return {"title": str(plan.get("title") or out[0]["title"]).strip()[:80], "slides": out}
 
 
-def estimate(plan: dict) -> dict:
-    """「이대로 만들기」 어림 — 웹 장 하나 약 3초·5크레딧(딥모드 3-0 실측), 본문 sonnet 장 수만큼, 그림 장은 본문 뒤에 넷씩 동시(장당 약 12크레딧·16초). 추정."""
+def estimate(plan: dict, story: bool = False) -> dict:
+    """「이대로 만들기」 어림 — 웹 장 하나 약 3초·5크레딧(딥모드 3-0 실측), 본문 sonnet 장 수만큼, 그림 장은 본문 뒤에 넷씩 동시(장당 약 12크레딧·16초). 추정.
+    story = 이야기 책: 첫 그림 장을 먼저 그리고 나머지는 그것을 참고 그림으로 = 첫 장 빼고 값 2배(시험 11.01 → 23.52크레딧), 시간은 첫 장 한 번 더."""
     n, web = len(plan["slides"]), sum(1 for s in plan["slides"] if s["source"] == "web")
     pics = sum(1 for s in plan["slides"] if s.get("pic"))
     pc, ps = PIC_CREDITS * pics, PIC_SECONDS * -(-pics // PIC_WORKERS)
+    if story and pics:
+        pc, ps = PIC_CREDITS * (1 + 2 * (pics - 1)), PIC_SECONDS * (1 + -(-(pics - 1) // PIC_WORKERS))
     return {"credits": [10 + 3 * n + 5 * web + pc, 20 + 5 * n + 6 * web + pc], "seconds": [15 + 2 * n + ps, 30 + 4 * n + ps]}
 
 
@@ -88,9 +101,9 @@ def make_plan(client, topic: str, brief: dict, *, material: str = "", prev: dict
     if prev:
         user += f"\n\n[앞 계획]\n" + "\n".join(f"{i + 1}. {s.get('title')} — {s.get('point')}{' (그림 장)' if s.get('pic') else ''}" for i, s in enumerate(prev.get("slides") or [])) + f"\n\n[고칠 점]\n{fix}\n앞 계획에서 고칠 점만 반영해 다시."
     r = client.chat.completions.create(model=model, max_tokens=3000, messages=see.attach([
-        {"role": "system", "content": PLANNER.format(n=count_of(brief))}, {"role": "user", "content": user}], images))
+        {"role": "system", "content": PLANNER.format(n=count_of(brief)) + (STORY_PLAN if is_story(brief) else "")}, {"role": "user", "content": user}], images))
     plan = clean_plan(deep_mode.parse_json(r.choices[0].message.content or ""))
-    return {"plan": plan, "estimate": estimate(plan), "model": model, "elapsed": round(time.time() - t0, 1)}
+    return {"plan": plan, "estimate": estimate(plan, is_story(brief)),"model": model, "elapsed": round(time.time() - t0, 1)}
 
 
 def material_text(plan: dict, mat: dict, board: str = "", n_images: int = 0) -> str:
@@ -123,18 +136,36 @@ PIC_STYLE = ("[그림체 — 이 발표의 모든 그림 장 공통] 발표 화�
              "아래 [장 글]에 없는 숫자·날짜는 넣지 않는다.")
 
 
-def pic_prompt(deck_title: str, slide: dict) -> str:
-    """장 하나(본문까지 쓴 것) → 그림 장 지시. 제목 = 그림 위 큰 제목, 화면 글 = 설명 줄의 재료."""
+# 이야기 책 그림(작은 책 ⑤ — 2026-11-04 시험 B: 첫 그림을 참고 그림으로 넘기면 인물 + 세계(같은 탑·방·비)까지 이어짐)
+STORY_STYLE = ("[그림체 — 이 이야기 책의 모든 그림 장 공통] 이야기 책 한 장면 같은 가로 그림 한 장. 따뜻한 평면 일러스트, 화면을 꽉 채움. "
+               "왼쪽 위에 짧은 제목, 아래에 이야기 글 1~2줄. 한글 글자는 정확하게, 글자는 적게. 장 번호·로고·워터마크는 넣지 않는다.")
+STORY_REF = "[참고 그림] 함께 보낸 그림은 이 책의 앞 장면이다. 같은 인물(얼굴·옷·머리)·같은 장소·같은 그림체로 **새 장면**을 그린다 — 참고 그림을 고치지 말고 새로 그린다."
+
+
+def pic_prompt(deck_title: str, slide: dict, *, story: bool = False, ref: bool = False) -> str:
+    """장 하나(본문까지 쓴 것) → 그림 장 지시. 제목 = 그림 위 큰 제목, 화면 글 = 설명 줄의 재료. story = 이야기 그림체, ref = 참고 그림(앞 장면)이 함께 감."""
     lines = [*(slide.get("bullets") or []), *(f"{x['value']} — {x['label']}" for x in slide.get("numbers") or []), *(slide.get("steps") or []), slide.get("message") or ""]
     body = "\n".join("- " + re.sub(r"\s*\[\d+\]", "", str(x)).strip() for x in lines if str(x).strip())
-    return f"{PIC_STYLE}\n\n[발표] {deck_title}\n[제목] {slide['title']}\n[장 글]\n{body}"
+    head = STORY_STYLE + ("\n" + STORY_REF if ref else "") if story else PIC_STYLE
+    return f"{head}\n\n[{'이야기' if story else '발표'}] {deck_title}\n[제목] {slide['title']}\n[장 글]\n{body}"
 
 
-def draw_pics(out: dict, plan: dict, image, ex) -> None:
+def draw_pics(out: dict, plan: dict, image, ex, story: bool = False) -> None:
     """그림 장(`plan` 장의 pic) = 본문을 쓴 뒤 넷씩 동시에 그려 `out["deck"]["slides"][i]`에 layout 「그림」 + pic {img, w, h, model}.
-    pic = BOTH면 장은 글 그대로 두고 그림은 `alt_pic`(칠판이 그 장 아래에 그림 판으로). 못 그린 장은 글 장 그대로 두고 `out["pic_errors"]`에 제목(장은 늘 나옴)."""
+    pic = BOTH면 장은 글 그대로 두고 그림은 `alt_pic`(칠판이 그 장 아래에 그림 판으로). 못 그린 장은 글 장 그대로 두고 `out["pic_errors"]`에 제목(장은 늘 나옴).
+    story = 이야기 책: 첫 그림 장을 먼저 그리고, 나머지는 그 그림(`image`가 돌려준 `ref` — data: 주소)을 참고 그림으로(`image(지시, ref=…)`) 넷씩 동시에. 첫 장을 못 그리면 참고 없이."""
     slides = out["deck"]["slides"]
-    jobs = {i: ex.submit(image, pic_prompt(out["deck"]["title"], slides[i])) for i, s in enumerate(plan["slides"]) if s.get("pic") and i < len(slides)}
+    want = [i for i, s in enumerate(plan["slides"]) if s.get("pic") and i < len(slides)]
+    jobs, ref = {}, None
+    if story and want:
+        first = want.pop(0)
+        jobs[first] = ex.submit(image, pic_prompt(out["deck"]["title"], slides[first], story=True), keep=True)   # keep = 그린 그림을 참고용 data: 주소(`ref`)로도
+        try:
+            ref = jobs[first].result().get("ref")
+        except Exception:   # 아래 결과 모으기에서 오류로 적힘
+            pass
+    for i in want:
+        jobs[i] = ex.submit(image, pic_prompt(out["deck"]["title"], slides[i], story=story, ref=bool(ref)), **({"ref": ref} if ref else {}))
     for i, fut in jobs.items():
         try:
             got = {k: v for k, v in fut.result().items() if k in ("img", "w", "h", "model")}
@@ -156,7 +187,9 @@ def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: st
         with ThreadPoolExecutor(max_workers=PIC_WORKERS) as ex:
             fut = ex.submit(image, cover_prompt(clean))
             out = build(key, client, topic, brief, plan, base_url=base_url, material=material, model=model, exa=exa, images=images)
-            draw_pics(out, clean, image, ex)
+            draw_pics(out, clean, image, ex, is_story(brief))
+            if is_story(brief):
+                out["deck"]["story"] = True   # 칠판이 장 프레임에 적어 둠(`slide_story`) — 「다른 판 더하기 › 그림으로」도 첫 그림 장을 참고로
             try:
                 got = fut.result()
                 out["deck"]["cover"] = {k: got[k] for k in ("img", "w", "h", "model") if k in got}

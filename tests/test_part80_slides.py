@@ -204,8 +204,71 @@ def test_both_keeps_text_slide_and_draws_alt_picture():
 def test_server_slides_pic_step_draws_one(server, monkeypatch):
     import server as srv
     asked = []
-    monkeypatch.setattr(srv.Handler, "_deep_image", lambda self, board, key, base: (lambda prompt: asked.append(prompt) or {"img": "/api/img/b/1.png", "w": 3, "h": 2, "model": "img-m"}) if board else None)
+    monkeypatch.setattr(srv.Handler, "_deep_image", lambda self, board, key, base: (lambda prompt, **kw: asked.append(prompt) or {"img": "/api/img/b/1.png", "w": 3, "h": 2, "model": "img-m"}) if board else None)
     out = _post(server, {"kind": "slides", "board": "b", "slides": {"step": "pic", "deck": "전파", "slide": {"title": "송신소", "bullets": ["쏜다 [1]"]}}})
     assert out["pic"] == {"img": "/api/img/b/1.png", "w": 3, "h": 2, "model": "img-m"} and "[제목] 송신소" in asked[0] and "[발표] 전파" in asked[0]
     with pytest.raises(urllib.error.HTTPError):
         _post(server, {"kind": "slides", "board": "", "slides": {"step": "pic", "slide": {"title": "송신소"}}})   # 칠판 이름 없으면 못 그림
+
+
+STORY_ANS = json.dumps({"slides": [{"title": "표지", "bullets": ["부제"]}, {"title": "탑에 간 토끼", "bullets": ["토끼가 탑에 간다"]},
+                                   {"title": "비 오는 밤", "bullets": ["비가 온다"]}, {"title": "집으로", "bullets": ["돌아온다"]}, {"title": "끝", "bullets": ["정리"]}]}, ensure_ascii=False)
+
+
+def test_story_plan_estimate_and_reference_picture():
+    """작은 책 ⑤ 이야기 — 질문지 「내용: 이야기」면 계획 지시에 장면 이어 가기, 어림은 첫 그림 장 빼고 2배, 그림은 첫 그림 장을 먼저 그려 나머지에 참고 그림으로."""
+    assert slides.is_story({"내용": "이야기"}) and not slides.is_story({"내용": "설명"}) and not slides.is_story({})
+    sent = []
+    plan_ans = json.dumps({"title": "토끼", "slides": [{"title": "표지"}, {"title": "탑", "pic": True}]}, ensure_ascii=False)
+    slides.make_plan(fake_client(plan_ans, sent), "토끼 동화", {"내용": "이야기"})
+    slides.make_plan(fake_client(plan_ans, sent), "토끼 동화", {"내용": "설명"})
+    assert "같은 인물" in sent[0]["messages"][0]["content"] and "같은 인물" not in sent[1]["messages"][0]["content"]
+    p = slides.clean_plan({"title": "토끼", "slides": [{"title": "표지"}, {"title": "탑에 간 토끼", "pic": True}, {"title": "비 오는 밤", "pic": True}, {"title": "집으로", "pic": "both"}, {"title": "끝"}]})
+    plain, story, none = slides.estimate(p), slides.estimate(p, True), slides.estimate({**p, "slides": [{**s, "pic": False} for s in p["slides"]]})
+    assert plain["credits"][0] - none["credits"][0] == 3 * slides.PIC_CREDITS and story["credits"][0] - none["credits"][0] == 5 * slides.PIC_CREDITS   # 1 + 2×2
+    assert story["seconds"][0] - none["seconds"][0] == 2 * slides.PIC_SECONDS   # 첫 장 먼저, 나머지 동시
+    calls = []
+
+    def draw(prompt, ref="", keep=False):
+        calls.append({"prompt": prompt, "ref": ref, "keep": keep})
+        return {"img": f"/api/img/b/{len(calls)}.png", "w": 3, "h": 2, "model": "m", **({"ref": "data:image/jpeg;base64,FIRST"} if keep else {})}
+    out = slides.build("k", fake_client(STORY_ANS, []), "토끼", {"내용": "이야기"}, p, model="w", image=draw)
+    pics = [c for c in calls if "[제목]" in c["prompt"]]
+    assert "[제목] 탑에 간 토끼" in pics[0]["prompt"] and pics[0]["keep"] and not pics[0]["ref"] and "[참고 그림]" not in pics[0]["prompt"]   # 첫 그림 장 = 참고 없이 먼저
+    assert len(pics) == 3 and all(c["ref"] == "data:image/jpeg;base64,FIRST" and "[참고 그림]" in c["prompt"] and "이야기 책" in c["prompt"] for c in pics[1:])
+    assert out["deck"]["story"] is True and "ref" not in out["deck"]["slides"][1]["pic"] and "ref" not in out["deck"]["slides"][3]["alt_pic"]   # 참고 주소는 칠판에 안 감
+    calls.clear()
+    out = slides.build("k", fake_client(STORY_ANS, []), "토끼", {"내용": "설명"}, p, model="w", image=draw)
+    assert "story" not in out["deck"] and not any(c["ref"] or c["keep"] for c in calls)   # 설명 책 = 지금처럼
+
+
+def test_story_first_picture_fails_others_draw_without_reference():
+    p = slides.clean_plan({"title": "토끼", "slides": [{"title": "표지"}, {"title": "탑에 간 토끼", "pic": True}, {"title": "비 오는 밤", "pic": True}, {"title": "끝"}]})
+    calls = []
+
+    def draw(prompt, ref="", keep=False):
+        calls.append(ref)
+        if "[제목] 탑에 간 토끼" in prompt:
+            raise RuntimeError("busy")
+        return {"img": "/x.png", "w": 3, "h": 2}
+    ans = json.dumps({"slides": [{"title": "표지", "bullets": ["a"]}, {"title": "탑에 간 토끼", "bullets": ["b"]}, {"title": "비 오는 밤", "bullets": ["c"]}, {"title": "끝", "bullets": ["d"]}]}, ensure_ascii=False)
+    out = slides.build("k", fake_client(ans, []), "토끼", {"내용": "이야기"}, p, model="w", image=draw)
+    assert out["deck"]["slides"][2]["layout"] == slides.PIC and "탑에 간 토끼" in out["pic_errors"][0] and calls[-1] == ""
+
+
+def test_server_story_pic_step_sends_first_picture_as_reference(server, monkeypatch):
+    """「다른 판 더하기 › 그림으로」(이야기 책) — 칠판이 첫 그림 장 그림 _id(`ref_uid`)를 보내면 서버가 칠판 파일에서 꺼내 참고 그림으로(`input_images`)."""
+    import base64
+    import io
+    import server as srv
+    from PIL import Image
+    buf = io.BytesIO(); Image.new("RGB", (40, 30), "white").save(buf, "PNG")
+    with open(os.path.join(srv.Handler.data_dir, "b.ecad"), "w", encoding="utf-8") as f:
+        json.dump({"items": [{"type": "image", "uid": "pic1", "data": base64.b64encode(buf.getvalue()).decode(), "slide_role": "pic"}]}, f)
+    calls = []
+    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, **kw: calls.append((prompt, kw)) or {"images": [(buf.getvalue(), "png")], "model": "flare", "credits": 23})
+    out = _post(server, {"kind": "slides", "board": "b", "slides": {"step": "pic", "deck": "토끼", "story": True, "ref_uid": "pic1", "slide": {"title": "비 오는 밤", "bullets": ["비"]}}})
+    prompt, kw = calls[-1]
+    assert out["pic"]["w"] == 40 and "ref" not in out["pic"] and kw["input_images"][0].startswith("data:image/jpeg") and "[참고 그림]" in prompt and "[이야기] 토끼" in prompt
+    _post(server, {"kind": "slides", "board": "b", "slides": {"step": "pic", "deck": "토끼", "slide": {"title": "비 오는 밤", "bullets": ["비"]}}})
+    assert calls[-1][1]["input_images"] is None and "[참고 그림]" not in calls[-1][0]   # 설명 책 = 참고 없이

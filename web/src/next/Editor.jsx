@@ -975,10 +975,11 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     pages.forEach((s, i) => {
       const X = at.x + (i % PER) * (W + GX), Y = at.y + Math.floor(i / PER) * ROW
       const cover = i === 0 && ok(deck.cover) ? { data: deck.cover.data, w: deck.cover.w, h: deck.cover.h, alt: `표지 그림 — ${deck.title || s.title}` } : null
-      const main = slideFrame(s, i, X, Y, no++, z, zb, deck.title, cover, i === pages.length - 1)
+      const story = deck.story ? { slide_story: true } : {}   // 이야기 책(작은 책 ⑤) — 「다른 판 더하기 › 그림으로」가 첫 그림 장을 참고로
+      const main = slideFrame(s, i, X, Y, no++, z, zb, deck.title, cover, i === pages.length - 1, story)
       out.push(...main); ids.push(main[0]._id)
       const br = branch(s)
-      if (br) { const f = slideFrame(br, i, X, Y + ROW, no++, z, zb, deck.title, null, false, { slide_branch: main[0]._id, name: `${s.title} · 그림` }); out.push(...f); ids.push(f[0]._id); out.push(slideArrow(main[0], f[0], 'down', z)) }
+      if (br) { const f = slideFrame(br, i, X, Y + ROW, no++, z, zb, deck.title, null, false, { ...story, slide_branch: main[0]._id, name: `${s.title} · 그림` }); out.push(...f); ids.push(f[0]._id); out.push(slideArrow(main[0], f[0], 'down', z)) }
       if (anyBranch && i > 0) out.push(slideArrow(prevMain, main[0], 'right', z))   // 갈래가 있는 책 = 장끼리 → · 장 → 판 ↓(③ 화살표 발표 — 발표가 이 화살표를 따라감)
       prevMain = main[0]
     })
@@ -1008,6 +1009,13 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // 이미 만든 장에 다른 판 더하기(작은 책 ② — 우클릭 「다른 판 더하기」): kind 'text' = 그 장 글로 글 판(서버 안 부름) · 'pic' = 그 장 글로 그림 판(KAIROS 그림 한 장, 약 12크레딧).
   // 판 = 그 장 아래(그 장의 판들 밑), 프레임 번호 = 그 장의 판들 바로 뒤(뒤 번호는 하나씩 밀림) = 발표 때 그 장 다음. Ctrl+Z 한 번. 새 프레임 _id 또는 null
+  // 이야기 책의 참고 그림 = 같은 책(`slide_deck`) 장 중 가장 앞 장의 그림 장 그림 → { story, ref_uid }(서버가 칠판 파일에서 꺼냄). 이야기 책이 아니면 {}
+  function storyRef(m, root) {
+    if (!root.slide_story) return {}
+    const deck = new Map(m.items.filter(x => x.type === 'frame' && x.slide && x.slide_story && (x.slide_deck || '') === (root.slide_deck || '')).map(x => [x._id, x]))
+    const pic = m.items.filter(x => x.type === 'image' && x.slide_role === 'pic' && x.data && deck.has(x.slide_of)).sort((a, b) => (deck.get(a.slide_of).slide_n || 0) - (deck.get(b.slide_of).slide_n || 0))[0]
+    return { story: true, ...(pic ? { ref_uid: pic._id } : {}) }
+  }
   async function slideBranch(id, kind) {
     const m0 = R.current.model, fr = m0.items.find(x => x._id === id && x.type === 'frame' && x.slide); if (readOnly || !fr) return null
     const root = fr.slide_branch ? m0.items.find(x => x._id === fr.slide_branch) || fr : fr, spec = { ...root.slide }
@@ -1016,7 +1024,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       setStatus(`「${spec.title}」 그림 판 그리는 중… (KAIROS 그림 한 장, 약 15초)`)
       try {
         const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() },
-          body: JSON.stringify({ kind: 'slides', board: DOC_NAME, slides: { step: 'pic', slide: spec, deck: root.slide_deck || '' }, messages: [{ role: 'user', content: spec.title }] }) })
+          body: JSON.stringify({ kind: 'slides', board: DOC_NAME, slides: { step: 'pic', slide: spec, deck: root.slide_deck || '', ...storyRef(m0, root) }, messages: [{ role: 'user', content: spec.title }] }) })
         const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
         if (!r.ok || d.error || !d.pic?.img) throw new Error(d.error || '그림이 안 왔어요')
         const bl = await (await fetch(d.pic.img)).blob(), data = await new Promise(ok => { const f = new FileReader(); f.onload = () => ok(String(f.result).split(',')[1]); f.readAsDataURL(bl) })
@@ -1027,7 +1035,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const bottom = Math.max(...m.items.filter(x => famIds.has(x._id) || famIds.has(x.slide_of)).map(x => { const b = sceneBox(x, textBox); return b.y + b.h }))
     const H = slideH(s), at = nearSpot({ x: root.pos[0] + 800, y: bottom + 160 + H / 2 }, hitPool().map(it => sceneBox(it, textBox)), 1600, H, { pad: 48, step: 96 })
     const no = Math.max(...fam.map(x => x.no ?? 0)) + 1, z = topZ(m.items) + 1, zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1
-    const made = slideFrame(s, (root.slide_n || 1) - 1, at.x, at.y, no, z, zb, root.slide_deck, null, false, { slide_branch: root._id, name: `${spec.title} · ${kind === 'pic' ? '그림' : '글'}` })
+    const made = slideFrame(s, (root.slide_n || 1) - 1, at.x, at.y, no, z, zb, root.slide_deck, null, false, { ...(root.slide_story ? { slide_story: true } : {}), slide_branch: root._id, name: `${spec.title} · ${kind === 'pic' ? '그림' : '글'}` })
     const items = m.items.map(x => (x.type === 'frame' && x.no != null && x.no >= no ? { ...x, no: x.no + 1 } : x))   // 뒤 번호 밀기 = 발표 때 그 장 바로 다음
     const last = fam.reduce((a, x) => ((x.no ?? 0) > (a.no ?? 0) ? x : a), root)   // 화살표 ↓ = 그 장의 마지막 판에서(판이 차례로 아래로)
     commit([...items, ...made, slideArrow(last, made[0], 'down', z)], [made[0]._id], '다른 판 더하기')

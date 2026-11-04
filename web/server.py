@@ -330,8 +330,10 @@ class Handler(SimpleHTTPRequestHandler):
         if not name:
             return None
 
-        def draw(prompt: str) -> dict:
-            out = self._with("image", board_image.IMAGE_MODEL, lambda m: board_image.generate(key, prompt, n=1, base_url=base, model=m))
+        def draw(prompt: str, ref: str = "", keep: bool = False) -> dict:
+            """ref = 참고 그림 data: 주소(이야기 책 — 같은 인물·장소로 새 장면, `input_images`), keep = 그린 그림을 참고용으로도 돌려줌(`ref` — 줄인 JPEG)."""
+            refs = [ref] if isinstance(ref, str) and ref.startswith("data:image/") else None
+            out = self._with("image", board_image.IMAGE_MODEL, lambda m: board_image.generate(key, prompt, n=1, base_url=base, model=m, input_images=refs))
             data, ext = out["images"][0]
             url = self._save_img(name, data, ext)
             from io import BytesIO
@@ -340,8 +342,11 @@ class Handler(SimpleHTTPRequestHandler):
                 w, h = Image.open(BytesIO(data)).size
             except Exception:   # 크기를 못 읽으면 요청한 비율(4:3)로 — 칠판이 그림을 받으면 실제 크기로 고침
                 w, h = 1536, 1152
-            sys.stderr.write("[딥모드 요약 그림] %s %dx%d · %s크레딧\n" % (out["model"], w, h, out.get("credits")))
-            return {"img": url, "w": w, "h": h, "model": out["model"]}
+            sys.stderr.write("[딥모드 요약 그림] %s %dx%d · %s크레딧%s\n" % (out["model"], w, h, out.get("credits"), " · 참고 그림 있음" if refs else ""))
+            got = {"img": url, "w": w, "h": h, "model": out["model"]}
+            if keep:
+                got["ref"] = see.shrink(f"data:image/{'jpeg' if ext == 'jpg' else ext};base64," + base64.b64encode(data).decode())
+            return got
         return draw
 
     @staticmethod
@@ -386,7 +391,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if not draw or not str(one.get("title") or "").strip():
                     return self._json(400, {"error": "칠판 이름이나 장이 없어요"})
                 t0 = time.time()
-                pic = draw(slides.pic_prompt(str(d.get("deck") or one["title"])[:80], one))
+                # 이야기 책(작은 책 ⑤) = 같은 책의 첫 그림 장을 참고 그림으로 — 칠판이 그 그림 도형 _id(`ref_uid`)를 보냄, 그림은 칠판 파일에서
+                ref = (see.from_doc(self._board_doc(self._name(str(req.get("board") or ""))), [str(d.get("ref_uid"))], 1) or [""])[0] if d.get("story") and d.get("ref_uid") else ""
+                pic = draw(slides.pic_prompt(str(d.get("deck") or one["title"])[:80], one, story=bool(d.get("story")), ref=bool(ref)), ref=ref)
                 out = {"pic": pic, "model": pic.get("model"), "elapsed": round(time.time() - t0, 1)}
             else:
                 return self._json(400, {"error": "step"})

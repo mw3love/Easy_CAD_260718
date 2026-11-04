@@ -142,6 +142,36 @@ test('작은 책 ② — 만든 장 우클릭 「다른 판 더하기」 = 아�
   expect(fr.map(f => [f.name, f.no - n0])).toEqual([['표지', 0], ['송신소', 1], ['송신소 · 그림', 2], ['끝', 3]])   // 한 번에 되돌림(번호도)
 })
 
+test('작은 책 ⑤ 이야기 — 질문지 「내용 › 이야기」가 요청에 실림·🖼 어림 2배 · 이야기 책 장에 표시 · 「그림으로」 판은 첫 그림 장 그림을 참고로', async ({ page }) => {
+  const name = boardName('picstory'), seen = []
+  const deck = { ...DECK, story: true }
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { slides: 'm' } } }))
+  await page.route('**/e2e-pic/**', r => r.fulfill({ body: PNG, contentType: 'image/png' }))
+  await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); seen.push(b)
+    return r.fulfill({ json: b.slides?.step === 'plan' ? { kind: 'slides', plan: PLAN, estimate: { credits: [40, 60], seconds: [30, 60] }, model: 'm', elapsed: 4 }
+      : b.slides?.step === 'pic' ? { kind: 'slides', pic: { img: '/e2e-pic/9.png', w: 1536, h: 1024, model: 'img-m' }, model: 'img-m', elapsed: 9 } : { kind: 'slides', deck, model: 'm', elapsed: 30 } }) })
+  await openBoard(page, name, { chat: true }); await setCam(page)
+  await page.getByTestId('plus').click(); await page.getByRole('menuitemradio', { name: /Deep Mode/ }).click()
+  const box = page.getByPlaceholder('어떤 주제로', { exact: false }); await box.fill('토끼 동화'); await box.press('Enter')
+  const q = page.locator('[data-q="내용"]')
+  await expect(q.locator('[data-v="설명"]')).toBeVisible()
+  await q.locator('[data-v="이야기"]').click()
+  await page.getByTestId('deep-plan-go').click()
+  expect(seen[0].slides.brief['내용']).toBe('이야기')                                             // 서버 계획 지시로(`slides.is_story`)
+  await page.getByTestId('slides-pic').nth(1).click()                                              // 중계소도 그림 장 = 이야기라 약 2배
+  await expect(page.getByTestId('slides-build')).toContainText('약 64~84크레딧')
+  await page.getByTestId('slides-build').click()
+  await expect(page.getByTestId('slides-show')).toContainText('프레임 4장')
+  let its = (await liveDoc(page)).items, fr = its.filter(it => it.type === 'frame').sort((a, b) => a.no - b.no)
+  expect(fr.every(f => f.slide_story === true)).toBe(true)
+  const first = its.find(it => it.type === 'image' && it.slide_role === 'pic' && it.slide_of === fr[1].uid)
+  await page.evaluate(id => window.__mb.ed.slideBranch(id, 'pic'), fr[2].uid)                      // 셋째 장(중계소)에 그림 판
+  const pic = seen.find(b => b.slides?.step === 'pic').slides
+  expect(pic).toMatchObject({ story: true, ref_uid: first.uid, slide: { title: '중계소' } })      // 참고 = 첫 그림 장(송신소) 그림
+  its = (await liveDoc(page)).items
+  expect(its.find(it => it.type === 'frame' && it.slide_branch === fr[2].uid).slide_story).toBe(true)
+})
+
 test('입구 합치기 — 「+ › Deep Mode」 질문지 맨 위에서 한 판 ↔ 여러 장 · 고른 것은 그대로 · 「+」 메뉴에 마우스를 올리면 큰 예시 그림', async ({ page }) => {
   const name = boardName('deepshape')
   await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { deep: 'claude-opus-5-5', slides: 'm', live: 'gpt-6.1-sol', image: 'img' } } }))
