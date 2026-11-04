@@ -442,3 +442,16 @@ def test_trace_short_arrow_head_fits_its_last_segment():
     assert "head_scale" not in long_
     assert tiny["head_scale"] == 0.3                                         # 데스크톱 setter 바닥
     assert "head_scale" not in seam
+
+
+def test_trace_clear_lines_moves_text_off_arrow_tail():
+    """꼬리가 글 자리 안에서 시작하고 촉은 밖이면 글을 화살표 뒤로 비킴(2026-11-05 — 「7/8인치」 밑 짧은 빨간 화살표 꼬리가 「8」에 닿음)."""
+    sc = 680 / 1536
+    t = {"op": "text", "x": 1436, "y": 126, "text": "7/8인치", "font": 28, "color": "#d32f2f"}
+    spec = {"ops": [t, {"op": "line", "pts": [[1483, 158], [1488, 179]], "head": True}]}
+    r0 = board_trace._drawn_text_box(t, sc)
+    assert r0[1] < 158 < r0[3]                                               # 칠판에선 꼬리가 글 속
+    out = board_trace._clear_lines(spec, sc)["ops"]
+    r = board_trace._drawn_text_box(out[0], sc)
+    assert r[3] < 158 and out[0]["x"] == 1436                                # 글이 위로, 옆으로는 안 감
+    assert out[1]["pts"] == [[1483, 158], [1488, 179]]                       # 화살표는 그대로

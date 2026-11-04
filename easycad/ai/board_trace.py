@@ -516,6 +516,23 @@ def _clear_lines(spec: dict, scale: float = SCALE) -> dict:
                     t["x"], t["y"] = float(t["x"]) + mx, float(t["y"]) + my
                     break
             break
+        # 꼬리가 글 자리 안에서 시작하고 촉은 밖(2026-11-05 — 「7/8인치」 밑 짧은 빨간 화살표 꼬리가 「8」 아래 끝에 닿음) → 글을 꼬리 반대쪽(화살표 뒤)으로 비킴.
+        # 첫 구간 방향으로 꼬리가 글 가장자리 + 틈 g 밖에 오도록, 글 높이(가로면 폭 60%)까지, 새로 안 겹칠 때만
+        a, b, e = pts[0], pts[1], pts[-1]   # e = 촉 끝(위에서 당겼으면 당긴 자리)
+        ax, ay = b[0] - a[0], b[1] - a[1]
+        for t in ts:
+            r = _drawn_text_box(t, scale)
+            if not (r[0] < a[0] < r[2] and r[1] < a[1] < r[3]) or (r[0] < e[0] < r[2] and r[1] < e[1] < r[3]):
+                continue
+            g = 0.15 * float(t["font"]) * 4 / 3 / SCALE
+            if abs(ay) >= abs(ax):
+                mx, my, lim = 0.0, (a[1] - g - r[3]) if ay > 0 else (a[1] + g - r[1]), r[3] - r[1]
+            else:
+                mx, my, lim = (a[0] - g - r[2]) if ax > 0 else (a[0] + g - r[0]), 0.0, 0.6 * (r[2] - r[0])
+            tb = _text_box(t)
+            if abs(mx) + abs(my) <= lim and not bad(t, (tb[0] + mx, tb[1] + my, tb[2] + mx, tb[3] + my)):
+                t["x"], t["y"] = float(t["x"]) + mx, float(t["y"]) + my
+            break
     return {**spec, "ops": ops}
 
 
