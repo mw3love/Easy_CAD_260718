@@ -19,6 +19,8 @@ ops 어휘(좌표는 원본 사진 픽셀, x 오른쪽·y 아래):
     w     1~3 굵기 배수(box·line·poly·circle·dashrect) · dash true = 파선(line·poly·box·circle)
     fill  "#RRGGBB" 상자·원 안쪽 색 · tcolor(box) = 상자 이름 색(앱이 안 글자를 상자 이름으로 합칠 때 붙임)
 """
+import math
+
 from easycad.fileio.sketch_build import Sketch, _argb
 
 SCALE = 2.0      # 원본 픽셀 → 캔버스 좌표 배율(글자가 읽힐 크기)
@@ -131,6 +133,13 @@ def ops_to_sketch(spec: dict, *, dark: bool = False, scale: float = SCALE,
                 d = s._common()
                 d.update(type="sarrow", pts=q, color=pen, width=_width(op), head=bool(op.get("head", False)),
                          auto_route=False, routing="straight", curve_r=0.0)
+                if d["head"]:   # 짧은 화살표는 촉을 선 길이에 맞게 줄임(2026-11-05 — 칠판 폭에 맞춰 작게 베끼면 길이 8.6인 「7/8인치」 화살표에
+                    # 촉이 바닥 크기 11로 그려져 꼬리 뒤로 삐져나가 위 글을 덮음). 그리는 규칙(웹 `headSize` = 데스크톱 `_head_size`)은 그대로, 배율만 — 바닥 0.3 = 데스크톱 setter.
+                    # 길이 = 선 전체(마지막 구간만 재면 구역 이음매의 1px 꺾임 때문에 긴 화살표 촉도 줄었음)
+                    seg = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(q, q[1:]))
+                    size = max(d["width"] * 3.2, 11.0)
+                    if 0.8 * seg < size:
+                        d["head_scale"] = round(max(0.3, 0.8 * seg / size), 2)
                 if op.get("dash"):
                     d["style"] = _DASH
                 src, dst = ids.get(op.get("src")), ids.get(op.get("dst"))

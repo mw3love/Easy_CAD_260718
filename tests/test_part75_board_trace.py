@@ -424,3 +424,21 @@ def test_trace_clear_lines_moves_text_when_arrow_lies_inside_it():
     r = board_trace._drawn_text_box(out[0], sc)
     assert out[1]["pts"] == [[282, 362], [282, 348]]                         # 화살표는 그대로
     assert r[3] < 348 and out[0]["x"] == 231                                # 글이 위로(촉 너머), 옆으로는 안 감
+
+
+def test_trace_short_arrow_head_fits_its_last_segment():
+    """짧은 화살표는 촉 배율을 줄여 선 길이 안에 들게(2026-11-05 — 칠판 폭에 맞춰 작게 베끼면 길이 8.6인 「7/8인치」 밑 빨간 화살표에
+    촉이 바닥 크기 11로 그려져 꼬리 뒤로 삐져나가 위 글을 덮음). 긴 화살표는 배율을 안 붙임(그리는 규칙 = 웹 `headSize`·데스크톱 `_head_size`)."""
+    from easycad.fileio.photo_ops import ops_to_sketch
+    spec = {"ops": [{"op": "line", "pts": [[1483, 158], [1488, 179]], "head": True},
+                    {"op": "line", "pts": [[100, 100], [300, 100]], "head": True},
+                    {"op": "line", "pts": [[100, 200], [101, 200]], "head": True},
+                    {"op": "line", "pts": [[100, 300], [300, 300], [301, 300]], "head": True}]}   # 끝에 이음매 꺾임 1px — 전체가 기니 그대로
+    sk, _ = ops_to_sketch(spec, scale=0.4)
+    short, long_, tiny, seam = sk._items
+    seg = 0.4 * (5 ** 2 + 21 ** 2) ** 0.5
+    size = max(short["width"] * 3.2, 11.0) * short["head_scale"]
+    assert 0.866 * size < seg                                                # 촉 길이가 선 길이 안
+    assert "head_scale" not in long_
+    assert tiny["head_scale"] == 0.3                                         # 데스크톱 setter 바닥
+    assert "head_scale" not in seam
