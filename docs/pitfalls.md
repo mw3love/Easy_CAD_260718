@@ -1765,3 +1765,4 @@
 - (2026-11-04) python-hwpx `doc.text.plain`은 속성이 아니라 함수(`plain()`), `export_text()`는 6.x에서 낡음 경고.
 - ⚠ (2026-11-04) Windows 배치(.bat)에 UTF-8 한글(주석 포함)을 넣으면 cmd가 줄을 잘못 쪼개 명령이 깨짐 — 배치 파일은 ASCII만.
 - ⚠ (2026-11-04) e2e에서 주소를 옮기는 단추(새 칠판·예시) 뒤 `liveDoc`을 바로 부르면 `window.__mb`가 아직 없어 `toEcad` 오류 — `waitForURL(바뀜)` + `waitForFunction(() => window.__mb?.toEcad)` 뒤에 읽기. 같은 주소의 띠·알림을 기다리는 것으로는 부족(옛 페이지에도 보임).
+- ⚠ (2026-11-05) 화살촉 크기는 선 길이와 무관(굵기×3.2·바닥 11, 웹 `headSize` = 데스크톱 `_head_size`) — 작게 베낀 짧은 화살표는 촉이 꼬리 뒤로 삐져나가 옆 글을 덮음. 그리는 규칙 대신 만들 때 `head_scale`로 줄임(`photo_ops`).
