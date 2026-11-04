@@ -162,7 +162,7 @@ const MiniFaces = ({ list, myId, me }) => { if (!list?.length) return null
 const MENU_BOX = { position: 'fixed', zIndex: 40, minWidth: 190, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 4, boxShadow: '0 6px 18px rgba(0,0,0,.22)', font: "400 12.5px 'Pretendard', sans-serif", color: C.ink }
 const MENU_ROW = { all: 'unset', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '5px 10px', borderRadius: 5, cursor: 'pointer' }
 const menuHover = hoverBg   // 마우스 올림 = 회색(2026-11-02 디자인 규칙 ③ — `ui.jsx`)
-function BoardForm({ onClose, docked, open, myId, me, onDownload, children }) {   // docked = 왼쪽 판 「칠판」 칸(2026-10-23 — 위 막대 팝업에서 옮김), open = 비밀번호 없는 서버, myId·me = 내 접속 이름표(줄 동그라미의 「나」), onDownload = 지금 칠판 내려받기, children = 서버 없을 때 파일 단추들
+function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, children }) {   // docked = 왼쪽 판 「칠판」 칸(2026-10-23 — 위 막대 팝업에서 옮김), open = 비밀번호 없는 서버, myId·me = 내 접속 이름표(줄 동그라미의 「나」), onDownload = 지금 칠판 내려받기, children = 서버 없을 때 파일 단추들
   // 처음엔 지난번 서버 답으로 그림(「불러오는 중…」 → 목록으로 바뀌며 아래가 출렁였음 — 2026-10-28 사용자 「새 칠판 누르면 살짝 깜빡」)
   const cached = () => myBoards().filter(b => b.ok !== false || b.name === DOC_NAME).map(b => ({ name: b.name, title: b.title, mtime: b.mtime || 0, c: b.c || b.t }))
   const [list, setList] = useState(null), [mine, setMine] = useState(cached), [name, setName] = useState(''), [all, setAll] = useState(false), [making, setMaking] = useState(false), [why, setWhy] = useState(''), [menu, setMenu] = useState(null)
@@ -284,6 +284,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, children }) { 
     <div data-testid="my-boards" onDragOver={e => { if (drag) e.preventDefault() }} onDrop={e => { e.preventDefault(); dropRow() }} style={{ display: 'flex', flexDirection: 'column', maxHeight: 300, overflowY: 'auto', margin: '-4px -4px 0' }}>
       {mine.map(row)}
     </div>
+    {keepDays > 0 && <span data-testid="board-keep" style={{ fontSize: 11, color: C.muted }} title="서버 공간을 아끼려고 오래 안 쓴 칠판은 자동으로 치워요 — 받기만 하고 안 고친 예시 칠판은 7일. 남겨 두려면 ⋯ › 내려받기 (.ecad)">{keepDays}일 동안 아무도 안 연 칠판은 자동으로 지워져요</span>}
     {!open && (list === null || others.length > 0) && <>
       <span style={{ color: C.muted }}>이 서버의 칠판</span>
       <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 300, overflowY: 'auto', margin: '-4px -4px 0' }}>
@@ -460,7 +461,7 @@ function ShareForm({ onClose, people = [], title = '' }) {   // people = [{ id, 
   </div>
 }
 
-function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 내 팀 이름(관리자 = '관리자'), 팀 없는 서버면 없음 · openServer = 비밀번호 없는 서버(칠판 주소 = 열쇠)
+function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목67)에서 내 팀 이름(관리자 = '관리자'), 팀 없는 서버면 없음 · openServer = 비밀번호 없는 서버(칠판 주소 = 열쇠)
   const [tableOpen, setTableOpen] = useState(false), [exportOpen, setExportOpen] = useState(false), [webOpen, setWebOpen] = useState(false)
   const [dockTab, setDockTabS] = useState(() => { try { const v = localStorage.getItem('mb-dock'); return v ?? (window.innerWidth < NARROW_W ? '' : 'shape') } catch { return 'shape' } })   // 왼쪽 판 열린 칸('' = 접힘) — 이 브라우저에 기억, 좁은 창은 처음엔 접힘
   const setDockTab = v => { setDockTabS(v); try { localStorage.setItem('mb-dock', v) } catch { /* 기억 못 해도 그만 */ } }
@@ -733,7 +734,7 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
       </Narrow.Provider>
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>   {/* 왼쪽 판 + 작업공간 + 오른쪽 KAIROS 대화창(좁은 창은 대화창만 칠판 위에 뜸) */}
       {!phone && <Dock tab={dockTab} setTab={setDockTab} width={dockW} setWidth={setDockW} help={helpOpen} onHelp={() => setHelpOpen(o => !o)} mini={w => <Minimap docked width={w} items={mapItems} cam={cam} size={size} setCam={setCam} dark={dark} />} panes={{
-        board: <BoardForm docked open={openServer} myId={sync.current.id} me={me} onDownload={saveFile} onClose={() => {}}>
+        board: <BoardForm docked open={openServer} myId={sync.current.id} me={me} onDownload={saveFile} keepDays={keepDays} onClose={() => {}}>
           {!live && <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderTop: `1px solid ${C.line}`, paddingTop: 8 }}>
             {[['open', '파일 열기', () => file.current.click(), '.ecad 파일 열기(지금 칠판을 그 내용으로 바꿈)'], ['download', '내려받기', saveFile, '.ecad 파일로 내려받기']].map(([ic, l, f, t]) =>
               <button key={l} onClick={f} title={t} style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px 4px 7px', borderRadius: 6, border: `1px solid ${C.line}`, font: "500 12px 'Pretendard', sans-serif" }}>
@@ -846,6 +847,6 @@ function Gate() {
   if (gate === 'name') return <LoginForm nameOnly title={ss.title} onDone={check} />
   if (gate === 'blocked') return <TeamBlocked ss={ss} onLogin={() => setGate('login')} />
   if (gate === 'gone') return <GoneBoard />
-  return <App team={ss.team === null ? '관리자' : ss.team} openServer={!ss.auth} />
+  return <App team={ss.team === null ? '관리자' : ss.team} openServer={!ss.auth} keepDays={ss.keep_days || 0} />
 }
 createRoot(document.getElementById('root')).render(VIEW_TOKEN ? <Viewer token={VIEW_TOKEN} /> : <Gate />)   // ?view= = 게시 링크(보기·발표만)

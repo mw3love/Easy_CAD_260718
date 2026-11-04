@@ -46,6 +46,9 @@ from easycad.ai import board_bubble, board_chat, board_diagram, slides, board_fi
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
+import usage  # noqa: E402  (사용 기록 — web/usage.py, 2026-11-04)
+import cleanup  # noqa: E402  (칠판 자동 정리 — web/cleanup.py, 2026-11-04)
+import hwpxout  # noqa: E402  (정리 문서 → 한글 파일 — web/hwpxout.py, 2026-11-04)
 
 NAME_RE = re.compile(r"^[\w\-가-힣]{1,64}$")
 MAX_BYTES = 200 * 1024 * 1024   # 그림이 든 칠판도 넉넉히, 하지만 끝없이는 아니게
@@ -68,6 +71,8 @@ class Handler(SimpleHTTPRequestHandler):
     lock = threading.Lock()       # 부분 저장·게시 표를 한 번에 하나씩
     changed = threading.Condition()   # 저장되면 깨움 — 받아 오기를 기다리던 요청(롱 폴링, 2026-10-19 사용자: 거의 실시간)
     revs = {}                     # 칠판 이름 → 마지막 판 번호(기다리는 동안 파일을 다시 읽지 않게)
+    usage = None                  # 사용 기록(`web/usage.py` — main이 켬, 시험 서버는 없을 수 있음)
+    keep_days = 0                 # 칠판 자동 정리 — 이 날수 동안 안 열린 칠판은 휴지통(0 = 안 함, `--keep-days`, 2026-11-04)
 
     def end_headers(self):
         # 화면(index.html) = 늘 새로 물어봄, 이름에 지문이 든 assets/ = 오래 둬도 됨(2026-11-02 실검증 — 머리말이 없어 브라우저가 옛 index.html을
@@ -93,6 +98,10 @@ class Handler(SimpleHTTPRequestHandler):
         return os.path.join(self.data_dir, name + ext) if name else ""
 
     def _json(self, code: int, obj):
+        ai, self._ai = getattr(self, "_ai", ""), ""   # AI 길목(do_POST가 정함) — 답 하나 = 기록 하나(연결을 다시 써도 한 번만)
+        if ai and Handler.usage:
+            kind = str(obj.get("kind") or ai) if ai == "chat" and isinstance(obj, dict) else ai
+            Handler.usage.add(kind, obj.get("credits") if isinstance(obj, dict) else None, ok=code < 400, board=getattr(self, "_ai_board", ""))
         obj = model_pick.mark(obj)   # 답의 "model"이 은퇴·없어져 갈아탄 이름이면 실제로 부른 이름 + "swap"(대화창 「대신」, 2026-10-26)
         self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"))
 
@@ -161,6 +170,7 @@ class Handler(SimpleHTTPRequestHandler):
             req = json.loads(self.rfile.read(n))
         except ValueError:
             return self._json(400, {"error": "json"})
+        self._ai_board = str(req.get("board") or "")[:64]
         self._extra = {}   # 아이콘·그림 답에 덧붙일 칸(되묻기 기억 — 연결을 다시 쓸 수 있어 요청마다 비움)
         picked = req.get("models") if isinstance(req.get("models"), dict) else {}   # 대화창 「모델 설정」 — 일마다 사람이 고른 모델(없으면 앱 기본, `_with`)
         self._picked = {k: v for k, v in picked.items() if k in PICK_JOBS and isinstance(v, str) and re.fullmatch(r"[\w.:/\-]{1,120}", v)}
@@ -594,9 +604,11 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 res = meeting.make_minutes(key, data, fname, model=model, base_url=base, on_status=say)
                 Handler.jobs[job].update(status="done", msg="끝", result=res)
+                Handler.usage and Handler.usage.add("meeting", res.get("credits"), board=name)
                 sys.stderr.write("[회의록] %s %.0f초 녹음 · %.1f크레딧\n" % (name, res["duration"], res["credits"]))
             except Exception as e:   # 브라우저에 그대로 보여 준다
                 Handler.jobs[job].update(status="error", error=gw.friendly_error(e))
+                Handler.usage and Handler.usage.add("job_fail", ok=False, board=name)
         threading.Thread(target=run, daemon=True).start()
         return self._json(200, {"job": job})
 
@@ -618,9 +630,11 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 res = meeting.minutes_from_live(key, segs, model=model, duration=duration, base_url=base)
                 Handler.jobs[job].update(status="done", msg="끝", result=res)
+                Handler.usage and Handler.usage.add("meeting_live", res.get("credits"), board=name)
                 sys.stderr.write("[회의록 실시간] %s %.0f초 · %d구간\n" % (name, res["duration"], len(res["turns"])))
             except Exception as e:
                 Handler.jobs[job].update(status="error", error=gw.friendly_error(e))
+                Handler.usage and Handler.usage.add("job_fail", ok=False, board=name)
         threading.Thread(target=run, daemon=True).start()
         return self._json(200, {"job": job})
 
@@ -647,9 +661,11 @@ class Handler(SimpleHTTPRequestHandler):
                                         progress=lambda i, n, t: Handler.jobs[job].update(done=i, total=n, msg=t))
                 res.update(elapsed=round(time.time() - t0, 1), credits=self._spent(key, base, b0))
                 Handler.jobs[job].update(status="done", msg="끝", result=res)
+                Handler.usage and Handler.usage.add("trace", res.get("credits"), board=name)
                 sys.stderr.write("[베끼기] %s 도형 %d개 · %.0f초 · %s크레딧\n" % (name, len(res["items"]), res["elapsed"], res["credits"]))
             except Exception as e:
                 Handler.jobs[job].update(status="error", error=gw.friendly_error(e))
+                Handler.usage and Handler.usage.add("job_fail", ok=False, board=name)
         threading.Thread(target=run, daemon=True).start()
         return self._json(200, {"job": job})
 
@@ -861,6 +877,7 @@ class Handler(SimpleHTTPRequestHandler):
             with open(os.path.join(src, tpl + ".ecad"), encoding="utf-8") as f:
                 doc = json.loads(swap(f.read()))
             doc["rev"], doc["example"] = int((old or {}).get("rev") or 0) + 1, tpl
+            doc["example_rev"] = doc["rev"]   # 이 판 그대로면 「받기만 하고 안 고침」 — 자동 정리가 7일 뒤 치움(`cleanup.stale`)
             collab.ensure_uids(doc)
             self._doc_save(name, doc)
         return ""
@@ -935,8 +952,9 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path, q = self._route()
+        self._ai = ""   # 앞 POST가 `_send`로 끝났어도 이 답을 AI 기록으로 세지 않게
         if path == "/api/session":   # 비밀번호가 필요한가·이미 들어왔나 (+ 팀 서버면 내 팀·이 칠판을 써도 되나·우리 팀 첫 칠판 — §8 항목67)
-            out = {"auth": self._locked(), "ok": self._authed(), "server_key": self.server_key}
+            out = {"auth": self._locked(), "ok": self._authed(), "server_key": self.server_key, "keep_days": self.keep_days}
             if q.get("board") and out["ok"]:   # 이 칠판이 서버에 있나 — 남이 준 링크로 처음 열면 이름을 한 번 물음(main.jsx Gate)
                 nm = self._name(q["board"][0])
                 out["exists"] = bool(nm) and os.path.exists(self._doc_path(nm))
@@ -965,6 +983,7 @@ class Handler(SimpleHTTPRequestHandler):
             doc = board and self._doc_load(board)
             if not doc:
                 return self._send(404, b'{"error":"none"}')
+            Handler.usage and Handler.usage.seen(board)   # 게시 링크로 보는 칠판도 「쓰는 칠판」(자동 정리)
             rev = int((q.get("rev") or ["-1"])[0])
             if rev >= int(doc.get("rev") or 0) and rev >= 0:
                 return self._send(204)
@@ -1051,6 +1070,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._send(404, b'{"error":"none"}')
             if m.group(1) == "since" and int((q.get("rev") or ["0"])[0]) >= int(doc.get("rev") or 0):
                 return self._send(204)   # 그 뒤로 바뀐 것 없음
+            if m.group(1) == "doc":
+                Handler.usage and Handler.usage.seen(name)   # 연 날(자동 정리 — 받아 오기 `since`는 몇 초마다라 안 셈)
             return self._json(200, doc)
         p = self._board_path()
         if p is None:
@@ -1100,6 +1121,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self._set_key(collab.edit_key(self.password))
         if not self._authed():
             return self._send(401, b'{"error":"login"}')
+        self._ai, self._ai_board = {"/api/chat": "chat", "/api/ocr": "ocr", "/api/describe": "describe", "/api/stt-token": "stt"}.get(path, ""), ""
         if path == "/api/chat":
             return self._chat()
         if path == "/api/ocr":   # 「그림 속 글 읽기」 — 본문 = {data: PNG base64}(칠판 그림 그대로)
@@ -1135,6 +1157,25 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(200, meeting.live_token(key, base_url=self._base()))
             except Exception as e:
                 return self._json(502, {"error": str(e)})
+        if path == "/api/hwpx":   # 정리 문서 → 한글 파일(.hwpx) — 본문 {html, title}, 답 = 파일 바이트(2026-11-04)
+            req = self._body(8 * 1024 * 1024) or {}
+            html = str(req.get("html") or "") if isinstance(req, dict) else ""
+            if not html:
+                return self._json(400, {"error": "바꿀 문서가 없어요"})
+            try:
+                data = hwpxout.to_hwpx(html, str(req.get("title") or "")[:120])
+            except ImportError:
+                return self._json(501, {"error": "서버에 한글 파일 부품이 없어요(pip install python-hwpx==6.8.0)"})
+            except Exception as e:
+                sys.stderr.write("[한글 파일 실패] %s\n" % e)
+                return self._json(500, {"error": "한글 파일로 못 바꿨어요"})
+            Handler.usage and Handler.usage.add("hwpx")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/hwp+zip")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         m = re.match(r"^/api/delete/([^/]+)$", path)
         if m:   # 칠판 지우기 — 휴지통으로(칠판 판 줄 메뉴)
             name = self._name(m.group(1))
@@ -1152,6 +1193,7 @@ class Handler(SimpleHTTPRequestHandler):
             if why:
                 return self._json(404 if why == "none" else 409, {"error": why})
             sys.stderr.write("[예시] %s ← %s\n" % (name, EXAMPLE))
+            Handler.usage and Handler.usage.new_visit()
             return self._json(200, {"ok": True})
         m = re.match(r"^/api/find/([^/]+)$", path)
         if m:
@@ -1198,6 +1240,7 @@ class Handler(SimpleHTTPRequestHandler):
             doc = self._doc_load(name) or {"format": "easycad-doc", "version": 1, "items": []}
             out = collab.apply_patch(doc, req)
             self._doc_save(name, out)
+        Handler.usage and Handler.usage.touch(name)
         return self._json(200, {"rev": out["rev"]})
 
     def do_PUT(self):
@@ -1225,6 +1268,7 @@ class Handler(SimpleHTTPRequestHandler):
                     doc["title"] = old["title"]
                 doc["rev"] = int(old.get("rev") or 0) + 1
                 self._doc_save(name, doc)
+            Handler.usage and Handler.usage.touch(name)
             return self._json(200, {"ok": True, "rev": doc["rev"]})
         os.makedirs(self.data_dir, exist_ok=True)
         with self.lock:
@@ -1398,6 +1442,7 @@ def main(argv=None):
     ap.add_argument("--data", default=default_data_dir())
     ap.add_argument("--password", default=os.environ.get("MB_PASSWORD", ""), help="공용 편집 비밀번호(없으면 데이터 폴더의 edit_password.txt, 그것도 없으면 누구나 편집)")
     ap.add_argument("--no-server-key", action="store_true", default=os.environ.get("MB_SERVER_KEY", "1") == "0", help="이 서버 PC 키를 안 씀 — KAIROS는 각자 「🔑 내 키」로만(공개 주소에서 크레딧을 지킬 때)")
+    ap.add_argument("--keep-days", type=int, default=int(os.environ.get("MB_KEEP_DAYS", cleanup.IDLE_DAYS)), help="이 날수 동안 아무도 안 연 칠판은 휴지통으로(0 = 정리 안 함, 기본 90 · 안 고친 예시 사본은 7일 · 휴지통은 30일 뒤 완전히)")
     a = ap.parse_args(argv)
     Handler.data_dir = a.data
     pw_file = os.path.join(a.data, "edit_password.txt")
@@ -1413,6 +1458,12 @@ def main(argv=None):
     if teams.exists:   # 팀별 칠판(§8 항목67)
         print("팀: " + (", ".join(f"{t['name']}(칠판 {len(t['boards'])}개{', 키 따로' if t['key'] else ''})" for t in teams.teams) or "없음 — teams.json을 확인해 주세요")
               + (" · 관리자 = 공용 비밀번호" if Handler.password else " · 관리자 없음"))
+    Handler.usage = usage.Usage(a.data)   # 사용 기록 — 60초마다 `usage.json`(python web/usage.py로 보기)
+    Handler.usage.keep_flushing()
+    Handler.keep_days = max(0, a.keep_days)
+    if Handler.keep_days:
+        print(f"자동 정리: {Handler.keep_days}일 안 연 칠판 · 안 고친 예시 사본 {cleanup.EXAMPLE_DAYS}일 → 휴지통, 휴지통 {cleanup.TRASH_DAYS}일 뒤 지움")
+        threading.Thread(target=_sweep_daily, daemon=True).start()
     threading.Thread(target=_route_check_weekly, args=(a.data,), daemon=True).start()
     if gw.resolve_api_key():   # 모델 목록을 먼저 받아 둠 — 은퇴한 모델을 첫 요청부터 대신할 것으로(`model_pick` ①) + 「모델 설정」 그림 값(무료 견적), 2026-10-26
         def warm(key=gw.resolve_api_key(), base=gw.resolve_base_url()):
@@ -1420,6 +1471,33 @@ def main(argv=None):
             model_pick.price_images(key, gw._normalize_base_url(base))
         threading.Thread(target=warm, daemon=True).start()
     _Server((a.host, a.port), Handler).serve_forever()
+
+
+def sweep_once(now=None) -> tuple:
+    """자동 정리 한 번(2026-11-04) — (휴지통으로 옮긴 칠판 수, 완전히 지운 휴지통 폴더 수). 옮기기는 칠판 판 「지우기」와 같은 길(`_delete_board`)."""
+    if Handler.usage:
+        Handler.usage.flush()
+    seen = (Handler.usage.data.get("seen") if Handler.usage else None) or {}
+    h = object.__new__(Handler)   # 요청 없이 `_delete_board`만 — 쓰는 것은 클래스 값(data_dir·lock·changed)뿐
+    moved = 0
+    for name, why in cleanup.stale(Handler.data_dir, seen, usage.board_mark, now=now, idle_days=Handler.keep_days or cleanup.IDLE_DAYS):
+        h._delete_board(name)
+        moved += 1
+        sys.stderr.write("[자동 정리] %s — %s\n" % (name, "안 고친 예시 사본" if why == "example" else f"{Handler.keep_days}일 안 열림"))
+    gone = cleanup.purge(cleanup.old_trash(Handler.data_dir, now=now))
+    return moved, gone
+
+
+def _sweep_daily():
+    time.sleep(120)   # 켜자마자는 말고(열어 둔 창이 먼저 다시 붙게)
+    while True:
+        try:
+            moved, gone = sweep_once()
+            if moved or gone:
+                sys.stderr.write("[자동 정리] 칠판 %d개 휴지통 · 오래된 휴지통 %d개 지움\n" % (moved, gone))
+        except Exception as e:
+            sys.stderr.write("[자동 정리 실패] %s\n" % e)
+        time.sleep(86400)
 
 
 def _route_check_weekly(data_dir: str):

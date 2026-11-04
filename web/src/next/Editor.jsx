@@ -1509,6 +1509,16 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // 정리 문서(「정리해 줘」 ①) — 크게 보기 = 새 탭에 그 HTML(인쇄·PDF는 그 탭에서 Ctrl+P), 카드 = A4 비율(폭 397 = 문서 폭 794의 절반)
   function openDoc(it) { const u = URL.createObjectURL(new Blob([bigPage(it)], { type: 'text/html;charset=utf-8' })); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60_000) }
+  // 정리 문서 → 한글 파일(2026-11-04 — 기안·보고서에 바로). 바꾸기는 서버(`web/hwpxout.py` — 글의 차례만: 제목·문단·목록·표·그림 글)
+  async function saveHwpx(it) {
+    const name = (it.title || '정리 문서').replace(/[\\/:*?"<>|]+/g, ' ').trim() || '정리 문서'
+    setStatus('한글 파일로 바꾸는 중…')
+    try {
+      const r = await fetch('/api/hwpx', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ html: it.html || '', title: it.title || '' }) })
+      if (!r.ok) { setStatus((await r.json().catch(() => ({}))).error || '한글 파일로 못 바꿨어요'); return }
+      download(await r.blob(), name + '.hwpx'); setStatus(`${name}.hwpx 내려받음 — 모양은 빼고 글·표만 옮겼어요(그래프는 [그림] 글로)`)
+    } catch { setStatus('한글 파일로 못 바꿨어요 — 서버 연결을 확인해 주세요') }
+  }
   const DOC_W = 397
   const LIVE_DOC_W = 480   // 움직이는 카드(§8 항목66 4단계) — 기준 칸 720×480을 2/3로(높이 = 띠 + 같은 비율)
   function docItem(msg, x, y, z) {
@@ -2773,7 +2783,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         if (card?.type === 'pdf' && card.url) out.push(['넘겨 보기', '', act(() => webActivate(card))], ['새 탭에서 보기', '', act(() => window.open(`${card.url}#page=${pdfPageAt(card, 0) + 1}`, '_blank', 'noopener'))], '-')
         else if (selIt.length === 1 && selIt[0].type === 'image' && selIt[0].data) out.push(['그림 속 글 읽기', '', act(() => ocrImage(selIt[0]._id))], ['도면으로 베끼기 (KAIROS)', '', act(() => traceImage(selIt[0]._id))], '-')   // OCR → 옆에 메모 · 베끼기 → 옆에 도형 묶음
         else if (card?.type === 'web' && card.url) out.push(['새 탭에서 열기', '', act(() => window.open(card.url, '_blank', 'noopener'))], '-')
-        else if (card?.type === 'doc') out.push(['크게 보기', '', act(() => openDoc(card))], '-')
+        else if (card?.type === 'doc') out.push(['크게 보기', '', act(() => openDoc(card))], ...(card.live ? [] : [['한글 파일로 내려받기 (.hwpx)', '', act(() => saveHwpx(card))]]), '-')   // 움직이는 카드는 글 문서가 아님
         // 2026-10-27 사용자 전수조사(「상식적으로 이상한 것」): 하는 일이 없는 항목은 숨기고, 프레임엔 프레임에만 있는 일
         const frame1 = selIt.length === 1 && selIt[0].type === 'frame' ? selIt[0] : null
         if (frame1) out.push(['이 장부터 발표', '', act(() => startPresent(frame1._id))], ['이름 바꾸기', '', act(() => setTagEdit(frame1._id))], '-')

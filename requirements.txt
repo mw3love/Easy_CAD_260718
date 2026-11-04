@@ -21,3 +21,6 @@ Pillow>=12.1
 # 크래시 리포트(easycad/crash_report.py) — DSN을 채우기 전까진 import조차 안 되므로
 # 런타임 필수는 아니지만, 켤 때 바로 쓸 수 있도록 목록엔 미리 포함.
 sentry-sdk>=2.68
+
+# 웹 칠판 정리 문서 → 한글 파일(.hwpx) 내려받기(web/hwpxout.py, 2026-11-04) — 없으면 그 메뉴만 「부품이 없어요」. Apache-2.0.
+python-hwpx==6.8.0
