@@ -8,6 +8,7 @@
 결과는 그림 옆에 같은 크기로 놓고, 마무리는 사람이 그림을 보며 손으로 한다.
 """
 import io
+import math
 
 from easycad.ai import gateway as gw
 from easycad.ai.photo_to_ops import fit_for_ai, generate_ops_tiled
@@ -114,6 +115,18 @@ def _text_box(op: dict, f: float | None = None) -> tuple[float, float, float, fl
     w = max(_units(s) for s in lines) * f * 4 / 3 / SCALE
     h = len(lines) * f * 4 / 3 * 1.2 / SCALE
     return float(op["x"]), float(op["y"]), float(op["x"]) + w, float(op["y"]) + h
+
+
+def _drawn_text_box(op: dict, scale: float = SCALE) -> tuple[float, float, float, float]:
+    """칠판(웹·데스크톱 글 상자)이 실제로 글자를 그리는 자리(그림 픽셀) — 위·왼쪽 여백 4(칠판 단위 → 그림 픽셀은 ÷ scale) + 줄 높이 1.328배.
+    `_text_box`(1.2배·여백 없음)보다 아래로 길다 — 2026-11-04 진짜 단추에서 계산상 글 밖에 멈춘 화살촉이 칠판에선 「1Gbps」·「50Ω」을 찌름(웹 `geom.js` METRICS.app·TEXT_MARGIN)."""
+    f = float(op.get("font", 13))
+    lines = str(op["text"]).split("\n")
+    m = 4.0 / scale
+    w = max(_units(s) for s in lines) * f * 4 / 3 / SCALE
+    h = len(lines) * f * 4 / 3 * 1.328 / SCALE
+    x, y = float(op["x"]) + m, float(op["y"]) + m
+    return x, y, x + w, y + h
 
 
 def _untangle_texts(spec: dict) -> dict:
@@ -308,7 +321,7 @@ def _even_desc_fonts(ts: list, bad, frames=()) -> None:
                 u["font"] = m
 
 
-def _clear_lines(spec: dict) -> dict:
+def _clear_lines(spec: dict, scale: float = SCALE) -> dict:
     """글과 선·그림 겹침 줄이기(2026-11-03 사용자 — 「감시 서버」 위 모니터 그림, 세로선에 걸린 「VSWR 1.1」, 「송신기#1」의 「#」 낙서).
     ① 상자 이름 위의 작은 낙서(글자 높이보다 작은 poly — AI가 「#」 같은 글자 조각을 그림으로도 그림)는 뺀다(이름에 이미 있음).
     ② 상자 안 그림(아이콘)이 이름과 겹치면 이름을 그림 옆 빈 쪽에 맞게 줄이고(75%까지), 더 줄여야 하면 이름을 빈 쪽 가운데 자유 글로 옮긴다.
@@ -461,6 +474,48 @@ def _clear_lines(spec: dict) -> dict:
             m = min(float(t["font"]) for t in group)
             for t in group:
                 t["font"] = m
+    for op in ops:   # ⑤ 화살촉이 글 안에서 끝나면 글 가장자리 앞으로 당김(2026-11-04 — 「- 자동 전환」·「- 1Gbps」·「- 50Ω」: 원본은 글 바로 앞에서 멈추는데
+        # AI가 글을 조금 크게 적어 촉이 글자를 찌름). 마지막 구간이 글 밖에서 들어올 때만, 남는 길이가 구간의 35% 넘을 때만(글을 따라 누운 화살표는 그대로)
+        if not (isinstance(op, dict) and op.get("op") == "line" and op.get("head")):
+            continue
+        try:
+            pts = [[float(x), float(y)] for x, y in op["pts"]]
+        except (KeyError, TypeError, ValueError):
+            continue
+        if len(pts) < 2:
+            continue
+        p, q = pts[-2], pts[-1]
+        dx, dy = q[0] - p[0], q[1] - p[1]
+        L = math.hypot(dx, dy)
+        if L <= 0:
+            continue
+        for t in ts:
+            r = _drawn_text_box(t, scale)
+            if not (r[0] < q[0] < r[2] and r[1] < q[1] < r[3]):
+                continue
+            g = 0.15 * float(t["font"]) * 4 / 3 / SCALE
+            if not (r[0] <= p[0] <= r[2] and r[1] <= p[1] <= r[3]):
+                hits = [s for s in ((r[0] - p[0]) / dx if dx else None, (r[2] - p[0]) / dx if dx else None,
+                                    (r[1] - p[1]) / dy if dy else None, (r[3] - p[1]) / dy if dy else None) if s is not None and 0 < s < 1]
+                hits = [s for s in hits if r[0] - 0.01 <= p[0] + dx * s <= r[2] + 0.01 and r[1] - 0.01 <= p[1] + dy * s <= r[3] + 0.01]
+                s = (min(hits) - g / L) if hits else 0.0
+                if s * L >= max(0.35 * L, 6.0):
+                    pts[-1] = [p[0] + dx * s, p[1] + dy * s]
+                    op["pts"] = pts
+                    break
+            # 당길 길이가 없음(화살표가 통째로 글 자리 안 — 「1Gbps」 밑 짧은 빨간 화살표, 글자 여백에 덮인 「- 7/8인치 →」 꼬리) → 글을 화살표 줄을 따라 비킴:
+            # 촉 너머 또는 꼬리 앞으로, 덜 움직이는 쪽부터(세로 = 글 높이만큼·가로 = 폭 60%까지, 새로 겹치지 않을 때만)
+            sx0, sy0, sx1, sy1 = min(p[0], q[0]), min(p[1], q[1]), max(p[0], q[0]), max(p[1], q[1])
+            if abs(dx) >= abs(dy):
+                cand, lim = [(sx0 - g - r[2], 0.0), (sx1 + g - r[0], 0.0)], 0.6 * (r[2] - r[0])
+            else:
+                cand, lim = [(0.0, sy0 - g - r[3]), (0.0, sy1 + g - r[1])], r[3] - r[1]
+            for mx, my in sorted(cand, key=lambda v: abs(v[0]) + abs(v[1])):
+                tb = _text_box(t)
+                if abs(mx) + abs(my) <= lim and not bad(t, (tb[0] + mx, tb[1] + my, tb[2] + mx, tb[3] + my)):
+                    t["x"], t["y"] = float(t["x"]) + mx, float(t["y"]) + my
+                    break
+            break
     return {**spec, "ops": ops}
 
 
@@ -476,5 +531,5 @@ def trace(key: str, png: bytes, *, width: float = 0, model: str = TRACE_MODEL, b
     client = gw._client(key, base_url or gw.resolve_base_url(), timeout=600.0)
     spec, log = generate_ops_tiled(client, sent, model=model, progress=progress)
     scale = float(width) / W if width and width > 0 else SCALE
-    sk, skipped = ops_to_sketch(_scale_fonts(_clear_lines(_untangle_texts(_even_box_fonts(spec))), scale / SCALE), dark=False, scale=scale)
+    sk, skipped = ops_to_sketch(_scale_fonts(_clear_lines(_untangle_texts(_even_box_fonts(spec)), scale), scale / SCALE), dark=False, scale=scale)
     return {"items": sk._items, "w": W * scale, "h": H * scale, "skipped": skipped, "tiles": log, "model": model}

@@ -27,7 +27,11 @@ function roundRect(w, h, r) {
     ['L', r, h], ['C', r - k, h, 0, h - r + k, 0, h - r], ['L', 0, r], ['C', 0, r - k, r - k, 0, r, 0], ['Z']]
 }
 // 상자 안 좌표의 변 가운데(r·l·t·b) — 화살표가 붙는 자리(.ecad `bindN_pt`)
-const sidePt = ([, , w, h], s) => ({ r: [w, h / 2], l: [0, h / 2], t: [w / 2, 0], b: [w / 2, h] })[s]
+const sidePt = ([, , w, h], s) => {
+  const k = s[1] === '1' ? 1 / 3 : s[1] === '2' ? 2 / 3 : 1 / 2   // 「r1」「t2」 = 변 위 1/3·2/3 점(꼬임 풀기만 씀)
+  return ({ r: [w, h * k], l: [0, h * k], t: [w * k, 0], b: [w * k, h] })[s[0]]
+}
+const sideOf = ([, , w, h], [x, y]) => (Math.abs(x - w) < 0.5 ? 'r' : Math.abs(x) < 0.5 ? 'l' : Math.abs(y) < 0.5 ? 't' : 'b')
 const FWD = { LR: ['r', 'l'], RL: ['l', 'r'], TD: ['b', 't'], BT: ['t', 'b'] }
 
 /** 화살표마다 붙을 변 [앞, 뒤] — 데스크톱과 같은 규칙: 흐름 방향 변끼리, 꺾은 덩어리를 넘어가면 아래 → 위(세로 흐름이면 오른쪽 → 왼쪽),
@@ -174,36 +178,93 @@ export function tangles(items, list = null) {
 }
 
 /** 꼬인 화살표만 붙는 변을 바꿔 봄(처음 지을 때만): 꼬임에 낀 화살표마다 두 끝 변 16가지를 길 찾기로 그려 보고, 전체 꼬임이 가장 많이 주는 한 수를 둠 → 더 안 줄 때까지.
+ *  한 수로 안 줄면 ② 꼬인 두 화살표를 같이 바꿔 봄(16 × 16), 그래도 남으면 ③ 네모 상자는 변 가운데 말고 1/3·2/3 점도(2026-11-04 — 통로를 건너는 두 선이
+ *  같은 가운데 점으로 모여 서로 지나쳤음). 심볼(마름모·둥근 끝 등)은 변 위 다른 점이 도형 밖이라 가운데만.
  *  꼬임이 없는 도형은 그대로(흐름 방향 변 규칙 `linkSides`가 먼저). 2026-11-03 사용자(공개 칠판 18번 → 23번): 「필터 → 급전선」이 위로 나가 판을 크게 돌며
  *  「출력 감시」와 엇갈리고 「제어」 되돌림 선과 같은 줄에 포개졌음 — 변 규칙은 화살표 하나씩만 봐서 서로 부딪히는 건 모름.
  *  검토한 대안: 규칙 더하기(이 경우 = 오른쪽으로 나가기) — 판마다 다른 모양이라 끝이 없어 버림. */
 export function untangle(items) {
   const arrows = items.filter(it => it.type === 'sarrow' && it._bind1 && it._bind2), box = new Map(items.filter(it => it.flow_step).map(it => [it._id, it]))
   const route = it => applyRouting(it, items).map(([x, y]) => [x + it.pos[0], y + it.pos[1]])
-  const R = arrows.map(route), SIDES = ['r', 'l', 't', 'b'], memo = new Map()
+  const R = arrows.map(route), memo = new Map()
+  const MID = ['r', 'l', 't', 'b'], ALLP = [...MID, 'r1', 'r2', 'l1', 'l2', 't1', 't2', 'b1', 'b2']
+  const ptsOf = (bx, wide) => (wide && bx.type === 'rect' ? ALLP : MID)
   const badOf = i => arrows.reduce((s, b, j) => s + (j === i ? 0 : pairTangles(arrows[i], b, R[i], R[j])), 0)
   const len = r => r.slice(1).reduce((s, q, j) => s + Math.abs(q[0] - r[j][0]) + Math.abs(q[1] - r[j][1]), 0)
   // 라벨 화살표는 라벨이 상자에 안 걸리고 놓일 자리가 있어야(바꾸기 전에 있었으면) — 상자 바로 옆으로 꺾는 짧은 길로 바뀌어 라벨 둘 데가 없어졌음(점검 재료 「아니오」)
   const boxes = [...box.values()].map(it => ({ l: it.pos[0], t: it.pos[1], r: it.pos[0] + it.rect[2], b: it.pos[1] + it.rect[3] }))
   const fits = (it, r) => { const L = it.labels?.[0]; return !L?.text || labelSpot(r.map(([x, y]) => ({ x, y })), labelW(L.text), L.t ?? 0.5, q => boxes.some(b => meet(q, b))) != null }
   const fitNow = arrows.map((it, i) => fits(it, R[i]))
-  for (let round = 0; round < 8; round++) {
+  // 화살표 i의 후보 길 [{ set, r, ok, cost }] — 길은 상자만 보고 찾으니 끝 점 짝마다 한 번만
+  const cands = (i, wide) => {
+    const it = arrows[i], a = box.get(it._bind1), b = box.get(it._bind2), keep = { pts: it.pts, bind1_pt: it.bind1_pt, bind2_pt: it.bind2_pt, route_hints: it.route_hints }, out = []
+    // 1/3·2/3 점은 상대 상자를 바라보는 변과 지금 변에서만(다 보면 144가지 · 0.6초)
+    const dx = b.pos[0] + b.rect[2] / 2 - a.pos[0] - a.rect[2] / 2, dy = b.pos[1] + b.rect[3] / 2 - a.pos[1] - a.rect[3] / 2
+    const f1 = new Set([sideOf(a.rect, it.bind1_pt), dx > 0 ? 'r' : 'l', dy > 0 ? 'b' : 't']), f2 = new Set([sideOf(b.rect, it.bind2_pt), dx > 0 ? 'l' : 'r', dy > 0 ? 't' : 'b'])
+    for (const s1 of ptsOf(a, wide)) for (const s2 of ptsOf(b, wide)) {
+      if (wide && (s1.length > 1 || s2.length > 1) && !(f1.has(s1[0]) && f2.has(s2[0]))) continue
+      const key = i + ':' + s1 + ':' + s2
+      if (!memo.has(key)) {
+        const p1 = sidePt(a.rect, s1), p2 = sidePt(b.rect, s2)
+        Object.assign(it, { bind1_pt: p1, bind2_pt: p2, route_hints: [], pts: [[a.pos[0] + p1[0], a.pos[1] + p1[1]], [b.pos[0] + p2[0], b.pos[1] + p2[1]]] })
+        const r = route(it)
+        memo.set(key, { key, set: { bind1_pt: p1, bind2_pt: p2, route_hints: [], pts: it.pts }, r, ok: !fitNow[i] || fits(it, r), cost: len(r) })
+      }
+      out.push(memo.get(key))
+    }
+    Object.assign(it, keep)
+    return out
+  }
+  // 후보를 실제로 대 보고 꼬임 계산(badOf는 bind 자리도 봄 — 한 점에 들어오고 나가는 끝)
+  const tryOn = (i, c, f) => { const it = arrows[i], keep = { pts: it.pts, bind1_pt: it.bind1_pt, bind2_pt: it.bind2_pt, route_hints: it.route_hints }, old = R[i]; Object.assign(it, c.set); R[i] = c.r; const v = f(); Object.assign(it, keep); R[i] = old; return v }
+  const better = (best, gain, cost) => gain > 0 && (!best || gain > best.gain || (gain === best.gain && cost < best.cost))
+  const single = wide => {
     let best = null
     arrows.forEach((it, i) => {
       const now = badOf(i); if (!now) return
-      const keep = { pts: it.pts, b1: it.bind1_pt, b2: it.bind2_pt, h: it.route_hints }, a = box.get(it._bind1), b = box.get(it._bind2)
-      for (const s1 of SIDES) for (const s2 of SIDES) {
-        const p1 = sidePt(a.rect, s1), p2 = sidePt(b.rect, s2)
-        Object.assign(it, { bind1_pt: p1, bind2_pt: p2, route_hints: [], pts: [[a.pos[0] + p1[0], a.pos[1] + p1[1]], [b.pos[0] + p2[0], b.pos[1] + p2[1]]] })
-        const key = i + s1 + s2, r = memo.get(key) || memo.set(key, route(it)).get(key), old = R[i]; R[i] = r   // 길은 상자만 보고 찾으니 한 번만
-        const gain = fitNow[i] && !fits(it, r) ? 0 : now - badOf(i), cost = len(r)
-        R[i] = old
-        if (gain > 0 && (!best || gain > best.gain || (gain === best.gain && cost < best.cost))) best = { i, gain, cost, r, set: { bind1_pt: p1, bind2_pt: p2, route_hints: [], pts: it.pts } }
+      for (const c of cands(i, wide)) {
+        if (!c.ok || banned.has(c.key)) continue
+        const gain = now - (score.get(c.key) ?? score.set(c.key, tryOn(i, c, () => badOf(i))).get(c.key))
+        if (better(best, gain, c.cost)) best = { gain, cost: c.cost, moves: [[i, c]] }
       }
-      Object.assign(it, { pts: keep.pts, bind1_pt: keep.b1, bind2_pt: keep.b2, route_hints: keep.h })
     })
+    return best
+  }
+  const pair = () => {   // 서로 꼬인 두 화살표를 같이
+    let best = null
+    for (let i = 0; i < arrows.length; i++) for (let j = i + 1; j < arrows.length; j++) {
+      if (!pairTangles(arrows[i], arrows[j], R[i], R[j])) continue
+      const both = () => badOf(i) + badOf(j) - pairTangles(arrows[i], arrows[j], R[i], R[j]), now = both()
+      const ci = cands(i, false).filter(c => c.ok), cj = cands(j, false).filter(c => c.ok)
+      for (const a of ci) tryOn(i, a, () => { for (const b of cj) {
+        if (banned.has(a.key + '|' + b.key)) continue
+        const pk = a.key + '|' + b.key, gain = now - (score.get(pk) ?? score.set(pk, tryOn(j, b, both)).get(pk))
+        if (better(best, gain, a.cost + b.cost)) best = { gain, cost: a.cost + b.cost, moves: [[i, a], [j, b]] }
+      } })
+    }
+    return best
+  }
+  // 라벨 자리를 못 찾는 라벨 수(`placeLabels`와 같은 셈) — 한 수가 남의 라벨 자리를 막으면 그 수는 버림(점검 재료 「아니오」가 상자 위에 남았음)
+  const noSpot = () => {
+    const segs = arrows.flatMap((_, j) => R[j].slice(1).map((q, k) => [j, { l: Math.min(q[0], R[j][k][0]) - 1, r: Math.max(q[0], R[j][k][0]) + 1, t: Math.min(q[1], R[j][k][1]) - 1, b: Math.max(q[1], R[j][k][1]) + 1 }]))
+    const taken = []; let n = 0
+    arrows.forEach((it, i) => {
+      const L = it.labels?.[0]; if (!L?.text) return
+      const pts = R[i].map(([x, y]) => ({ x, y })), w = labelW(L.text)
+      const t = labelSpot(pts, w, L.t ?? 0.5, q => segs.some(([j, sg]) => j !== i && meet(q, sg)) || boxes.some(b => meet(q, b)) || taken.some(b => meet(q, b)))
+      if (t == null) n++
+      taken.push(labelRect(polylineAt(pts, t ?? L.t ?? 0.5).p, w))
+    })
+    return n
+  }
+  const banned = new Set(), base = noSpot(), score = new Map()   // score = 후보마다 꼬임 수(둔 수가 남으면 비움 — 버린 수 뒤엔 그대로 다시 씀)
+  for (let round = 0; round < 24; round++) {
+    const best = single(false) || pair() || single(true)
     if (!best) break
-    Object.assign(arrows[best.i], best.set); R[best.i] = best.r
+    const keep = best.moves.map(([i]) => [i, { pts: arrows[i].pts, bind1_pt: arrows[i].bind1_pt, bind2_pt: arrows[i].bind2_pt, route_hints: arrows[i].route_hints }, R[i]])
+    for (const [i, c] of best.moves) { Object.assign(arrows[i], c.set); R[i] = c.r }
+    if (noSpot() <= base) score.clear()
+    else { for (const [i, k, r] of keep) { Object.assign(arrows[i], k); R[i] = r } banned.add(best.moves.map(([, c]) => c.key).join('|')) }
   }
   return items
 }

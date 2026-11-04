@@ -391,3 +391,36 @@ def test_trace_even_desc_fonts_neighbors_match_and_outliers_move_toward_median()
     assert abs(f[4] - 1.3 * 34) < 0.01                                          # 혼자 큰 설명 글은 1.3배로
     x0, _, x1, _ = board_trace._text_box(ts[8])
     assert f[8] == 20 and x1 > 1150                                             # 이미 넘치던 글은 그대로(키우지 않음 — 줄이기는 `_untangle_texts` 몫)
+
+
+def test_trace_clear_lines_pulls_arrow_tip_out_of_text():
+    """화살촉이 글 안에서 끝나면 글 가장자리 앞으로(2026-11-04 — 저장한 설계서에서 「- 자동 전환」·「- 1Gbps」·「- 50Ω」을 촉이 찌름, 원본은 글 바로 앞에서 멈춤).
+    마지막 구간이 글 밖에서 들어올 때만 — 글을 따라 누운 화살표(시작도 글 안)와 촉 없는 선은 그대로."""
+    spec = {"ops": [
+        {"op": "text", "x": 260, "y": 100, "text": "- 자동 전환", "font": 16},
+        {"op": "line", "pts": [[300, 300], [300, 111.5]], "head": True},     # 아래에서 올라와 글 아래 가장자리를 찌름(가운데까진 안 옴 — 그건 ③이 글을 비킴)
+        {"op": "text", "x": 600, "y": 100, "text": "(380V 3상)", "font": 16},
+        {"op": "line", "pts": [[610, 112], [660, 112]], "head": True},       # 글을 따라 누움(시작도 글 안)
+        {"op": "text", "x": 900, "y": 100, "text": "- 50Ω", "font": 16},
+        {"op": "line", "pts": [[920, 300], [920, 110]], "head": False},      # 촉 없음
+    ]}
+    out = board_trace._clear_lines(spec)["ops"]
+    r = board_trace._drawn_text_box(out[0])                                  # 칠판이 실제로 그리는 자리(여백 4·줄 높이 1.328배)
+    tip = out[1]["pts"][-1]
+    assert tip[0] == 300 and r[3] < tip[1] < r[3] + 0.3 * (r[3] - r[1])     # 글 아래 가장자리 바로 앞
+    assert out[3]["pts"] == [[610, 112], [660, 112]]
+    assert out[5]["pts"] == [[920, 300], [920, 110]]
+
+
+def test_trace_clear_lines_moves_text_when_arrow_lies_inside_it():
+    """화살표가 통째로 글 자리 안이면(당길 길이 없음 — 2026-11-04 진짜 단추 「1Gbps」 밑 짧은 빨간 화살표) 글을 화살표 줄을 따라 촉 너머로 비킴.
+    글 자리 = 칠판이 그리는 자리(위·왼쪽 여백 4 + 줄 높이 1.328배) — `_text_box`(1.2배)로 재면 촉이 글 밖이라 그대로였음."""
+    sc = 0.44
+    t = {"op": "text", "x": 231, "y": 323, "text": "- 1Gbps", "font": 34}
+    spec = {"ops": [t, {"op": "line", "pts": [[282, 362], [282, 348]], "head": True}]}
+    r0 = board_trace._drawn_text_box(t, sc)
+    assert r0[1] < 348 < r0[3]                                              # 칠판에선 촉이 글 속
+    out = board_trace._clear_lines(spec, sc)["ops"]
+    r = board_trace._drawn_text_box(out[0], sc)
+    assert out[1]["pts"] == [[282, 362], [282, 348]]                         # 화살표는 그대로
+    assert r[3] < 348 and out[0]["x"] == 231                                # 글이 위로(촉 너머), 옆으로는 안 감
