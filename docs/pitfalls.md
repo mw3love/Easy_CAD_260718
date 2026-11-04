@@ -1759,3 +1759,4 @@
 - ⚠ (2026-11-03) `git stash push`는 pre-push doc-sync 훅이 push로 잘못 알아 막음 — `git stash -- <경로>`로.
 - 화면 시험(e2e)에서 칠판 물건을 고를 땐 `liveDoc`(= `toEcad`)의 `uid`로 — 편집기 속 `_id`는 저장 꼴에 없음(2026-11-04, flow59).
 - 저장 꼴의 화살표 연결 `bind1/bind2`는 아이템 목록 순번(편집기 속 `_bind1/_bind2` = _id) — e2e에서 붙은 물건은 `doc.items[a.bind1].uid`로(2026-11-04, flow59).
+- 예시 칠판 복사(`server._example_copy`)는 `.ecad`·`.chat.json` 속 그림 주소만 사본 이름으로 바꾸고 `.threads.json`(말풍선 대화)은 그대로 — 예시에 그림 말풍선 대화를 넣을 땐 답의 `img`(썸네일 주소)를 빼야 함(2026-11-04)
