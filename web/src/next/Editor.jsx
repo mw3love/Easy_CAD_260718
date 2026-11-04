@@ -1,7 +1,7 @@
 // 직접 만드는 칠판 2단계 — 기본 편집(데스크톱 `core_view` 규칙): 선택(클릭·범위·Shift)·이동(Shift = 축 고정)·크기·회전·스마트 정렬선·
 // 되돌리기·복사/붙여넣기/복제·삭제·묶기·잠금·순서·반전·방향키, 그리기 도구(상자·원·글·선·펜·다각형), 글 편집(TipTap).
 // 화면 = 칠판 × z + (x, y). 손잡이·선 굵기는 화면 px 고정(÷ z).
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { arrowAt, arrowLabelBoxes, flipT, cellFontPx, cellStyle, fitTable, legendLayout, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, memoLinkAt, rr, isDeepPaper, deepPaper, docFrame, webFrame, imgSrc } from './render.jsx'
 import { DOC_NAME, boardMembership, drawOrder, itemBounds } from './doc.js'
@@ -53,6 +53,7 @@ import { BoardSkeleton } from './skeleton.jsx'
 import { applyDelta, itemDelta, mergeDelta } from './sync.js'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
+const ZOOM_TAU = 40   // 휠 한 칸이 미끄러지는 빠르기(ms) — 0.12초쯤에 거의 다 감
 const BLUE = '#89b4fa', PEACH = '#fab387', GUIDE = 'rgb(230,60,160)'   // 데스크톱 theme BLUE·PEACH, 가이드선 마젠타
 const HANDLE = 10, HIT_PX = 4, EDGE_PX = 5
 const INK = '#ff1f1f1f'   // 새로 그리는 선·글 기본색(밝은 칠판)
@@ -120,6 +121,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const st = useRef({}), hist = useRef({ past: [], future: [] }), clip = useRef({ items: [], seq: 0 }), svg = useRef(null)
   const items = live || model.items
   const zBack = useRef(null)   // Z 다 보기 전 자리 {before, after} — Z 한 번 더 = 되돌아감
+  const zoomA = useRef(null)   // 휠 확대 중 { zT: 갈 배율, mx·my: 마우스, last: 마지막에 보낸 cam, mine: 보낸 cam들 } — 아래 wheelZoom
   const R = useRef(); R.current = { vhosts: new Map(), ...R.current, model, sel, cam, tool, items, editing, hp: overlay.hp, activeLayer, live: !!live, poly: !!overlay.poly, lpt: overlay.lpt, others, keepTool }
   // 누를 수 있는 것 = 숨긴 레이어 밖(데스크톱 setVisible(False)는 눌리지도 않음)
   const layerLocked = it => { const l = layersOf(R.current.model).find(x => x.id === layerIdOf(it)); return !!l?.locked }
@@ -2579,11 +2581,25 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
 
   // 휠 = 커서 기준 확대
   // 고치기 칸 위 휠 클릭 = 칠판 화면 이동(칸이 칠판 svg 밖이라 넘겨받음 — 끄는 동안은 svg가 포인터를 잡음)
-  const startPan = useCallback(e => { try { svg.current.setPointerCapture(e.pointerId) } catch { /* 이미 끝난 포인터 */ }
+  const startPan = useCallback(e => { stopZoom(); try { svg.current.setPointerCapture(e.pointerId) } catch { /* 이미 끝난 포인터 */ }
     st.current = { ...st.current, kind: 'pan', right: false, sx: e.clientX, sy: e.clientY, cam: R.current.cam }; setCursor('grabbing') }, [])   // eslint-disable-line
+  // 한 칸(15%) = 0.12초에 걸쳐 미끄러지듯 — 장면마다 cam(칠판은 CSS로 늘고 줄어 장면이 가벼움, 아래 svg style). 마우스 자리 고정
+  // 미끄러지는 동안 = will-change(그려 둔 그림을 늘림 — 장면마다 칠판 전체를 새 크기로 다시 그리던 것(헤드리스 장면당 20ms)을 건너뜀), 멈추면 걷어 선명하게 한 번
+  const boardSvg = () => svg.current?.firstElementChild
+  const [glideZ, setGlideZ] = useState(null)   // 미끄러지기 시작한 배율
+  const stopZoom = () => { const A = zoomA.current; if (A?.raf) cancelAnimationFrame(A.raf); zoomA.current = null; const el = boardSvg(); if (el) el.style.willChange = ''; if (A) setGlideZ(null) }
+  useLayoutEffect(() => { const A = zoomA.current; if (A && !A.mine.has(cam)) stopZoom() }, [cam])   // eslint-disable-line   // 다른 데서 화면을 옮김(Z·미니맵·끌기) = 굴리던 것 멈춤
+  useEffect(() => stopZoom, [])   // eslint-disable-line
+  const zoomStep = now => { const A = zoomA.current; if (!A) return; A.raf = 0
+    const c = A.last || R.current.cam, dt = Math.min(64, Math.max(0, now - A.t)); A.t = now
+    const left = Math.log(A.zT / c.z), close = Math.abs(left) < 0.005, z = close ? A.zT : c.z * Math.exp(left * (1 - Math.exp(-dt / ZOOM_TAU))), k = z / c.z
+    const n = { z, x: A.mx - (A.mx - c.x) * k, y: A.my - (A.my - c.y) * k }; A.last = n; A.mine.add(n); setCam(n)
+    if (close) stopZoom(); else A.raf = requestAnimationFrame(zoomStep) }
   // 메모 입력 칸도 이걸 부름
-  const wheelZoom = useCallback(e => { const r = svg.current.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top
-    setCam(c => { const z = Math.min(ZMAX, Math.max(ZMIN, c.z * (e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP))), k = z / c.z; return { z, x: mx - (mx - c.x) * k, y: my - (my - c.y) * k } }) }, [setCam])
+  const wheelZoom = useCallback(e => { const r = svg.current.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top, k0 = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP
+    const A = zoomA.current || (zoomA.current = { zT: R.current.cam.z, raf: 0, mine: new WeakSet() }), el = boardSvg(); if (el && !el.style.willChange) { el.style.willChange = 'transform'; setGlideZ(R.current.cam.z) }
+    A.zT = Math.min(ZMAX, Math.max(ZMIN, A.zT * k0)); A.mx = mx; A.my = my
+    if (!A.raf) { A.t = performance.now(); A.raf = requestAnimationFrame(zoomStep) } }, [])   // eslint-disable-line
   useEffect(() => {
     const el = svg.current
     const onWheel = e => { e.preventDefault(); wheelZoom(e) }
@@ -2604,7 +2620,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const asTable = it => (isChart(it) && (it._id === editingId || cellSel?.id === it._id) ? { ...it, chart: undefined } : it)   // 그래프 칸 고치는 중 = 그 자리에서 표로 펼침(밖을 누르면 다시 그래프)
 
   // ── 덧그림(칠판 좌표, 굵기는 ÷z) ──
-  const z = cam.z, sw = 1.6 / z
+  const z = glideZ ?? cam.z, sw = 1.6 / z   // 미끄러지는 동안 = 덧그림 굵기·--z를 시작 배율로 고정(장면마다 바뀌면 칠판 전체를 다시 그림 — will-change가 소용없음)
   const multi = selItems.length > 1
   const outline = it => {
     // 중심선 = 화면 1.6px, 선 가운데를 지나감(데스크톱과 통일 — 선 원래 색이 가장자리로 보임, 2026-10-18 사용자 선택)
@@ -2671,10 +2687,12 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
 
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
-      <svg ref={svg} width={size.w} height={size.h} style={{ display: 'block', cursor, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }} data-testid="board"
-        onPointerDown={e => { if (R.current.stylePv) setStylePv(false); onPointerDown(e) }} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={phone ? touchEnd : undefined} onDoubleClick={phone ? undefined : onDoubleClick} onContextMenu={e => e.preventDefault()}
+      {/* 칠판 판 = 화면 전체 상자(누르기·휠·자리 재기 — svg ref), 그 안 svg는 CSS로 옮기고 늘림(2026-11-05 — SVG transform 배율이 바뀌면 크롬이 글자를 전부 다시 배치: 예시 칠판 한 칸 21ms → CSS 0.7ms) */}
+      <div ref={svg} data-testid="board" style={{ position: 'absolute', inset: 0, overflow: 'hidden', cursor, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
+        onPointerDown={e => { stopZoom(); if (R.current.stylePv) setStylePv(false); onPointerDown(e) }} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={phone ? touchEnd : undefined} onDoubleClick={phone ? undefined : onDoubleClick} onContextMenu={e => e.preventDefault()}
         onMouseDown={e => { if (R.current.editing && e.button !== 0) e.preventDefault() }}>
-        <g transform={`translate(${cam.x},${cam.y}) scale(${z})`} style={{ '--z': z }}>
+      <svg width={size.w} height={size.h} style={{ display: 'block', overflow: 'visible', transformOrigin: '0 0', transform: `translate(${cam.x}px,${cam.y}px) scale(${cam.z})` }}>
+        <g style={{ '--z': z, '--cz': z }}>
           {visible.map(([it0, i]) => [asTable(it0), i]).map(([it, i]) => (it._id === editingId && it.label?.align === 'left' && editing?.kind === 'label' ? <Item key={it._id} it={{ ...it, label: { ...it.label, text: '' } }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />
             : it._id === editingId && it.type === 'memo' ? <Item key={it._id} it={{ ...it, lines: [] }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />   // 고치는 메모 = 바탕만(흐린 글자가 투명한 채움 사이로 잔상처럼 비쳤음 — 2026-10-18 사용자)
             : it._id === editingId ? <g key={it._id} opacity={0.15}><Item it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" /></g>
@@ -2756,7 +2774,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
             return pts && <><Item it={{ ...base([0, 0], { type: 'polygon', closed: false, pts: pts.map(q => [q.x, q.y]), rect: [0, 0, 0, 0], ...penOf(false), fill: null }), _id: 'draft' }} dark={dark} />
               {shut && <circle data-testid="poly-close" cx={overlay.poly[0].x} cy={overlay.poly[0].y} r={5 / z} fill={BLUE} stroke="#fff" strokeWidth={1.5 / z} />}</> })()}
         </g>
-      </svg>
+      </svg></div>
       {phoneCards.length > 0 && <div data-testid="phone-cards" style={{ position: 'absolute', left: 0, top: 0, width: size.w, height: size.h, overflow: 'hidden', pointerEvents: 'none' }}>
         <div style={{ position: 'absolute', left: 0, top: 0, transformOrigin: '0 0', transform: `translate(${cam.x}px,${cam.y}px) scale(${cam.z})` }}>
           {phoneCards.map(it => { const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H

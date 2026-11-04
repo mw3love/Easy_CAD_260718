@@ -195,7 +195,7 @@ test('멀리서 넣어도 쪽 그림(잠들지 않음) · 바깥 눌러도 보�
 
   const [hb] = [await page.locator('[data-pdfid]').boundingBox()]           // ↗ 위 = 손가락 커서
   await page.mouse.move(hb.x + hb.width - 20, hb.y - 20)
-  await expect(page.locator('svg[style*="cursor"]').first()).toHaveCSS('cursor', 'pointer')
+  await expect(page.getByTestId('board')).toHaveCSS('cursor', 'pointer')   // 커서 = 칠판 판 상자(2026-11-05 — svg는 CSS로 늘리는 안쪽)
 })
 
 test('그림 우클릭 「그림 속 글 읽기」 = KAIROS 글 → 그림 옆 메모(그림은 그대로)', async ({ page }) => {
