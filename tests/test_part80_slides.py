@@ -188,3 +188,24 @@ def test_redo_slide_keeps_picture_slide():
     out = slides.redo_slide(fake_client(ans, sent), pic, "메모 줄여")
     assert out["edit"]["layout"] == slides.PIC and out["edit"]["notes"] == "짧게"                 # 그림 장은 그림 장 그대로(칠판이 그림을 다시 씀)
     assert "「그림」이면" in sent[0]["messages"][0]["content"]
+
+
+def test_both_keeps_text_slide_and_draws_alt_picture():
+    """작은 책 ② 갈래 — pic = "both"(계획 카드 🖼 세 번째): 장은 글 그대로, 그림은 `alt_pic`(칠판이 그 장 아래 판으로). 표지는 늘 글만."""
+    p = slides.clean_plan({"title": "전파", "slides": [{"title": "표지", "pic": "both"}, {"title": "송신소", "pic": "both"}, {"title": "끝", "pic": "x"}]})
+    assert [s["pic"] for s in p["slides"]] == [False, slides.BOTH, False]
+    ans = json.dumps({"slides": [{"title": "표지", "bullets": ["a"]}, {"title": "송신소", "layout": "글머리", "bullets": ["쏜다"]}, {"title": "끝", "bullets": ["b"]}]}, ensure_ascii=False)
+    out = slides.build("k", fake_client(ans, []), "전파", {}, p, model="w", image=lambda pr: {"img": "/x.png", "w": 3, "h": 2, "model": "m", "junk": 1})
+    s1 = out["deck"]["slides"][1]
+    assert s1["layout"] == "글머리" and s1["alt_pic"] == {"img": "/x.png", "w": 3, "h": 2, "model": "m"} and "pic" not in s1
+    assert slides.estimate(p)["credits"][0] == slides.estimate({**p, "slides": [{**s, "pic": False} for s in p["slides"]]})["credits"][0] + slides.PIC_CREDITS
+
+
+def test_server_slides_pic_step_draws_one(server, monkeypatch):
+    import server as srv
+    asked = []
+    monkeypatch.setattr(srv.Handler, "_deep_image", lambda self, board, key, base: (lambda prompt: asked.append(prompt) or {"img": "/api/img/b/1.png", "w": 3, "h": 2, "model": "img-m"}) if board else None)
+    out = _post(server, {"kind": "slides", "board": "b", "slides": {"step": "pic", "deck": "전파", "slide": {"title": "송신소", "bullets": ["쏜다 [1]"]}}})
+    assert out["pic"] == {"img": "/api/img/b/1.png", "w": 3, "h": 2, "model": "img-m"} and "[제목] 송신소" in asked[0] and "[발표] 전파" in asked[0]
+    with pytest.raises(urllib.error.HTTPError):
+        _post(server, {"kind": "slides", "board": "", "slides": {"step": "pic", "slide": {"title": "송신소"}}})   # 칠판 이름 없으면 못 그림

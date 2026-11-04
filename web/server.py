@@ -380,6 +380,14 @@ class Handler(SimpleHTTPRequestHandler):
                 out = self._with("slides", slides.WRITER_MODEL, lambda m: slides.build(key, gw._client(key, base, timeout=600), topic, brief, plan, base_url=base, material=material, model=m, image=self._deep_image(str(req.get("board") or ""), key, base), images=pics))
                 sys.stderr.write("[발표 자료 만들기] %s %.1f초 %d장(그림 장 %d) 출처 %d%s\n" % (out["model"], out["elapsed"], len(out["deck"]["slides"]), sum(1 for s in out["deck"]["slides"] if s.get("pic")),
                                  len(out["deck"]["sources"]), " · 못 그린 그림 장: " + " / ".join(out["pic_errors"]) if out.get("pic_errors") else ""))
+            elif step == "pic":   # 이미 만든 장에 그림 판 더하기(작은 책 ② — 칠판 우클릭 「다른 판 더하기 › 그림으로」): 그 장 글로 그림 한 장
+                one = d.get("slide") if isinstance(d.get("slide"), dict) else {}
+                draw = self._deep_image(str(req.get("board") or ""), key, base)
+                if not draw or not str(one.get("title") or "").strip():
+                    return self._json(400, {"error": "칠판 이름이나 장이 없어요"})
+                t0 = time.time()
+                pic = draw(slides.pic_prompt(str(d.get("deck") or one["title"])[:80], one))
+                out = {"pic": pic, "model": pic.get("model"), "elapsed": round(time.time() - t0, 1)}
             else:
                 return self._json(400, {"error": "step"})
         except ValueError as e:

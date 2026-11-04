@@ -87,3 +87,57 @@ test('PDF 용지 「프레임」 — 프레임만 내보낼 때만 보이고, �
   const a4 = await page.evaluate(() => window.__mb.ed.exportPages({ format: 'pdf', scope: 'frames', selection: false, page: 'A4', margin: 10, preview: true }))
   expect(a4.pages.every(p => Math.abs(p.pw / p.ph - 297 / 210) < 0.01)).toBe(true)                // A4 = 그대로(여백 + 용지)
 })
+
+test('작은 책 ② — 🖼 세 번째 = 글+그림 → 갈래가 있으면 가로 한 줄 + 그 장 아래 그림 판 · 발표 순서 = 장 → 그 판', async ({ page }) => {
+  const name = boardName('picbranch'), seen = []
+  const deck = { title: 't', sources: [], slides: [{ title: '표지', layout: '표지', bullets: ['a'], notes: '' }, { title: '송신소', layout: '글머리', bullets: ['쏜다'], notes: '메모', alt_pic: { img: '/e2e-pic/3.png', w: 1536, h: 1024 } },
+    { title: '중계소', layout: '글머리', bullets: ['넘긴다'], notes: '' }, { title: '끝', layout: '마무리', bullets: ['b'], notes: '' }] }
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { slides: 'm' } } }))
+  await page.route('**/e2e-pic/**', r => r.fulfill({ body: PNG, contentType: 'image/png' }))
+  await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); seen.push(b)
+    return r.fulfill({ json: b.slides?.step === 'plan' ? { kind: 'slides', plan: PLAN, estimate: { credits: [40, 60], seconds: [30, 60] }, model: 'm', elapsed: 4 } : { kind: 'slides', deck, model: 'm', elapsed: 30 } }) })
+  await openBoard(page, name, { chat: true }); await setCam(page)
+  await page.getByTestId('plus').click(); await page.getByRole('menuitemradio', { name: /발표 자료/ }).click()
+  const box = page.getByPlaceholder('무엇을 발표할까요', { exact: false }); await box.fill('전파'); await box.press('Enter')
+  await page.getByTestId('deep-plan-go').click()
+  const pics = page.getByTestId('slides-pic')
+  await pics.nth(0).click()                                                                       // 송신소: 그림 → 글+그림
+  await expect(pics.nth(0)).toHaveText('글+🖼'); await expect(pics.nth(0)).toHaveAttribute('data-pic', 'both')
+  await expect(page.getByTestId('slides-build')).toContainText('약 40~60크레딧')                  // 그림 수는 그대로(하나)
+  await pics.nth(0).click(); await expect(pics.nth(0)).toHaveAttribute('data-pic', 'false')       // 한 바퀴 = 글
+  await expect(page.getByTestId('slides-build')).toContainText('약 28~48크레딧')
+  await pics.nth(0).click(); await pics.nth(0).click()                                            // 다시 글+그림
+  await page.getByTestId('slides-build').click()
+  await expect(page.getByTestId('slides-show')).toContainText('프레임 5장')
+  expect(seen[1].slides.plan.slides[1].pic).toBe('both')
+  const its = (await liveDoc(page)).items, fr = its.filter(it => it.type === 'frame').sort((a, b) => a.no - b.no)
+  expect(fr.map(f => f.name)).toEqual(['표지', '송신소', '송신소 · 그림', '중계소', '끝'])          // 번호 = 발표 순서: 장 → 그 판
+  const [main, br] = [fr[1], fr[2]]
+  expect(br.slide_branch).toBe(main.uid); expect(br.pos[0]).toBe(main.pos[0]); expect(br.pos[1]).toBeGreaterThan(main.pos[1] + main.rect[3])   // 바로 아래
+  expect(new Set([fr[0], fr[1], fr[3], fr[4]].map(f => f.pos[1])).size).toBe(1)                  // 장들은 가로 한 줄
+  expect(br.rect[3]).toBe(1067); expect(its.some(it => it.type === 'image' && it.slide_of === br.uid)).toBe(true)
+  expect(its.filter(it => it.type === 'memo' && it.lines[0]?.t?.startsWith('발표자 메모 · 2장'))).toHaveLength(1)   // 판에는 메모를 또 안 붙임
+})
+
+test('작은 책 ② — 만든 장 우클릭 「다른 판 더하기」 = 아래에 글 판·그림 판, 뒤 번호가 밀림 · Ctrl+Z 한 번', async ({ page }) => {
+  const name = boardName('picbranch2'), seen = []
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { slides: 'm' } } }))
+  await page.route('**/e2e-pic/**', r => r.fulfill({ body: PNG, contentType: 'image/png' }))
+  await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); seen.push(b); return r.fulfill({ json: { kind: 'slides', pic: { img: '/e2e-pic/9.png', w: 1536, h: 1024, model: 'img-m' }, model: 'img-m', elapsed: 9 } }) })
+  await openBoard(page, name); await setCam(page)
+  await page.evaluate(d => window.__mb.ed.slidesBoard(d), { title: '전파', sources: [], slides: [{ title: '표지', layout: '표지', bullets: ['a'] }, { title: '송신소', layout: '글머리', bullets: ['쏜다'], notes: '메모' }, { title: '끝', layout: '마무리', bullets: ['b'] }] })
+  let fr = (await liveDoc(page)).items.filter(it => it.type === 'frame').sort((a, b) => a.no - b.no)
+  const [n0, mainId] = [fr[0].no, fr[1].uid]
+  await page.evaluate(id => window.__mb.ed.slideBranch(id, 'pic'), mainId)
+  expect(seen[0].slides).toMatchObject({ step: 'pic', deck: '전파', slide: { title: '송신소', bullets: ['쏜다'] } })
+  await page.evaluate(id => window.__mb.ed.slideBranch(id, 'text'), mainId)
+  const doc = await liveDoc(page)
+  fr = doc.items.filter(it => it.type === 'frame').sort((a, b) => a.no - b.no)
+  expect(fr.map(f => [f.name, f.no - n0])).toEqual([['표지', 0], ['송신소', 1], ['송신소 · 그림', 2], ['송신소 · 글', 3], ['끝', 4]])   // 판들 = 그 장 바로 뒤, 끝 장은 밀림
+  const pic = fr[2], txt = fr[3]
+  expect(pic.rect[3]).toBe(1067); expect(doc.items.some(it => it.type === 'image' && it.slide_of === pic.uid && it.slide_role === 'pic')).toBe(true)
+  expect(txt.pos[1]).toBeGreaterThan(pic.pos[1] + pic.rect[3]); expect(txt.slide.layout).toBe('글머리')   // 판들은 차례로 아래로
+  await page.keyboard.press('Control+z')
+  fr = (await liveDoc(page)).items.filter(it => it.type === 'frame').sort((a, b) => a.no - b.no)
+  expect(fr.map(f => [f.name, f.no - n0])).toEqual([['표지', 0], ['송신소', 1], ['송신소 · 그림', 2], ['끝', 3]])   // 한 번에 되돌림(번호도)
+})

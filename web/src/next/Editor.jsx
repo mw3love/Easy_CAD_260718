@@ -162,7 +162,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, liveModel: () => R.current.model, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, skipFrames, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, selImageIds, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, setImage, slidesBoard, flowBoard, flowTarget, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, liveModel: () => R.current.model, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, skipFrames, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, selImageIds, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, setImage, slidesBoard, slideBranch, flowBoard, flowTarget, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -964,25 +964,65 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const all = deck.sources || [], cited = all.filter(x => used.has(x.n)), src = (cited.length ? cited : all).slice(0, 24)
     const pages = src.length ? [...sl, { title: '출처', bullets: src.map(x => `[${x.n}] ${String(x.title || x.url).replace(/\s+/g, ' ').trim()} · ${siteOf(x.url)}`), notes: '', small: true }] : sl
     // 그림 장(2026-11-04 「작은 책」 ①) = 프레임 비율이 그림 비율(KAIROS 그림은 3:2 — 16:9를 달라 해도), 여백 없이 꽉. 그림을 못 받았으면 글 장으로
-    const picOf = s => (s.layout === '그림' && s.pic?.data && s.pic.w && s.pic.h ? s.pic : null), hOf = s => (picOf(s) ? Math.round(1600 * picOf(s).h / picOf(s).w) : 900)
-    const m = R.current.model, W = 1600, H = 900, GX = 160, ROW = Math.max(H, ...pages.map(hOf)) + 760, PER = 3, cols = Math.min(PER, pages.length), rows = Math.ceil(pages.length / PER)
+    // 갈래(②) = 장의 `alt_pic`(글+그림) → 그 장 바로 아래 그림 판. 갈래가 있으면 가로 한 줄(직렬) + 아래 줄 = 같은 장의 다른 판(병렬), 발표 순서 = 장 → 그 판
+    const W = 1600, GX = 160, ok = p => !!(p?.data && p.w && p.h), branch = s => (ok(s.alt_pic) ? { ...s, layout: '그림', pic: s.alt_pic, alt_pic: undefined, notes: '' } : null)
+    const anyBranch = pages.some(branch), m = R.current.model, ROW = Math.max(900, ...pages.map(s => slideH(s))) + 760
+    const PER = anyBranch ? pages.length : 3, cols = Math.min(PER, pages.length), rows = anyBranch ? 2 : Math.ceil(pages.length / PER)
     const BW = cols * W + (cols - 1) * GX, BH = rows * ROW, c = R.current.cam, view = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
     const at = nearSpot({ x: view.x + view.w / 2, y: view.y + view.h / 2 }, hitPool().map(it => sceneBox(it, textBox)), BW, BH, { pad: 48, step: 96 })
-    const no0 = nextFrameNo(m.items), zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, z = topZ(m.items) + 1, out = [], ids = []
+    const zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, z = topZ(m.items) + 1, out = [], ids = []
+    let no = nextFrameNo(m.items)
     pages.forEach((s, i) => {
-      const pic = picOf(s), X = at.x + (i % PER) * (W + GX), Y = at.y + Math.floor(i / PER) * ROW
-      const spec = { ...s, pic: undefined, layout: s.small ? '출처' : s.layout === '그림' && !pic ? (i === pages.length - 1 ? '마무리' : '글머리') : s.layout || (i === 0 ? '표지' : '글머리') }
-      const cv = pic ? { data: pic.data, w: pic.w, h: pic.h, alt: picAlt(s) }
-        : i === 0 && deck.cover?.data && deck.cover.w ? { data: deck.cover.data, w: deck.cover.w, h: deck.cover.h, alt: `표지 그림 — ${deck.title || s.title}` } : null
-      const fr = base([X, Y], { type: 'frame', rect: [0, 0, W, hOf(s)], name: s.title, no: no0 + i, ratio: pic ? `${pic.w}:${pic.h}` : '16:9', z: zb, slide: slideSpec(spec), slide_n: i + 1, ...(deck.title ? { slide_deck: deck.title } : {}) })   // 장을 적어 둠 = 말풍선이 그 장만 고쳐 다시 지음(2026-10-28)
-      const pcs = slidePieces(spec, i, X, Y, z, cv).map(p => ({ ...p, slide_of: fr._id }))
-      out.push({ ...fr, slide_sig: slideSig(pcs, X, Y) }, ...pcs); ids.push(fr._id)
+      const X = at.x + (i % PER) * (W + GX), Y = at.y + Math.floor(i / PER) * ROW
+      const cover = i === 0 && ok(deck.cover) ? { data: deck.cover.data, w: deck.cover.w, h: deck.cover.h, alt: `표지 그림 — ${deck.title || s.title}` } : null
+      const main = slideFrame(s, i, X, Y, no++, z, zb, deck.title, cover, i === pages.length - 1)
+      out.push(...main); ids.push(main[0]._id)
+      const br = branch(s)
+      if (br) { const f = slideFrame(br, i, X, Y + ROW, no++, z, zb, deck.title, null, false, { slide_branch: main[0]._id, name: `${s.title} · 그림` }); out.push(...f); ids.push(f[0]._id) }
     })
     commit([...m.items, ...out], ids, '발표 자료')
     bringIn({ x: at.x, y: at.y, w: BW, h: BH }); setTool('select')
-    const np = pages.filter(picOf).length
-    setStatus(`발표 자료 ${pages.length}장${np ? `(그림 장 ${np})` : ''} — 위 막대 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모`)
-    return { ids, frames: pages.length }
+    const np = pages.filter(s => s.layout === '그림' && ok(s.pic)).length, nb = pages.filter(branch).length
+    setStatus(`발표 자료 ${pages.length}장${np || nb ? `(${[np && `그림 장 ${np}`, nb && `아래 그림 판 ${nb}`].filter(Boolean).join(' · ')})` : ''} — 위 막대 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모`)
+    return { ids, frames: ids.length }
+  }
+  // 장 프레임 하나 + 조각(`slidesBoard`·`slideBranch` 공용) — s = 장(pic = 그림 장 그림 { data, w, h }), cover = 표지 그림, last = 끝 장(그림을 못 받은 그림 장 = 마무리). [프레임, ...조각]
+  const slidePic = s => (s.layout === '그림' && s.pic?.data && s.pic.w && s.pic.h ? s.pic : null)
+  const slideH = s => (slidePic(s) ? Math.round(1600 * slidePic(s).h / slidePic(s).w) : 900)
+  function slideFrame(s, i, X, Y, no, z, zb, deckTitle, cover = null, last = false, extra = {}) {
+    const pic = slidePic(s)
+    const spec = { ...s, pic: undefined, alt_pic: undefined, layout: s.small ? '출처' : s.layout === '그림' && !pic ? (last ? '마무리' : '글머리') : s.layout || (i === 0 ? '표지' : '글머리') }
+    const cv = pic ? { data: pic.data, w: pic.w, h: pic.h, alt: picAlt(s) } : cover
+    const fr = base([X, Y], { type: 'frame', rect: [0, 0, 1600, slideH(s)], name: s.title, no, ratio: pic ? `${pic.w}:${pic.h}` : '16:9', z: zb, slide: slideSpec(spec), slide_n: i + 1, ...(deckTitle ? { slide_deck: deckTitle } : {}), ...extra })   // 장을 적어 둠 = 말풍선이 그 장만 고쳐 다시 지음(2026-10-28)
+    const pcs = slidePieces(spec, i, X, Y, z, cv).map(p => ({ ...p, slide_of: fr._id }))
+    return [{ ...fr, slide_sig: slideSig(pcs, X, Y) }, ...pcs]
+  }
+  // 이미 만든 장에 다른 판 더하기(작은 책 ② — 우클릭 「다른 판 더하기」): kind 'text' = 그 장 글로 글 판(서버 안 부름) · 'pic' = 그 장 글로 그림 판(KAIROS 그림 한 장, 약 12크레딧).
+  // 판 = 그 장 아래(그 장의 판들 밑), 프레임 번호 = 그 장의 판들 바로 뒤(뒤 번호는 하나씩 밀림) = 발표 때 그 장 다음. Ctrl+Z 한 번. 새 프레임 _id 또는 null
+  async function slideBranch(id, kind) {
+    const m0 = R.current.model, fr = m0.items.find(x => x._id === id && x.type === 'frame' && x.slide); if (readOnly || !fr) return null
+    const root = fr.slide_branch ? m0.items.find(x => x._id === fr.slide_branch) || fr : fr, spec = { ...root.slide }
+    let s = { ...spec, layout: spec.layout === '그림' ? '글머리' : spec.layout, notes: '' }
+    if (kind === 'pic') {
+      setStatus(`「${spec.title}」 그림 판 그리는 중… (KAIROS 그림 한 장, 약 15초)`)
+      try {
+        const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() },
+          body: JSON.stringify({ kind: 'slides', board: DOC_NAME, slides: { step: 'pic', slide: spec, deck: root.slide_deck || '' }, messages: [{ role: 'user', content: spec.title }] }) })
+        const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
+        if (!r.ok || d.error || !d.pic?.img) throw new Error(d.error || '그림이 안 왔어요')
+        const bl = await (await fetch(d.pic.img)).blob(), data = await new Promise(ok => { const f = new FileReader(); f.onload = () => ok(String(f.result).split(',')[1]); f.readAsDataURL(bl) })
+        s = { ...spec, layout: '그림', pic: { data, w: d.pic.w, h: d.pic.h }, notes: '' }
+      } catch (e) { setStatus(`그림 판을 못 그렸어요 — ${e.message || e}`); return null }
+    }
+    const m = R.current.model, fam = m.items.filter(x => x._id === root._id || x.slide_branch === root._id), famIds = new Set(fam.map(x => x._id))
+    const bottom = Math.max(...m.items.filter(x => famIds.has(x._id) || famIds.has(x.slide_of)).map(x => { const b = sceneBox(x, textBox); return b.y + b.h }))
+    const H = slideH(s), at = nearSpot({ x: root.pos[0] + 800, y: bottom + 160 + H / 2 }, hitPool().map(it => sceneBox(it, textBox)), 1600, H, { pad: 48, step: 96 })
+    const no = Math.max(...fam.map(x => x.no ?? 0)) + 1, z = topZ(m.items) + 1, zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1
+    const made = slideFrame(s, (root.slide_n || 1) - 1, at.x, at.y, no, z, zb, root.slide_deck, null, false, { slide_branch: root._id, name: `${spec.title} · ${kind === 'pic' ? '그림' : '글'}` })
+    const items = m.items.map(x => (x.type === 'frame' && x.no != null && x.no >= no ? { ...x, no: x.no + 1 } : x))   // 뒤 번호 밀기 = 발표 때 그 장 바로 다음
+    commit([...items, ...made], [made[0]._id], '다른 판 더하기')
+    bringIn(sceneBox(made[0], textBox)); setStatus(`「${spec.title}」 아래에 ${kind === 'pic' ? '그림' : '글'} 판 — 발표 때 그 장 다음에 나와요(왼쪽 「프레임」 판에서 하나만 남길 수 있어요)`)
+    return made[0]._id
   }
   // 🔷 도형 그리기(2026-11-03) — 서버 자리(`board_diagram.place`) → 프레임 안 띠·상자·붙은 화살표(flowboard.js), Ctrl+Z 한 번.
   // into = 이어 고칠 도형 프레임 _id — 손으로 안 고쳤으면 그 자리에서 다시 짓고(_id·번호 그대로), 고쳤으면 덮지 않고 오른쪽 옆에 새로. { id, replaced }
@@ -2749,6 +2789,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
           if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame') && !wrapDup(m.items, ids)) out.push('-', ['프레임으로 감싸기', 'Alt+G', act(() => wrapFrame())])
           if (frs.length) { const off = frs.every(f => f.skip); out.push([off ? '발표에 넣기' : '발표에서 빼기', '', act(() => skipFrames(frs.map(f => f._id), !off))]) }   // 칠판엔 그대로(2026-10-28)
+          if (frs.length === 1 && selIt.length === 1 && frs[0].slide && !frs[0].slide.small) { const pic = frs[0].slide.layout === '그림'   // 작은 책 ② — 같은 장의 다른 판을 아래에(2026-11-04)
+            out.push(['다른 판 더하기', '', null, [['그림으로 (KAIROS · 약 12크레딧)', act(() => slideBranch(frs[0]._id, 'pic'))], [pic ? '글로' : '글로 (같은 글 판 하나 더)', act(() => slideBranch(frs[0]._id, 'text'))]]]) }
           if (onAddSymbol && !card && selIt.every(it => !NOT_SYMBOL.has(it.type))) out.push(['내 심볼에 추가…', '', act(() => addToMySymbols())])   // 2026-10-27 사용자 — KAIROS 아이콘 등을 심볼 칸에(이 브라우저). 메모·표는 그림 조각이 아니라 뺌(전수조사)
           if (selIt.some(it => isLegendLine(it))) out.push(['범례 넣기', '', act(insertLegend)])   // 선·화살표를 고르고 우클릭(2026-10-27 실검증 — 「표」 창 안에만 있으면 못 찾음, 표 창 단추도 그대로)
           out.push('-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])

@@ -19,6 +19,7 @@ MAX_SLIDES = 15
 MAX_MATERIAL = 40000
 LAYOUTS = ("표지", "글머리", "숫자", "단계", "한마디", "마무리")   # 장 모양 — 칠판 `slidesBoard`가 그릴 줄 아는 것(2단계)
 PIC = "그림"   # 그림 장(2026-11-04 사용자 「작은 책」 ① — 글 장과 그림 장을 섞음): 장 전체 = KAIROS 그림 한 장, 글은 발표자 메모·대체 글로
+BOTH = "both"   # 글 장 + 그림 판 둘 다(작은 책 ② 갈래 — 2026-11-04 사용자 「병렬은 원하는 장에만」). AI 계획은 안 고르고 사람이 계획 카드 🖼로
 PIC_WORKERS = 4   # 그림 장 동시에 그리기(실측 2026-11-04: 3장 동시 15.5초 — 장당 약 15초·11.22크레딧)
 PIC_CREDITS, PIC_SECONDS = 12, 16
 
@@ -63,7 +64,7 @@ def clean_plan(plan) -> dict:
         src = s.get("source") if s.get("source") in SOURCES else "ai"
         q = str(s.get("query") or "").strip() or None
         out.append({"title": str(s["title"]).strip()[:60], "point": str(s.get("point") or "").strip()[:200], "source": "web" if src == "web" or (src == "ai" and q) else src,
-                    "query": q if src != "board" else None, "pic": s.get("pic") is True and bool(out)})   # 표지(첫 장)는 그림 장 아님
+                    "query": q if src != "board" else None, "pic": (s.get("pic") if s.get("pic") in (True, BOTH) else False) if out else False})   # 표지(첫 장)는 그림 장 아님 · BOTH = 글 장 + 그림 판(사람이 🖼로)
     if len(out) < 2:
         raise ValueError("장이 너무 적어요 — 다시 짜 주세요")
     return {"title": str(plan.get("title") or out[0]["title"]).strip()[:80], "slides": out}
@@ -131,13 +132,16 @@ def pic_prompt(deck_title: str, slide: dict) -> str:
 
 def draw_pics(out: dict, plan: dict, image, ex) -> None:
     """그림 장(`plan` 장의 pic) = 본문을 쓴 뒤 넷씩 동시에 그려 `out["deck"]["slides"][i]`에 layout 「그림」 + pic {img, w, h, model}.
-    못 그린 장은 글 장 그대로 두고 `out["pic_errors"]`에 제목(장은 늘 나옴)."""
+    pic = BOTH면 장은 글 그대로 두고 그림은 `alt_pic`(칠판이 그 장 아래에 그림 판으로). 못 그린 장은 글 장 그대로 두고 `out["pic_errors"]`에 제목(장은 늘 나옴)."""
     slides = out["deck"]["slides"]
     jobs = {i: ex.submit(image, pic_prompt(out["deck"]["title"], slides[i])) for i, s in enumerate(plan["slides"]) if s.get("pic") and i < len(slides)}
     for i, fut in jobs.items():
         try:
-            got = fut.result()
-            slides[i]["layout"], slides[i]["pic"] = PIC, {k: got[k] for k in ("img", "w", "h", "model") if k in got}
+            got = {k: v for k, v in fut.result().items() if k in ("img", "w", "h", "model")}
+            if plan["slides"][i]["pic"] == BOTH:
+                slides[i]["alt_pic"] = got
+            else:
+                slides[i]["layout"], slides[i]["pic"] = PIC, got
         except Exception as e:
             out.setdefault("pic_errors", []).append(f"{slides[i]['title']}: {type(e).__name__}: {e}"[:200])
 

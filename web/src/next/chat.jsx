@@ -18,7 +18,7 @@ import { siteOf } from './webcard.js'
 import { getKairosKey, KEY_RE, keyHeaders, setKairosKey } from './kairosKey.js'
 import { startMic } from './mic.js'
 import { svgPreview } from './svgin.js'
-import { DeepAsk, DeepConfirm, DeepFlip, DeepPlan, REDO_RE, SLIDES_QS, SlidesPlan, briefOf, keptPlan, keptSlides } from './deepchat.jsx'
+import { DeepAsk, DeepConfirm, DeepFlip, DeepPlan, REDO_RE, SLIDES_QS, SlidesPlan, briefOf, keptPlan, keptSlides, nextPic, picOf } from './deepchat.jsx'
 import { LIVE_CSP, LIVE_H, LIVE_W, bigPage, liveSrc } from './livecard.js'
 import { ChatSkeleton } from './skeleton.jsx'
 const LINK_CHAT = '#4f8fe8'
@@ -419,8 +419,8 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     const m = msgs[i], plan = keptSlides(m)
     const d = await slidesCall({ step: 'build', topic: m.topic, brief: m.brief, material: m.material || '', imgIds: m.imgIds, plan }, 'slides-build'); if (!d) return
     let deck = d.deck?.cover?.img ? { ...d.deck, cover: (await deepImgs([{ body: d.deck.cover }]))[0].body } : d.deck   // 표지 그림(3단계) = 칠판 그림 칸으로
-    if (deck?.slides?.some(s => s.pic?.img)) { const got = await deepImgs(deck.slides.map(s => ({ body: s.pic || {} })))   // 그림 장(2026-11-04) = 칠판 그림 칸으로, 못 받으면 글 장(`slidesBoard`)
-      deck = { ...deck, slides: deck.slides.map((s, k) => (s.pic ? { ...s, pic: got[k].body } : s)) } }
+    for (const f of ['pic', 'alt_pic']) if (deck?.slides?.some(s => s[f]?.img)) { const got = await deepImgs(deck.slides.map(s => ({ body: s[f] || {} })))   // 그림 장·그림 판(2026-11-04) = 칠판 그림 칸으로, 못 받으면 글 장·판 없음(`slidesBoard`)
+      deck = { ...deck, slides: deck.slides.map((s, k) => (s[f] ? { ...s, [f]: got[k].body } : s)) } }
     const r = ed.current?.slidesBoard?.(deck); if (!r) return
     setMsg(i, { built: r.ids[0], frames: r.frames, model: d.model, elapsed: d.elapsed, credits: d.credits })
     ed.current?.showIds(r.ids); setSkipSel(r.ids.join())
@@ -671,7 +671,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
                 : m.kind === 'slides' ? (m.step === 'ask'
                   ? <DeepAsk m={m} busy={busy} css={css} qs={SLIDES_QS} slides set={(q, v) => setMsg(i, { brief: { ...m.brief, [q]: v } })} go={() => slidesGo(i, draft.trim())} />
                   : <SlidesPlan m={m} busy={busy} css={css} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
-                    flip={k => setMsg(i, { flip: (m.flip || []).includes(k) ? m.flip.filter(x => x !== k) : [...(m.flip || []), k] })}
+                    flip={k => setMsg(i, { pics: { ...(m.pics || {}), [k]: nextPic(picOf(m, k)) } })}
                     build={() => slidesBuild(i)} show={() => ed.current?.showIds([m.built]) || setGone(g => ({ ...g, [m.at + ':slides']: true }))} />)
                 : <Answer text={m.content} chart={m.kind === 'ask' ? null : chartAct(m)} />}
               {/* 길이 상한에 걸려 끊긴 답(2026-10-27 — 긴 연설문 등이 다 된 것처럼 보였음). 이어 쓰기는 맨 끝 답에서만(앞 답이면 「⋯ › 여기서 이어 묻기」) */}

@@ -101,13 +101,16 @@ export function DeepFlip({ ed, root, last, css }) {
 }
 
 // 📽 발표 자료 장 계획(§8 항목69) — m = { plan: { title, slides: [{ title, point, source }] }, drop, estimate, built, frames, stale }. drop(i) · build() · show()
-export const keptSlides = m => ({ ...m.plan, slides: (m.plan.slides || []).map((s, i) => ((m.flip || []).includes(i) ? { ...s, pic: !s.pic } : s)).filter((_, i) => !(m.drop || []).includes(i)) })   // flip = 🖼 글 ↔ 그림 바꾼 장
+// 장의 그림 상태 — false = 글 장 · true = 그림 장 · 'both' = 글 장 + 아래 그림 판(작은 책 ② 갈래). m.pics = 🖼로 바꾼 장 {번호: 상태}
+export const picOf = (m, i) => (m.pics && i in m.pics ? m.pics[i] : m.plan?.slides?.[i]?.pic || false)
+export const nextPic = v => (v === false ? true : v === true ? 'both' : false)
+export const keptSlides = m => ({ ...m.plan, slides: (m.plan.slides || []).map((s, i) => ({ ...s, pic: picOf(m, i) })).filter((_, i) => !(m.drop || []).includes(i)) })
 const PIC_CREDITS = 12   // 그림 장 한 장(서버 `slides.PIC_CREDITS` — 2026-11-04 실측 11.22)
-export function SlidesPlan({ m, drop, flip, build, show, busy, css }) {
-  const sl = m.plan?.slides || [], dropped = new Set(m.drop || []), flipped = new Set(m.flip || []), left = sl.length - dropped.size, lock = !!m.built || !!m.stale || !!busy
-  const isPic = i => !!sl[i]?.pic !== flipped.has(i), extra = [...flipped].filter(i => !dropped.has(i)).reduce((a, i) => a + (isPic(i) ? PIC_CREDITS : -PIC_CREDITS), 0)   // 🖼 바꾼 만큼 어림을 고침
+export function SlidesPlan({ m, flip, drop, build, show, busy, css }) {
+  const sl = m.plan?.slides || [], dropped = new Set(m.drop || []), left = sl.length - dropped.size, lock = !!m.built || !!m.stale || !!busy
+  const drawn = v => (v ? 1 : 0), extra = Object.keys(m.pics || {}).map(Number).filter(i => !dropped.has(i)).reduce((a, i) => a + (drawn(picOf(m, i)) - drawn(sl[i]?.pic)) * PIC_CREDITS, 0)   // 🖼 바꾼 만큼 어림을 고침
   const est = m.estimate && { ...m.estimate, credits: m.estimate.credits?.map(c => Math.max(0, c + extra)) }, rng = (a, u) => (Array.isArray(a) ? `${a[0]}~${a[1]}${u}` : '')
-  const pics = sl.filter((_, i) => !dropped.has(i) && isPic(i)).length
+  const live = sl.map((_, i) => i).filter(i => !dropped.has(i)), pics = live.filter(i => picOf(m, i) === true).length, both = live.filter(i => picOf(m, i) === 'both').length
   return <div data-testid="slides-plan" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
     <div style={{ fontWeight: 700 }}>{m.plan?.title || '장 계획'}</div>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -115,10 +118,10 @@ export function SlidesPlan({ m, drop, flip, build, show, busy, css }) {
         <span style={{ ...css.kind, flex: 'none', minWidth: 22, textAlign: 'center' }}>{i + 1}</span>
         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: dropped.has(i) ? 'line-through' : 'none' }} title={s.point || s.title}>{s.title}</span>
         <span style={{ ...css.meta, flex: 'none' }}>{SOURCE[s.source] || ''}</span>
-        {/* 🖼 = 이 장을 그림 한 장으로(켜짐 = 코랄 테두리). 표지(첫 장)는 글 장만 */}
-        {i > 0 && <button data-testid="slides-pic" aria-pressed={isPic(i)} disabled={lock || dropped.has(i)} onClick={() => flip(i)}
-          title={isPic(i) ? '그림 장 — 장 전체가 설명 그림 한 장(누르면 글 장으로)' : '글 장 — 누르면 그림 장으로(설명 그림 한 장, 약 12크레딧)'}
-          style={{ ...(isPic(i) ? css.pin : css.ghost), padding: '0 5px', flex: 'none', opacity: isPic(i) ? 1 : 0.55, cursor: lock ? 'default' : 'pointer' }}>🖼</button>}
+        {/* 🖼 = 누를 때마다 글 → 그림 → 글+그림(아래에 그림 판 — 작은 책 ② 갈래). 켜짐 = 코랄 테두리. 표지(첫 장)는 글 장만 */}
+        {i > 0 && (v => <button data-testid="slides-pic" data-pic={String(v)} aria-pressed={!!v} disabled={lock || dropped.has(i)} onClick={() => flip(i)}
+          title={v === true ? '그림 장 — 장 전체가 설명 그림 한 장(누르면 글+그림)' : v === 'both' ? '글+그림 — 글 장 아래에 같은 내용의 그림 판(발표 때 둘 다, 프레임 판에서 하나 끌 수 있어요 · 누르면 글 장)' : '글 장 — 누르면 그림 장(설명 그림 한 장, 약 12크레딧)'}
+          style={{ ...(v ? css.pin : css.ghost), padding: '0 5px', flex: 'none', opacity: v ? 1 : 0.55, cursor: lock ? 'default' : 'pointer' }}>{v === 'both' ? '글+🖼' : '🖼'}</button>)(picOf(m, i))}
         {!lock && <button data-testid="slides-x" aria-label={dropped.has(i) ? `「${s.title}」 되살리기` : `「${s.title}」 빼기`} title={dropped.has(i) ? '되살리기' : '이 장 빼기'}
           disabled={!dropped.has(i) && left <= 2} onClick={() => drop(i)} style={{ ...css.ghost, padding: '0 6px', flex: 'none' }}>{dropped.has(i) ? '↺' : '×'}</button>}
       </div>)}
@@ -129,6 +132,6 @@ export function SlidesPlan({ m, drop, flip, build, show, busy, css }) {
       : m.stale ? <span style={css.meta}>아래에 고친 계획이 있어요</span>
       : <><button data-testid="slides-build" style={{ ...css.pin, alignSelf: 'flex-start', padding: '4px 12px' }} disabled={!!busy} onClick={build}>
           이대로 만들기{est ? ` · 약 ${rng(est.credits, '크레딧')}` : ''}</button>
-        <span style={css.meta}>{est?.seconds ? `${rng(est.seconds, '초')} 걸려요(추정) · ` : ''}{left}장{pics ? `(그림 장 ${pics})` : ''} · 🖼 = 그림 장 켜고 끄기 · 고칠 점은 아래 칸에 말하면 계획을 다시 짜요</span></>}
+        <span style={css.meta}>{est?.seconds ? `${rng(est.seconds, '초')} 걸려요(추정) · ` : ''}{left}장{pics || both ? `(${[pics && `그림 장 ${pics}`, both && `글+그림 ${both}`].filter(Boolean).join(' · ')})` : ''} · 🖼 = 글 → 그림 → 글+그림 · 고칠 점은 아래 칸에 말하면 계획을 다시 짜요</span></>}
   </div>
 }
