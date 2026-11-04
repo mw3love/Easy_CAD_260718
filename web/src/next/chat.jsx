@@ -94,9 +94,12 @@ const LOG_URL = `/api/chatlog/${encodeURIComponent(DOC_NAME)}`
 const MODEL_KEY = 'magic-board-model'   // 고른 모델은 이 브라우저에만 기억(편의)
 const PICKS_KEY = 'magic-board-models'  // 「모델 설정」 — 일마다 고른 모델 {일: id}(없으면 자동, 2026-10-26)
 // 「모델 설정」 칸 — 고를 의미가 있는 일만(2026-10-26 사용자 선택). 길 고르기·검색·받아쓰기·찾기·글 읽기는 늘 자동. [일, 이름, 종류(서버 choices), 서버 jobs 이름]
-const PICK_ROWS = [['chat', '대화 · 회의 요약', 'llm'], ['image', '이미지', 'image'], ['icon', '아이콘 (SVG)', 'llm'], ['diagram', '도형 그리기', 'llm'], ['report', '정리 문서', 'llm'], ['live', '인터랙티브 HTML', 'llm'],
-  ['deep_plan', 'Deep Mode 지면 계획', 'llm'], ['deep_write', 'Deep Mode 본문', 'llm']]
-const JOB_PICK = { 'slides-plan': 'slides', 'slides-build': 'slides', 'deep-plan': 'deep_plan', 'deep-build': 'deep_write', 'deep-section': 'deep_write' }   // 기다리는 일 → 그 일의 모델 칸
+// 2026-11-04 사용자(「항목이 너무 많음」) — 8칸 → 넷: 칸 하나 = 서버 일 여럿(`PICK_GROUPS`). 자동이면 일마다 지금처럼 따로, 고르면 묶음 전부 그 모델
+const PICK_ROWS = [['chat', '대화 · 회의 요약', 'llm'], ['image', '이미지', 'image'], ['make', '만들기 — 정리 문서 · Deep Mode · 발표 자료', 'llm'], ['draw', '그리기 — 아이콘 · 도형 · 인터랙티브 HTML', 'llm']]
+const PICK_GROUPS = { make: ['report', 'deep_plan', 'deep_write', 'slides'], draw: ['icon', 'diagram', 'live'] }   // 칸 → 서버 일(server `PICK_JOBS`)
+const pickOf = job => Object.keys(PICK_GROUPS).find(g => PICK_GROUPS[g].includes(job)) || job   // 서버 일 → 그 일의 칸
+const sendPicks = p => Object.fromEntries(Object.entries(p).flatMap(([k, v]) => (PICK_GROUPS[k] || [k]).map(j => [j, v])))   // 칸 → 서버가 아는 일 이름으로 펼침
+const JOB_PICK = { 'slides-plan': 'slides', 'slides-build': 'slides', 'deep-plan': 'deep_plan', 'deep-build': 'deep_write', 'deep-section': 'deep_write' }   // 기다리는 일 → 그 일의 서버 일 이름
 const F = "'Pretendard', sans-serif"
 const DONE = '#16a34a'   // 칠판에 붙임(끝남) = 초록 — 코랄은 할 수 있는 일 버튼(2026-10-20 사용자)
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', bar: 'var(--mb-bar)', seg: 'var(--mb-seg)' }
@@ -195,7 +198,8 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   const [, tick] = useState(0), [models, setModels] = useState(null), [server, setServer] = useState(true), [gone, setGone] = useState({})
   const needKey = !!models?.need_key   // 서버 키를 끈 서버(`--no-server-key`) + 내 키 없음 — 모델 목록부터 「키 필요」로 옴
   const [model, setModel] = useState(() => { try { return localStorage.getItem(MODEL_KEY) || '' } catch { return '' } })
-  const [picks, setPicksState] = useState(() => { try { return JSON.parse(localStorage.getItem(PICKS_KEY) || '{}') || {} } catch { return {} } }), [cfgOpen, setCfgOpen] = useState(false)
+  const [picks, setPicksState] = useState(() => { try { const old = JSON.parse(localStorage.getItem(PICKS_KEY) || '{}') || {}   // 옛 기억(일마다 따로) → 칸으로(묶음 안 첫 값)
+    return Object.fromEntries(Object.entries(old).map(([k, v]) => [pickOf(k), v]).reverse()) } catch { return {} } }), [cfgOpen, setCfgOpen] = useState(false)
   const setPick = (job, id) => {
     if (job === 'chat') { setModel(id); try { id ? localStorage.setItem(MODEL_KEY, id) : localStorage.removeItem(MODEL_KEY) } catch { /* 기억 못 해도 그만 */ } return }
     setPicksState(cur => { const next = { ...cur }; if (id) next[job] = id; else delete next[job]; try { localStorage.setItem(PICKS_KEY, JSON.stringify(next)) } catch { /* 기억 못 해도 그만 */ } return next })
@@ -278,7 +282,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     const { flow_into: flowInto = '', ...extra } = extra0   // 이어 고칠 도형 프레임(서버엔 안 보냄 — 설계서만 `base_flow`로)
     const q = history.filter(m => m.role === 'user').at(-1)?.content || ''
     const prefs = kind ? {} : askPrefs()
-    const r = await chatPost({ model: useModel, board: DOC_NAME, ...(Object.keys(picks).length ? { models: picks } : {}), ...(kind ? { kind } : {}), ...(Object.keys(prefs).length ? { ask_pref: prefs } : {}), ...(prevHtml ? { prev_html: prevHtml } : {}), ...(history.at(-1)?.infographic ? { infographic: true } : {}), ...(history.at(-1)?.base_image ? { base_image: history.at(-1).base_image } : {}), ...(history.at(-1)?.base_svg ? { base_svg: history.at(-1).base_svg } : {}), ...extra, messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) })
+    const r = await chatPost({ model: useModel, board: DOC_NAME, ...(Object.keys(picks).length ? { models: sendPicks(picks) } : {}), ...(kind ? { kind } : {}), ...(Object.keys(prefs).length ? { ask_pref: prefs } : {}), ...(prevHtml ? { prev_html: prevHtml } : {}), ...(history.at(-1)?.infographic ? { infographic: true } : {}), ...(history.at(-1)?.base_image ? { base_image: history.at(-1).base_image } : {}), ...(history.at(-1)?.base_svg ? { base_svg: history.at(-1).base_svg } : {}), ...extra, messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) })
     const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
     if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
     const fb = d.kind === 'diagram' && d.place ? ed.current?.flowBoard?.({ spec: d.spec, place: d.place }, d.fixed ? flowInto : '') : null   // 🔷 도형 = 받자마자 칠판에(데스크톱 원칙 — 만들면 바로 넣고 아니면 Del)
@@ -349,7 +353,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   async function deepCall(body, job) {
     setBusy(Date.now()); setBusyJob(job)
     try {
-      const r = await chatPost({ model: useModel, board: DOC_NAME, ...(Object.keys(picks).length ? { models: picks } : {}), kind: 'deep', deep: body, messages: [{ role: 'user', content: body.topic }] })
+      const r = await chatPost({ model: useModel, board: DOC_NAME, ...(Object.keys(picks).length ? { models: sendPicks(picks) } : {}), kind: 'deep', deep: body, messages: [{ role: 'user', content: body.topic }] })
       const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
       if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
       return d
@@ -391,7 +395,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   async function slidesCall(body, job) {
     setBusy(Date.now()); setBusyJob(job)
     try {
-      const r = await chatPost({ model: useModel, board: DOC_NAME, kind: 'slides', slides: { ...body, ...(body.imgIds?.length ? { image_uids: body.imgIds } : {}), imgIds: undefined }, messages: [{ role: 'user', content: body.topic }] })
+      const r = await chatPost({ model: useModel, board: DOC_NAME, ...(Object.keys(picks).length ? { models: sendPicks(picks) } : {}), kind: 'slides', slides: { ...body, ...(body.imgIds?.length ? { image_uids: body.imgIds } : {}), imgIds: undefined }, messages: [{ role: 'user', content: body.topic }] })
       const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
       if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
       return d
@@ -569,7 +573,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     setMsgs(msgs.filter(m => m.role !== 'error').slice(0, -1)); setDraft(last.content)
   }
 
-  const jobModel = picks[JOB_PICK[busyJob] || busyJob] || models?.jobs?.[JOB_PICK[busyJob] || busyJob]   // 고른 모델이 있으면 그것(「모델 설정」)
+  const jobModel = picks[pickOf(JOB_PICK[busyJob] || busyJob)] || models?.jobs?.[JOB_PICK[busyJob] || busyJob]   // 고른 모델이 있으면 그것(「모델 설정」)
   const busyLine = !busy ? '' : `${JOB_LABEL[busyJob] || (busyJob === 'chat' ? `${useModel} 생각 중` : 'KAIROS 생각 중')}${JOB_LABEL[busyJob] && (jobModel || (busyJob === 'board' ? useModel : '')) ? ` · ${jobModel || useModel}` : ''}… ${Math.round((Date.now() - busy) / 1000)}초`
   // 일을 아직 모를 때(서버가 짐작 — 「정리 문서로 만들어 줘」를 쳐서 물음)는 모델 이름을 안 씀: 고른 모델이 아닐 수 있음(2026-10-20 실화면)
   useEffect(() => { onBusy?.(busy && BOARD_JOBS.has(busyJob) ? busyLine : '') }, [busyLine])   // eslint-disable-line react-hooks/exhaustive-deps
@@ -796,8 +800,9 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
 // 그 아래 = 그 종류(KAIROS `type`)의 지금 모델 전부(서버 `choices` — 회사별·비싼 것부터, 판단 모델 jev 같은 것은 종류가 달라 안 섞임). 고른 값은 이 브라우저에만
 function ModelSettings({ models, picks, setPick }) {
   const ch = models?.choices || {}, jobs = models?.jobs || {}
-  const rows = PICK_ROWS.filter(([job]) => job === 'chat' || (job.startsWith('deep') ? jobs.deep : jobs[job]))   // 서버가 못 하는 일(딥모드 등)은 칸도 없음
-  const auto = job => (job === 'chat' ? models?.default : jobs[job]) || '앱 기본'
+  const can = j => (j.startsWith('deep') ? jobs.deep : jobs[j])
+  const rows = PICK_ROWS.filter(([job]) => job === 'chat' || (PICK_GROUPS[job] || [job]).some(can))   // 서버가 못 하는 일(딥모드 등)은 칸도 없음
+  const auto = job => (PICK_GROUPS[job] ? '일마다 알맞게' : (job === 'chat' ? models?.default : jobs[job]) || '앱 기본')   // 묶음 칸은 일마다 기본이 달라 이름 하나로 못 씀
   return (
     <div role="dialog" aria-label="모델 설정" data-testid="model-settings-pop" style={{ ...css.menu, left: 'auto', right: 0, width: 300, maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box', padding: 10, gap: 8 }}>
       <div style={{ font: `700 13px ${F}` }}>모델 설정</div>

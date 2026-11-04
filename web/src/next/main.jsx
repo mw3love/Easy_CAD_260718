@@ -45,9 +45,9 @@ const PHONE_W = 700   // 휴대폰(2026-10-27) = 보기·묻기·회의만 — �
 const isPhone = () => window.innerWidth < PHONE_W && !!window.matchMedia?.('(pointer: coarse)').matches
 // special = KAIROS(2026-10-23 사용자: 다른 버튼과 다른 특별한 버튼 — 오른쪽 구석, 코랄로 채움. 열림은 한 단계 진하게)
 const SPECIAL_BG = on => (on ? '#c4613f' : 'var(--mb-accent)')
-// 「도구 유지」 자물쇠 — 데스크톱에 없는 웹 버튼이라 icons.json(데스크톱에서 뽑음) 대신 여기, 같은 선 굵기 1.6(2026-10-27)
-const KEEP_ICONS = { keep_on: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="1.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>',
-  keep_off: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="1.5"/><path d="M8 10.5V7.5a4 4 0 0 1 7.6-1.7"/></svg>' }
+// 「도구 유지」 반복 화살표 — 데스크톱에 없는 웹 버튼이라 icons.json(데스크톱에서 뽑음) 대신 여기, 같은 선 굵기 1.6(2026-10-27).
+// 자물쇠였다가 반복으로(2026-11-04 사용자 — 레이어 「잠금」과 뜻이 겹침), 켜짐은 버튼 바탕(코랄)이 보여 줌
+const KEEP_ICONS = { keep: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11V9.5A3.5 3.5 0 0 1 7.5 6H19"/><path d="M16 3l3 3-3 3"/><path d="M20 13v1.5a3.5 3.5 0 0 1-3.5 3.5H5"/><path d="M8 21l-3-3 3-3"/></svg>' }
 const Btn = ({ icon, label, onClick, onDown, title, on, disabled, special }) => { const narrow = useContext(Narrow); const bg = o => (special ? SPECIAL_BG(o) : o ? 'rgba(218,119,86,.22)' : 'transparent'); return (
   <button onClick={onClick} onPointerDown={onDown} title={title || label} aria-label={label} disabled={disabled} aria-pressed={on || undefined} style={{ all: 'unset', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.35 : 1,
     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: narrow ? '4px 4px' : '4px 8px', borderRadius: 6, minWidth: narrow ? 24 : 40,   // 좁은 창 옆 여백 6 → 4px: 「칠판」 버튼이 늘며 960px에서 상태 글이 0px로 눌렸음(2026-10-19)
@@ -691,21 +691,24 @@ function App({ team, openServer }) {   // team = 팀 서버(§8 항목67)에서 
           <Btn icon="redo" label="다시" onClick={() => ed.current?.redo()} title="다시 실행 (Ctrl+Y)" />
         </Group>
         <Group>{TOOLS.map(([k, icon, label, key]) => <Btn key={k} icon={icon} label={label} on={tool === k} onClick={() => setTool(k)} onDown={k === 'select' || k === 'pen' ? undefined : e => toolDown(e, k)} title={`${label} (${key})${k === 'select' || k === 'pen' ? '' : ' — 칠판으로 끌면 그 자리에'}`} />)}
-          <Btn icon={keepTool ? 'keep_on' : 'keep_off'} label="유지" on={keepTool} onClick={toggleKeep} title="도구 유지 (Q) — 켜면 그린 뒤에도 그 도구가 그대로(도구를 바꿔도), Esc·「선택」으로 멈춤" /></Group>
-        <Group><div style={ANCHOR}>
-          <Btn icon="present" label="발표" onClick={() => ed.current?.startPresent()} title="발표 — 프레임 순서대로 한 장씩 전체 화면(고른 프레임부터) · → 다음 · ← 이전 · M 이동/바로 · Esc 끝" />
+          <Btn icon="keep" label="유지" on={keepTool} onClick={toggleKeep} title="도구 유지 (Q) — 켜면 그린 뒤에도 그 도구가 그대로(도구를 바꿔도), Esc·「선택」으로 멈춤" /></Group>
+        {/* 순서 = 프레임 · 메모 · 회의 · 웹 · 표 · 발표(2026-11-04 사용자 — 만들고 → 마지막에 발표) */}
+        <Group>
           <Btn icon="frame" label="프레임" on={tool === 'frame'} onClick={() => setTool(t => (t === 'frame' ? 'select' : 'frame'))} onDown={e => toolDown(e, 'frame')} title="프레임 — 버튼을 칠판으로 끌면 그 자리에 16:9 · 칠판에서 끌어서 영역을 감싸면 그 안이 출력 한 쪽(번호 순서). 클릭만 = 16:9, 우클릭 「프레임으로 감싸기」도" />
+          <Btn icon="memo" label="메모" onClick={() => ed.current?.insertMemo()} onDown={e => toolDown(e, 'memo')} title="메모 — 칠판으로 끌면 그 자리에 · 줄마다 제목·목록·할 일·코드·인용(`# `·`- `·`[] `·`> ` 입력), 체크 상자는 칠판에서 바로" />
+          {/* 「회의」 = 칠판에 회의록을 넣는 도구(2026-10-23 사용자 — 전엔 오른쪽 KAIROS 옆). 폭 고정 = 이름이 회의 → 끝내기 → 정리하기로 바뀌어도 오른쪽 버튼이 안 밀림 */}
+          <div style={{ display: 'flex', justifyContent: 'center', minWidth: narrow ? undefined : 64 }}>
+          <Btn icon="mic" label={meetSt === 'saved' ? '정리하기' : meetSt ? '끝내기' : '회의'} on={!!meetSt} disabled={meetSt === 'start' || meetSt === 'stopping'}
+            onClick={() => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : meetSt ? ed.current?.meetStop() : ed.current?.meetStart())}
+            title={meetSt ? '회의 끝내기 — 받아 적은 글을 요약·결정·할 일로 정리해 칠판에(KAIROS)' : '회의 받아 적기 — 마이크로 말한 사람별로 실시간 받아 적고, 끝내면 회의록으로 정리(KAIROS)'} /></div>
+          <div data-pop="web" style={ANCHOR}>
+          <Btn icon="web" label="웹" on={webOpen} onClick={() => { setWebAt(null); setWebOpen(o => !o) }} onDown={e => toolDown(e, 'web')} title="웹 카드 — 칠판으로 끌면 그 자리에 · 유튜브·웹페이지 주소를 칠판에(칠판에 주소를 Ctrl+V 해도 돼요)" />
+          {webOpen && <WebForm onInsert={u => { const url = /^https?:\/\//i.test(u) ? u : 'https://' + u; setWebOpen(false); ed.current?.insertWeb(url, webAt || 'near') }} onClose={() => setWebOpen(false)} />}
         </div><div data-pop="table" style={ANCHOR}>
           <Btn icon="table" label="표" on={tableOpen} onClick={() => setTableOpen(o => !o)} onDown={e => toolDown(e, 'table')} title="표 넣기 — 행·열을 고르면 화면 가운데(겹치면 가까운 빈자리) · 칠판으로 끌면 그 자리에(마지막 행·열)" />
           {tableOpen && <TableForm onInsert={(r, c, h) => { setTableOpen(false); lastTable.current = [r, c, h]; ed.current?.insertTable(r, c, h) }} onLegend={() => { setTableOpen(false); ed.current?.insertLegend() }} onClose={() => setTableOpen(false)} />}
-        </div><div data-pop="web" style={ANCHOR}>
-          <Btn icon="memo" label="메모" onClick={() => ed.current?.insertMemo()} onDown={e => toolDown(e, 'memo')} title="메모 — 칠판으로 끌면 그 자리에 · 줄마다 제목·목록·할 일·코드·인용(`# `·`- `·`[] `·`> ` 입력), 체크 상자는 칠판에서 바로" />
-          <Btn icon="web" label="웹" on={webOpen} onClick={() => { setWebAt(null); setWebOpen(o => !o) }} onDown={e => toolDown(e, 'web')} title="웹 카드 — 칠판으로 끌면 그 자리에 · 유튜브·웹페이지 주소를 칠판에(칠판에 주소를 Ctrl+V 해도 돼요)" />
-          {webOpen && <WebForm onInsert={u => { const url = /^https?:\/\//i.test(u) ? u : 'https://' + u; setWebOpen(false); ed.current?.insertWeb(url, webAt || 'near') }} onClose={() => setWebOpen(false)} />}
-        </div>{/* 「회의」 = 칠판에 회의록을 넣는 도구(2026-10-23 사용자 — 전엔 오른쪽 KAIROS 옆) */}
-        <Btn icon="mic" label={meetSt === 'saved' ? '정리하기' : meetSt ? '끝내기' : '회의'} on={!!meetSt} disabled={meetSt === 'start' || meetSt === 'stopping'}
-          onClick={() => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : meetSt ? ed.current?.meetStop() : ed.current?.meetStart())}
-          title={meetSt ? '회의 끝내기 — 받아 적은 글을 요약·결정·할 일로 정리해 칠판에(KAIROS)' : '회의 받아 적기 — 마이크로 말한 사람별로 실시간 받아 적고, 끝내면 회의록으로 정리(KAIROS)'} />
+        </div>
+          <Btn icon="present" label="발표" onClick={() => ed.current?.startPresent()} title="발표 — 프레임 순서대로 한 장씩 전체 화면(고른 프레임부터) · → 다음 · ← 이전 · M 이동/바로 · Esc 끝" />
         </Group>
         <Group>
           <Btn icon="zoom_fit" label={full ? '창으로' : '전체 화면'} on={full} onClick={toggleFull} title="전체 화면 ⇄ 창 (F11과 같음) — 다 보기는 Z 또는 미니맵의 %" />

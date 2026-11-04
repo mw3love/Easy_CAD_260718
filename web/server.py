@@ -50,7 +50,7 @@ import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
 NAME_RE = re.compile(r"^[\w\-가-힣]{1,64}$")
 MAX_BYTES = 200 * 1024 * 1024   # 그림이 든 칠판도 넉넉히, 하지만 끝없이는 아니게
 _MODELS = {}                    # 키 지문 → (받은 시각, 모델 목록) — `/api/models`
-PICK_JOBS = ("image", "icon", "diagram", "report", "live", "deep_plan", "deep_write")   # 「모델 설정」으로 고를 수 있는 일(대화·회의 요약은 원래 `model`) — 2026-10-26 사용자: 고를 의미 있는 일만
+PICK_JOBS = ("image", "icon", "diagram", "report", "live", "deep_plan", "deep_write", "slides")   # 「모델 설정」으로 고를 수 있는 일(대화·회의 요약은 원래 `model`) — 2026-10-26 사용자: 고를 의미 있는 일만 · slides = 2026-11-04(칸이 빠져 있었음)
 # 그림 요청에 날짜 말이 있을 때만 오늘 날짜를 알려 줌(없는데 알려 주면 그림에 오늘 날짜를 써 넣음 — 2026-10-20 실측)
 DATE_WORDS = re.compile(r"오늘|내일|모레|어제|그제|날짜|요일|주말|이번\s*주|다음\s*주|지난\s*주|이번\s*달|다음\s*달|\d+\s*월\s*\d+\s*일")
 
