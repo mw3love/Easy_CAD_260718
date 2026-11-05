@@ -41,7 +41,7 @@ test('처음 = 새 비밀 주소의 빈 칠판(2026-11-04 — 예시는 따로 �
   await b.goto('/'); await expect(b).toHaveURL(link)                                    // 받은 칠판도 「마지막 칠판」
   await expect(b.getByTestId('dock-board')).toHaveAttribute('aria-pressed', 'true')   // 연 칸은 이 브라우저에 기억
   await b.getByTestId('board-new').click()                                              // 누르면 바로 = 코드만(2026-10-28 — 이름 칸 없음)
-  await expect(b).toHaveURL(CODE); expect(b.url()).not.toBe(link)
+  await expect.poll(() => b.url()).not.toBe(link); await expect(b).toHaveURL(CODE)   // 새 주소는 서버에 겹침을 물은 뒤(2026-11-05)
   await expect(b.getByRole('button', { name: '들어가기' })).toHaveCount(0)               // 내가 만든 새 칠판 = 안 물음
   await ca.close(); await cb.close()
 })
@@ -68,4 +68,25 @@ test.describe('서버 키 끔', () => {
     await expect(p.getByTestId('key-box')).toBeVisible()
     await c.close()
   })
+})
+
+// 2026-11-05 — 칠판 코드 8자가 우연히 겹치면 남의 칠판이 열렸음(새 주소를 만들 때 서버에 묻지 않았음). 뽑기를 「aaaaaaaa」로 고정해 겹침을 만든다
+test('새 칠판 코드가 있는 칠판과 겹치면 다시 뽑음 — 처음 방문 · 「＋ 새 칠판」', async ({ browser }) => {
+  const taken = 'aaaaaaaa', owner = await fresh(browser), o = await owner.newPage()
+  await o.goto(`/?board=${encodeURIComponent('겹침-' + taken)}`)                          // 제목이 붙은 남의 칠판(같은 코드로 끝남)
+  await o.waitForFunction(() => !!window.__mb?.toEcad)
+  await expect.poll(async () => (await (await o.request.get(`/api/boards?code=${taken}`)).json()).boards.length).toBeGreaterThan(0)
+  const c = await fresh(browser)
+  await c.addInitScript(() => { window.__zeros = 1; const g = crypto.getRandomValues.bind(crypto)   // 다음 한 번만 0만 = 코드 「aaaaaaaa」
+    crypto.getRandomValues = a => { if (window.__zeros > 0 && a instanceof Uint32Array && a.length === 8) { window.__zeros--; return a.fill(0) } return g(a) } })
+  const p = await c.newPage()
+  await p.goto('/')
+  await expect.poll(() => new URL(p.url()).searchParams.get('board')).toMatch(/^(?!aaaaaaaa$)[a-z2-9]{8}$/)   // 처음 방문 = 다른 코드로(주소창은 먼저 뽑은 코드였다가 바뀜)
+  await p.waitForFunction(() => !!window.__mb?.toEcad)
+  await p.evaluate(() => { window.__zeros = 1 })
+  await p.getByTestId('dock-board').click(); await p.getByTestId('board-new').click()
+  const before = p.url()
+  await expect.poll(() => p.url()).not.toBe(before)
+  expect(new URL(p.url()).searchParams.get('board')).toMatch(/^(?!aaaaaaaa$)[a-z2-9]{8}$/)   // 「＋ 새 칠판」도
+  await owner.close(); await c.close()
 })

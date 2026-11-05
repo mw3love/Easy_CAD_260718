@@ -164,8 +164,15 @@ const MENU_ROW = { all: 'unset', boxSizing: 'border-box', display: 'flex', align
 const menuHover = hoverBg   // 마우스 올림 = 회색(2026-11-02 디자인 규칙 ③ — `ui.jsx`)
 // 「★ 예시 칠판」(2026-11-04 사용자 — 「＋ 새 칠판」은 늘 빈 칠판, 예시는 따로 단추: 누를 때마다 최신 예시의 새 사본을 마음껏 고침). 처음 방문도 빈 칠판(+ 첫 안내의 「예시 칠판 보기」).
 // 이름이 겹치면 서버가 「… 2」(이름을 나중에 바꾸면 「고친 사본」이 돼 7일 자동 정리에서 빠짐)
+// 새 칠판 주소 = 칠판 코드가 서버에 없는 것만(2026-11-05 — 코드 8자가 우연히 겹치면 남의 칠판이 열림, 31^8이라 드물지만 조용히 섞임).
+// 같은 코드로 끝나는 칠판(제목이 붙은 이름 포함)·지운 칠판 이름이면 다시 뽑음, 서버가 답을 못 하면 그대로(어차피 못 엶)
+async function freshBoardName(title = '') {
+  for (let i = 0; i < 5; i++) { const n = newBoardName(title)
+    if (!(await api.boardByCode(boardLabel(n).code)).length && !(await api.session(n)).gone) return n }
+  return newBoardName(title)
+}
 async function openExample() {
-  const n = newBoardName()
+  const n = await freshBoardName()
   if (!(await api.example(n, myBoards().map(b => b.title).filter(Boolean)))) return false
   rememberBoard(n)   // 내가 만든 칠판 — 안 적으면 옮겨 간 칠판이 「남의 링크」로 이름을 물음(2026-11-04 자체 확인)
   location.href = `${location.pathname}?board=${encodeURIComponent(n)}`; return true
@@ -186,7 +193,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
   useEffect(() => { loadMine(); if (!open) api.boards().then(setList); else setList([]) }, [open])   // eslint-disable-line react-hooks/exhaustive-deps
   const boardUrl = n => `${location.pathname}?board=${encodeURIComponent(n)}`, goTo = n => { location.href = boardUrl(n) }
   const clean = name.trim().replace(/[^\w\-가-힣]/g, '').slice(0, 64), taken = !open && !!list?.some(b => b.name === clean)
-  const make = async () => { if (open) { goTo(newBoardName()); return }   // 비밀번호 없는 서버 = 누르면 바로 새 칠판(칠판 코드만 — 이름은 나중에, 2026-10-28 사용자: 만들 때마다 이름 치거나 한 번 더 누르기 불편)
+  const make = async () => { if (open) { goTo(await freshBoardName()); return }   // 비밀번호 없는 서버 = 누르면 바로 새 칠판(칠판 코드만 — 이름은 나중에, 2026-10-28 사용자: 만들 때마다 이름 치거나 한 번 더 누르기 불편)
     if (!clean) return
     if (!taken && (await api.session(clean)).board_ok === false) { setWhy('다른 팀이 쓰는 이름이에요 — 다른 이름으로 지어 주세요'); return }   // 팀 서버(§8 항목67) — 목록엔 우리 팀 것만 보여서 겹침을 모름
     goTo(clean) }
@@ -204,7 +211,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
   // 파일로 새 칠판(2026-10-28 — 옛 「파일 열기」는 지금 칠판을 그 내용으로 통째로 바꿨음, 실수 한 번에 쓰던 칠판이 덮임) = 새 주소에 올리고 옮겨 감, 이름 = 파일 이름
   const fileNew = async e => { const f = e.target.files?.[0]; e.target.value = ''; closeMenu(); if (!f) return
     let doc; try { doc = parseDoc(await f.text()) } catch (err) { setWhy(`파일을 못 읽었어요 — ${err.message}`); return }
-    const n = newBoardName(), body = doc.title ? doc : { ...doc, title: f.name.replace(/\.(ecad|json)$/i, '').slice(0, 60) }
+    const n = await freshBoardName(), body = doc.title ? doc : { ...doc, title: f.name.replace(/\.(ecad|json)$/i, '').slice(0, 60) }
     if (await api.putDoc(n, body)) goTo(n); else setWhy('새 칠판에 못 올렸어요 — 서버 연결을 확인해 주세요') }
   const exampleNew = async () => { closeMenu(); if (!(await openExample())) setWhy('예시 칠판을 못 열었어요 — 서버 연결을 확인해 주세요') }   // 예시 칠판 하나 더(2026-10-28 — 처음 방문 때 받은 예시를 지웠을 때도)
   const myNames = new Set((mine || []).map(b => b.name))
@@ -828,7 +835,7 @@ function GoneBoard() {
     <div style={{ width: 320, display: 'flex', flexDirection: 'column', gap: 10, padding: 20, borderRadius: 12, border: `1px solid ${C.line}`, background: C.card, boxShadow: '0 6px 20px rgba(0,0,0,.12)' }}>
       <div style={{ font: "700 16px 'Pretendard', sans-serif" }}>지워진 칠판이에요</div>
       <div style={{ color: C.muted, fontSize: 12, lineHeight: 1.5 }}>누군가 이 칠판을 지웠어요. 서버 휴지통에 남아 있어서, 꼭 필요하면 서버를 맡은 사람이 되살릴 수 있어요.</div>
-      <button onClick={() => go(`?board=${newBoardName()}`)} style={{ all: 'unset', cursor: 'pointer', textAlign: 'center', padding: '7px 0', borderRadius: 6, background: 'var(--mb-accent)', color: '#fff', fontWeight: 600 }}>＋ 새 칠판</button>
+      <button onClick={async () => go(`?board=${await freshBoardName()}`)} style={{ all: 'unset', cursor: 'pointer', textAlign: 'center', padding: '7px 0', borderRadius: 6, background: 'var(--mb-accent)', color: '#fff', fontWeight: 600 }}>＋ 새 칠판</button>
       <button onClick={() => go('')} style={{ all: 'unset', cursor: 'pointer', textAlign: 'center', padding: '6px 0', borderRadius: 6, color: C.ink, border: `1px solid ${C.line}` }}>쓰던 칠판으로</button>
     </div></div>
 }
@@ -839,6 +846,7 @@ function Gate() {
     if (s.auth && !s.ok) { setGate('login'); return }
     if (s.team && AUTO_BOARD && s.home && (AUTO_BOARD === 'new' || s.board_ok === false)) { if (s.board_ok === false) forgetBoard(DOC_NAME); location.replace(`${location.pathname}?board=${encodeURIComponent(s.home)}`); return }   // 주소 없이 들어온 팀 = 우리 팀 첫 칠판(새 비밀 주소를 팀이 가져가지 않게)
     if (s.team && s.board_ok === false) { setGate('blocked'); return }
+    if (AUTO_BOARD === 'new' && !s.team && (s.exists || s.gone || (await api.boardByCode(boardLabel(DOC_NAME).code)).length)) { location.replace(`${location.pathname}?board=${encodeURIComponent(await freshBoardName())}`); return }   // 처음 방문의 새 비밀 주소가 우연히 있는 칠판 코드 = 다시 뽑음(2026-11-05)
     if (s.gone) { forgetBoard(DOC_NAME); setGate('gone'); return }   // 지운 칠판 링크 = 빈 칠판을 만들지 않고 안내(2026-10-28), 「마지막 칠판」에서도 뺌
     // 남이 준 링크로 처음 연 칠판(이미 있고 내 목록에 없음) = 같이 쓰는 칠판 → 이름을 한 번 물음(혼자 쓰는 새 칠판은 안 물음 — 2026-10-27 Excalidraw처럼)
     if (s.exists && !isMyBoard(DOC_NAME) && !(() => { try { return localStorage.getItem('mb.name') } catch { return '' } })()) { setGate('name'); return }
