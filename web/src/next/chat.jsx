@@ -300,7 +300,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
       ...(d.images?.length ? { images: d.images, prompt: d.caption || history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}),
       ...(d.svgs?.length ? { svgs: d.svgs, prompt: history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}), ...(d.credits != null ? { credits: d.credits } : {}),
       ...(d.kind === 'diagram' && d.place ? { flow: d.spec, place: d.place, flowId: fb?.id || '' } : {}),   // caption = 이어 고친 그림이면 처음 요청(서버)
-      ...(d.html ? { html: d.html, title: d.title || (d.kind === 'live' ? '인터랙티브 HTML' : '정리 문서') } : {}), ...(d.kind === 'ask' ? { choices: d.choices || [], askKey: d.key || '' } : {}),
+      ...(d.html ? { html: d.html, title: d.title || (d.kind === 'live' ? '인터랙티브 HTML' : '정리 문서') } : {}), ...(d.kind === 'report' && d.docs?.length ? (d.docs.length > 1 ? { docs: d.docs.map(({ style, label, html, title }) => ({ style, label, html, title })) } : { style: d.docs[0].style }) : {}),   /* 정리 문서 두 장(발표용·읽기용, 2026-11-05) */ ...(d.kind === 'ask' ? { choices: d.choices || [], askKey: d.key || '' } : {}),
       ...(d.remembered ? { askKey: d.remembered.key, alt: (d.remembered.choices || []).filter(k => k !== d.kind) } : {}) }   // 기억으로 고른 답 — 「다른 쪽으로」 버튼
   }
   // 🎤 실시간 받아쓰기(2026-10-20) — 말하는 동안 입력 칸에 글자가 쌓임(누르기 전 글 뒤에), 다시 누르거나 보내면 멈춤. 직접 치면 멈춤
@@ -342,7 +342,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
       ...(ri >= 0 ? { reply_to: replyTo } : {}), ...(boardImgs.length ? { imgCount: boardImgs.length } : {}) }
     const next = [...msgs.filter(m => m.role !== 'error'), mine]
     update(next); setReplyTo(null); if (text == null) setDraft(''); setBusy(Date.now()); setBusyJob(kind)
-    try { update([...next, await ask([...before, mine], kind, (!kind || kind === 'report' || kind === 'live') && lastA?.role === 'assistant' && lastA.html && (kind !== 'live' || lastA.kind === 'live') ? lastA.html : '', { ...(boardImgs.length ? { board_images: boardImgs } : {}), ...(lastA?.kind === 'live' ? { prev_kind: 'live' } : {}), ...(fl?.spec ? { base_flow: fl.spec, flow_into: fl.id } : {}) })]) } catch (e) {
+    try { update([...next, await ask([...before, mine], kind, (!kind || kind === 'report' || kind === 'live') && lastA?.role === 'assistant' && lastA.html && !lastA.docs && (kind !== 'live' || lastA.kind === 'live') ? lastA.html : '', { ...((!kind || kind === 'report') && lastA?.role === 'assistant' && lastA.docs ? { prev_docs: lastA.docs.map(({ style, html }) => ({ style, html })) } : {}), ...(boardImgs.length ? { board_images: boardImgs } : {}), ...(lastA?.kind === 'live' ? { prev_kind: 'live' } : {}), ...(fl?.spec ? { base_flow: fl.spec, flow_into: fl.id } : {}) })]) } catch (e) {
       setMsgs([...next, { role: 'error', content: String(e.message || e) }])   // 오류는 기록에 안 남김
     } finally { setBusy(null) }
   }
@@ -552,7 +552,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     const history = msgs.slice(0, i).filter(m => m.role !== 'error'), m = msgs[i]
     if (busy || history.at(-1)?.role !== 'user') return
     setBusy(Date.now()); setBusyJob(m.kind || '')
-    try { const a = await ask(history, m.kind || '', m.kind === 'report' && history.at(-2)?.html ? history.at(-2).html : ''); update(msgs.map((x, j) => (j === i ? a : x))) } catch (e) {
+    try { const pv = history.at(-2), a = await ask(history, m.kind || '', m.kind === 'report' && pv?.html && !pv.docs ? pv.html : '', m.kind === 'report' && pv?.docs ? { prev_docs: pv.docs.map(({ style, html }) => ({ style, html })) } : {}); update(msgs.map((x, j) => (j === i ? a : x))) } catch (e) {
       setMsgs([...msgs.filter(x => x.role !== 'error'), { role: 'error', content: String(e.message || e) }])
     } finally { setBusy(null) }
   }
@@ -700,9 +700,16 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
               </div>}
               {m.html && m.kind === 'live' && <LivePreview m={m} />}
               {m.html && m.kind !== 'live' && <div data-testid="answer-doc" style={{ marginTop: 6 }}>   {/* 정리 문서 미리보기 — A4 폭 794px를 대화창 폭에 맞춰 줄임(스크립트 없는 iframe) */}
-                <div style={{ height: 300, overflow: 'hidden', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', cursor: 'zoom-in' }} title="누르면 크게 보기 · 인쇄" onClick={() => openHtml(m.html)}>
-                  <iframe srcDoc={m.html} title={m.title || '정리 문서'} sandbox="" scrolling="no" style={{ border: 0, width: 794, height: 300 / 0.41, transform: 'scale(0.41)', transformOrigin: '0 0', pointerEvents: 'none' }} />
+                {m.docs?.length > 1 ? <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>   {/* 두 장(발표용·읽기용) = 나란히 반쪽 크기 */}
+                  {m.docs.map(d => <div key={d.style} data-testid="answer-doc-style" data-style={d.style}>
+                    <div style={{ ...css.meta, marginBottom: 2 }}>{d.label}</div>
+                    <div style={{ height: 220, overflow: 'hidden', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', cursor: 'zoom-in' }} title={`${d.label} — 누르면 크게 보기 · 인쇄`} onClick={() => openHtml(d.html)}>
+                      <iframe srcDoc={d.html} title={d.title || d.label} sandbox="" scrolling="no" style={{ border: 0, width: 794, height: 220 / 0.2, transform: 'scale(0.2)', transformOrigin: '0 0', pointerEvents: 'none' }} />
+                    </div></div>)}
                 </div>
+                : <div style={{ height: 300, overflow: 'hidden', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', cursor: 'zoom-in' }} title="누르면 크게 보기 · 인쇄" onClick={() => openHtml(m.html)}>
+                  <iframe srcDoc={m.html} title={m.title || '정리 문서'} sandbox="" scrolling="no" style={{ border: 0, width: 794, height: 300 / 0.41, transform: 'scale(0.41)', transformOrigin: '0 0', pointerEvents: 'none' }} />
+                </div>}
                 <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>   {/* 「크게 보기 · 인쇄」 단추는 뺌 — 미리보기 누르기와 같았음(2026-10-26 실검증) */}
                   <button style={css.ghost} disabled={!!busy} onClick={() => drawReport(i)} title="같은 자료로 인포그래픽 그림 후보 2장 — 보기 좋지만 숫자·날짜를 지어낼 수 있으니 확인하고 쓰세요(약 20크레딧)">🎨 그림으로도</button>
                   <span style={{ ...css.meta, alignSelf: 'center' }}>미리보기를 누르면 크게 보기·인쇄 · 고칠 점을 이어서 말하면 이 문서를 고쳐 써요</span></div>

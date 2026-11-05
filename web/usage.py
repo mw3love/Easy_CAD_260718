@@ -11,7 +11,7 @@
 크레딧은 서버가 답에 붙인 것(`credits` — 잔액 차이)만 더한다. 보통 대화 답은 크레딧을 안 재서 0으로 남는다(횟수만).
 쓰기는 모아 두었다가 60초마다(또는 `flush`) — 부분 저장이 0.3초마다 와도 파일을 매번 쓰지 않게.
 
-보기: python web/usage.py [데이터 폴더]   → 날짜별·기능별 표
+보기: python web/usage.py [데이터 폴더]   → 날짜별·기능별 표 + 정리 문서 발표용·읽기용 중 남긴 쪽(`report_styles`)
 """
 from __future__ import annotations
 
@@ -146,6 +146,29 @@ def summary(data: dict) -> str:
     return "\n".join(lines) or "기록 없음"
 
 
+def report_styles(folder: str) -> dict:
+    """정리 문서 발표용·읽기용 중 칠판에 남긴 쪽 세기(2026-11-05 — 당분간 둘 다 만들어 써 보고 하나로 합칠지 정함).
+    칠판 파일들의 문서 카드(`style`)를 같은 답(`chat_at`)끼리 묶어: 둘 다 남김 / 발표용만 / 읽기용만. 둘 다 지운 답은 안 보임(셀 수 없음)."""
+    out = {"both": 0, "present": 0, "read": 0}
+    try:
+        names = [n for n in os.listdir(folder) if n.endswith(".ecad") and not n.endswith(".prev.ecad")]
+    except OSError:
+        return out
+    for n in names:
+        try:
+            with open(os.path.join(folder, n), encoding="utf-8") as f:
+                items = json.load(f).get("items") or []
+        except (OSError, ValueError, AttributeError):
+            continue
+        by = {}
+        for it in items:
+            if isinstance(it, dict) and it.get("type") == "doc" and it.get("style") in ("present", "read"):
+                by.setdefault(it.get("chat_at") or id(it), set()).add(it["style"])
+        for st in by.values():
+            out["both" if len(st) > 1 else next(iter(st))] += 1
+    return out
+
+
 if __name__ == "__main__":
     for s in (sys.stdout,):
         try:
@@ -164,3 +187,6 @@ if __name__ == "__main__":
             print(summary(json.load(f)))
     except OSError:
         print("기록 없음 —", os.path.join(folder, FILE))
+    r = report_styles(folder)
+    print()
+    print(f"정리 문서 칠판에 남긴 쪽(답 하나 기준): 둘 다 {r['both']} · 발표용만 {r['present']} · 읽기용만 {r['read']}")

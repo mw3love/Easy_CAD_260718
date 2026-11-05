@@ -88,9 +88,10 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(srv.gw, "resolve_api_key", lambda explicit="": "test-key")
     seen = []
 
-    def fake_make(client, material, ask="", *, prev_html="", model=board_report.REPORT_MODEL, images=None):
-        seen.append({"material": material, "ask": ask, "prev": prev_html})
-        return {"html": "<html><title>T</title></html>", "title": "T", "model": model, "elapsed": 0.1, "tone": "calm", "unchecked": ["4,800"] if "합계" in ask else []}
+    def fake_make(client, material, ask="", *, prev_html="", model=board_report.REPORT_MODEL, images=None, style="present"):
+        seen.append({"material": material, "ask": ask, "prev": prev_html, "style": style})
+        return {"html": f"<html><title>T {style}</title></html>", "title": f"T {style}", "model": model, "elapsed": 0.1, "tone": "calm" if style == "present" else "",
+                "unchecked": ["4,800"] if "합계" in ask else [], "style": style}
     monkeypatch.setattr(srv.board_report, "make", fake_make)
     monkeypatch.setattr(srv.gw, "_client", lambda *a, **k: None)
     srv.Handler.data_dir = str(tmp_path)
@@ -112,12 +113,12 @@ def _post(url, body):
 def test_server_report_material_whole_board_selection_and_revise(server):
     base, seen = server
     out = _post(base + "/api/chat", {"board": "공부", "messages": [{"role": "user", "content": "이 칠판 정리해 줘"}]})
-    assert out["kind"] == "report" and out["html"].startswith("<html>") and "「T」" in out["content"]
+    assert out["kind"] == "report" and out["html"].startswith("<html>") and "「T present」" in out["content"] and "「T read」" in out["content"]
     assert "(메모) 송신기 이상 보고" in seen[-1]["material"] and "(상자) UHD 회의" in seen[-1]["material"]   # 고른 것이 없으면 칠판 전체
     _post(base + "/api/chat", {"board": "공부", "messages": [{"role": "user", "content": "보고서로", "context": "- 고른 메모"}]})
     assert seen[-1]["material"] == "- 고른 메모"
     _post(base + "/api/chat", {"board": "공부", "prev_html": "<html>앞</html>", "messages": [{"role": "user", "content": "더 짧게"}]})
-    assert seen[-1]["prev"] == "<html>앞</html>" and seen[-1]["ask"] == "더 짧게"   # 「더 짧게」 = 앞 문서 고치기
+    assert seen[-1]["prev"] == "<html>앞</html>" and seen[-1]["ask"] == "더 짧게" and seen[-1]["style"] == "present"   # 「더 짧게」 = 앞 문서 고치기(옛 한 장 = 발표용으로)
     out = _post(base + "/api/chat", {"board": "공부", "messages": [{"role": "user", "content": "합계까지 보고서로", "context": "- 고른 메모"}]})
     assert "차분 톤" in out["content"] and "그대로 찾지 못한 숫자: 4,800" in out["content"]   # 숫자 검사는 답 글에 알림(막지 않음)
 
@@ -128,3 +129,41 @@ def test_unchecked_numbers_skips_times_and_dates_written_differently():
     doc = "<p>다음 회의 14:00</p><p>7월 31일 KBS, 9.21 kt ENA, 2026.7.31 정리</p><p>출력 1200W → 4,800W, 시청률 35.2%</p>"
     assert board_report.unchecked_numbers(doc, material) == ["4,800", "35.2"]
     assert board_report.unchecked_numbers("<p>2026.8.15 발표</p>", material) == ["2026.8", "15"]   # 자료에 없는 날짜는 그대로 알림
+
+
+def test_two_styles_present_and_read():
+    """2026-11-05 사용자 — 발표용(지금 지시문 + 지어 넣지 않기)·읽기용(/pic A/B 「C」) 두 장을 같이 만들어 써 보고 정함."""
+    assert board_report.STYLES == {"present": "발표용", "read": "읽기용"}
+    assert board_report.style_of("발표용으로만 만들어 줘") == "present" and board_report.style_of("읽기용으로") == "read" and board_report.style_of("차분하게 정리") == "read"
+    assert board_report.style_of("정리해 줘") == "" and board_report.style_of("발표용이랑 읽기용 둘 다") == ""
+    assert "지어 넣지 않는다" in board_report.SYSTEM                                  # 발표용도 칠판에 없는 연결·계산 표는 안 지어냄(A/B에서 A가 담당 칸·칼로리 표를 지어냄)
+    for rule in ("결론", "용어", "구조", "keep-all", "칸 높이를 고정하지"):
+        assert rule in board_report.SYSTEM_READ, rule
+    assert "Pretendard" not in board_report.SYSTEM_READ and "흰 바탕" not in board_report.SYSTEM_READ   # 모양은 모델이(베껴 적어 굳지 않게)
+    c = FakeClient()
+    out = board_report.make(c, "(메모) 송신기 이상", "", style="read")
+    assert out["style"] == "read" and out["tone"] == "" and c.seen[0]["messages"][0]["content"] == board_report.SYSTEM_READ
+    assert "톤" not in c.seen[0]["messages"][1]["content"]                            # 읽기용 색은 모델이 — 톤은 말했을 때만
+    out = board_report.make(c, "(메모) 송신기 이상", "신문 톤으로", style="read")
+    assert out["tone"] == "news" and "「신문」 톤" in c.seen[1]["messages"][1]["content"]
+    out = board_report.make(c, "(메모) 송신기 이상", "")
+    assert out["style"] == "present" and out["tone"] == "calm" and c.seen[2]["messages"][0]["content"] == board_report.SYSTEM
+
+
+def test_server_report_two_docs_pick_one_and_revise_each(server):
+    base, seen = server
+    out = _post(base + "/api/chat", {"board": "공부", "messages": [{"role": "user", "content": "정리해 줘", "context": "- 고른 메모"}]})
+    assert [d["style"] for d in out["docs"]] == ["present", "read"] and [d["label"] for d in out["docs"]] == ["발표용", "읽기용"]
+    assert out["html"] == out["docs"][0]["html"] and "두 장" in out["content"]
+    assert sorted(x["style"] for x in seen[-2:]) == ["present", "read"] and all(x["material"] == "- 고른 메모" for x in seen[-2:])
+    n = len(seen)
+    out = _post(base + "/api/chat", {"board": "공부", "messages": [{"role": "user", "content": "읽기용으로만 정리해 줘", "context": "- 고른 메모"}]})
+    assert len(seen) == n + 1 and seen[-1]["style"] == "read" and [d["style"] for d in out["docs"]] == ["read"] and "두 장" not in out["content"]
+    prev = [{"style": "present", "html": "<html>발표</html>"}, {"style": "read", "html": "<html>읽기</html>"}]
+    n = len(seen)
+    out = _post(base + "/api/chat", {"board": "공부", "prev_docs": prev, "messages": [{"role": "user", "content": "더 짧게"}]})
+    assert out["kind"] == "report" and len(seen) == n + 2 and len(out["docs"]) == 2             # 「더 짧게」 = 두 장 각자 고치기
+    assert {(x["style"], x["prev"]) for x in seen[-2:]} == {("present", "<html>발표</html>"), ("read", "<html>읽기</html>")}
+    n = len(seen)
+    _post(base + "/api/chat", {"board": "공부", "prev_docs": prev, "messages": [{"role": "user", "content": "발표용만 더 크게"}]})
+    assert len(seen) == n + 1 and seen[-1]["style"] == "present" and seen[-1]["prev"] == "<html>발표</html>"   # 하나를 말하면 그것만

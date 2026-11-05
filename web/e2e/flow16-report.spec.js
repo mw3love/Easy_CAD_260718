@@ -55,3 +55,32 @@ test('정리해 줘 → 📄 미리보기 → 문서 카드 → 더 짧게 = 고
   const tab = await popup
   await expect(tab.locator('h1')).toHaveText('회의 브리핑')
 })
+
+// 2026-11-05 사용자 — 발표용·읽기용 두 장을 같이 만들어 써 보고 하나로 합칠지 정함: 미리보기 둘 → 칠판에 나란히 두 카드(style) → 「더 짧게」 = 두 장 다 보냄(prev_docs)
+test('정리 문서 두 장(발표용·읽기용) → 미리보기 둘 → 칠판에 나란히 → 더 짧게 = 두 장 고치기', async ({ page }) => {
+  const name = boardName('report2'), seen = []
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
+  await page.route('**/api/chat', async r => { const b = r.request().postDataJSON(); seen.push(b)
+    const docs = [{ style: 'present', label: '발표용', title: '발표 브리핑', html: html('발표 브리핑') }, { style: 'read', label: '읽기용', title: '읽기 브리핑', html: html('읽기 브리핑') }]
+    await r.fulfill({ json: { kind: 'report', content: '정리 문서 두 장', ...docs[0], model: 'claude-opus-5-5', elapsed: 41, docs } }) })
+  await openBoard(page, name, { chat: true }); await setCam(page)
+  await page.getByPlaceholder('물어보세요', { exact: false }).click()
+  await page.keyboard.type('이 칠판 정리해 줘'); await page.keyboard.press('Enter')
+  const prev = page.getByTestId('answer-doc-style')
+  await expect(prev).toHaveCount(2)
+  await expect(prev.nth(0)).toHaveAttribute('data-style', 'present'); await expect(prev.nth(0)).toContainText('발표용')
+  await expect(prev.nth(1).locator('iframe')).toHaveAttribute('srcdoc', /읽기 브리핑/)
+
+  await page.getByRole('button', { name: '칠판에 붙이기' }).click()
+  const cards = (await liveDoc(page)).items.filter(it => it.type === 'doc').sort((a, b) => a.pos[0] - b.pos[0])
+  expect(cards.map(c => [c.style, c.title])).toEqual([['present', '발표 브리핑'], ['read', '읽기 브리핑']])
+  expect(cards[1].pos[0]).toBeGreaterThanOrEqual(cards[0].pos[0] + cards[0].rect[2])   // 나란히 — 안 겹침
+  expect(cards[1].pos[1]).toBe(cards[0].pos[1])
+
+  await page.getByPlaceholder('물어보세요', { exact: false }).click()
+  await page.keyboard.type('더 짧게'); await page.keyboard.press('Enter')
+  await expect.poll(() => seen.length).toBe(2)
+  expect(seen[1].prev_html).toBeUndefined()
+  expect(seen[1].prev_docs.map(d => d.style)).toEqual(['present', 'read'])
+  expect(seen[1].prev_docs[1].html).toContain('읽기 브리핑')
+})

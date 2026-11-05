@@ -36,6 +36,7 @@ import shutil
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -240,12 +241,13 @@ class Handler(SimpleHTTPRequestHandler):
                 except Exception as e:
                     sys.stderr.write("[도구 실패] %s\n" % e)
             prev_html = str(req.get("prev_html") or "")
-            if kind == "chat" and prev_html and not req.get("kind"):   # 정리 문서 바로 뒤 「더 짧게」 같은 말 = 그 문서 고치기(움직이는 카드 뒤면 그 카드 — §8 항목66 4-3)
+            prev_docs = req.get("prev_docs") if isinstance(req.get("prev_docs"), list) else []   # 앞 답이 정리 문서 두 장(발표용·읽기용)이면 그 둘
+            if kind == "chat" and (prev_html or prev_docs) and not req.get("kind"):   # 정리 문서 바로 뒤 「더 짧게」 같은 말 = 그 문서 고치기(움직이는 카드 뒤면 그 카드 — §8 항목66 4-3)
                 kind = "live" if req.get("prev_kind") == "live" else "report"
             if kind == "live":
                 return self._live(str(last.get("content", "")), ctx or str(last.get("context") or ""), key, prev_html if req.get("prev_kind") == "live" else "", see.clean(bimgs))
             if kind == "report":   # 「정리해 줘」 ① — 고른 것(없으면 칠판 전체)을 정리 문서 한 장으로(§8 항목61)
-                return self._report(self._name(str(req.get("board") or "")), str(last.get("content", "")), ctx or str(last.get("context") or ""), prev_html, key, see.clean(bimgs))
+                return self._report(self._name(str(req.get("board") or "")), str(last.get("content", "")), ctx or str(last.get("context") or ""), prev_html, key, see.clean(bimgs), prev_docs)
             if kind == "image":   # 「○○ 그려줘」 — 그림 후보(§8 항목61 ③-4): 칠판 옆 폴더에 두고 주소만 대화 기록에(기록이 그림으로 불지 않게)
                 name, prompt = self._name(str(req.get("board") or "")), str(last.get("content", ""))
                 if req.get("infographic"):   # 정리 문서의 「🎨 그림으로도」 — 같은 자료(고른 것, 없으면 칠판 전체)로 인포그래픽
@@ -493,22 +495,48 @@ class Handler(SimpleHTTPRequestHandler):
         tip = "칠판에 놓았어요. 상자를 옮기면 화살표가 따라와요 · 「○○ 추가해 줘」처럼 말하면 이 도형을 고쳐요"
         return self._json(200, {"kind": "diagram", "content": f"{head}\n\n{tip}", **out, "fixed": bool(base_spec), "credits": self._spent(key, base, b0)})
 
-    def _report(self, name: str, ask: str, material: str, prev_html: str, key: str, images=None):
+    def _report(self, name: str, ask: str, material: str, prev_html: str, key: str, images=None, prev_docs=None):
         """정리 문서 → {"kind": "report", "content", "title", "html", "model", "elapsed"} — 자료 = 고른 것의 글·그림, 없으면 이 칠판 전체 글·그림(`see`)."""
         images = list(images or [])
-        if not material.strip() and not images and not prev_html:
+        prev_docs = [d for d in (prev_docs or []) if isinstance(d, dict)][:2]
+        if not material.strip() and not images and not prev_html and not prev_docs:
             material, images = self._board_see(name)
-        if not material.strip() and not images and not prev_html:
+        if not material.strip() and not images and not prev_html and not prev_docs:
             return self._json(400, {"error": "정리할 것이 없어요 — 칠판에서 메모·글을 고르고 다시 물어 주세요"})
-        try:
-            out = self._with("report", board_report.REPORT_MODEL, lambda m: board_report.make(gw._client(key, self._base(), timeout=600), material, ask, prev_html=prev_html, model=m, images=images))
-        except Exception as e:
-            return self._json(502, {"error": f"정리 문서 실패: {gw.friendly_error(e)}"})
-        sys.stderr.write("[정리 문서] %s %.1f초 %d자%s\n" % (out["model"], out["elapsed"], len(out["html"]), " 확인할 숫자 %d" % len(out["unchecked"]) if out.get("unchecked") else ""))
-        tone = board_report.TONES.get(out.get("tone") or "", {}).get("name")
-        why = "그림에서 읽었거나 계산한 값일 수 있어요" if images and not prev_html else "계산한 값일 수 있어요"   # 숫자 대조는 글만 — 그림 속 숫자도 여기 걸림(2026-10-28 실측)
-        note = f"\n\n칠판 글에서 그대로 찾지 못한 숫자: {', '.join(out['unchecked'])} — {why}. 문서에서 한 번 확인해 주세요" if out.get("unchecked") else ""
-        return self._json(200, {"kind": "report", "content": f"정리 문서 「{out['title']}」{f' · {tone} 톤' if tone else ''} — 칠판에 붙이면 인쇄용 문서 카드가 돼요{note}", **out})
+        # 발표용·읽기용 두 장을 같이(2026-11-05 사용자 — 당분간 둘 다 써 보고 하나로 합칠지 정함): 말에 「발표용」·「읽기용」이 있으면 그 한 장만.
+        # 고쳐 쓰기 = 앞 답의 두 장(`prev_docs`)을 각자 고침(하나를 말했으면 그것만), 옛 한 장(`prev_html`)은 발표용으로 고침
+        pick = board_report.style_of(ask)
+        if prev_docs:
+            jobs = [(d["style"], d["html"]) for d in prev_docs if d.get("style") in board_report.STYLES and d.get("html") and (not pick or d["style"] == pick)] or [(d["style"], d["html"]) for d in prev_docs[:1]]
+        elif prev_html:
+            jobs = [("present", prev_html)]
+        else:
+            jobs = [(s, "") for s in ([pick] if pick else board_report.STYLES)]
+        client = gw._client(key, self._base(), timeout=600)
+        with ThreadPoolExecutor(len(jobs)) as ex:
+            futs = [ex.submit(self._with, "report", board_report.REPORT_MODEL, lambda m, s=s, p=p: board_report.make(client, material, ask, prev_html=p, model=m, images=images, style=s)) for s, p in jobs]
+            docs, errs = [], []
+            for (s, _p), f in zip(jobs, futs):
+                try:
+                    docs.append({"style": s, **f.result()})   # 어느 쪽인지는 시킨 쪽이 앎(결과에 없어도)
+                except Exception as e:
+                    errs.append(e)
+        if not docs:
+            return self._json(502, {"error": f"정리 문서 실패: {gw.friendly_error(errs[0])}"})
+        why = "그림에서 읽었거나 계산한 값일 수 있어요" if images and not (prev_html or prev_docs) else "계산한 값일 수 있어요"   # 숫자 대조는 글만 — 그림 속 숫자도 여기 걸림(2026-10-28 실측)
+        lines = []
+        for out in docs:
+            sys.stderr.write("[정리 문서 %s] %s %.1f초 %d자%s\n" % (out["style"], out["model"], out["elapsed"], len(out["html"]), " 확인할 숫자 %d" % len(out["unchecked"]) if out.get("unchecked") else ""))
+            tone = board_report.TONES.get(out.get("tone") or "", {}).get("name")
+            label = board_report.STYLES[out["style"]] if len(jobs) > 1 or prev_docs else ""
+            lines.append(f"{label + ' ' if label else ''}「{out['title']}」{f' · {tone} 톤' if tone else ''}"
+                         + (f" — 칠판 글에서 그대로 찾지 못한 숫자: {', '.join(out['unchecked'])}" if out.get("unchecked") else ""))
+        note = f"\n\n숫자는 {why}. 문서에서 한 번 확인해 주세요" if any(o.get("unchecked") for o in docs) else ""
+        fail = f"\n\n한 장은 못 만들었어요: {gw.friendly_error(errs[0])}" if errs else ""
+        head = "정리 문서 두 장 — 발표용(화려)·읽기용(차분), 칠판에 나란히 붙여요. 안 쓸 쪽은 지우면 돼요" if len(docs) > 1 else "정리 문서 — 칠판에 붙이면 인쇄용 문서 카드가 돼요"
+        body = "\n".join(("· " if len(docs) > 1 else "") + ln for ln in lines)
+        return self._json(200, {"kind": "report", "content": f"{head}\n\n{body}{note}{fail}", **docs[0],
+                                "docs": [{**d, "label": board_report.STYLES[d["style"]]} for d in docs]})
 
     def _board_doc(self, name: str) -> dict:
         """이 칠판의 저장된 문서(.ecad JSON), 없으면 {}."""

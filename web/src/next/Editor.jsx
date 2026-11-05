@@ -1166,6 +1166,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // 답 속 표 = 메모 안 표 줄(2026-10-21 사용자: 한 답 = 메모 하나 — 전엔 메모 밑 진짜 표로 따로). 꾸밀 게 많으면 줄 손잡이 ⠿ 「칠판 표로 바꾸기」
   function cardItems(msg, x, y, z) {
+    if (msg.docs?.length > 1) return msg.docs.map((d, k) => docItem({ ...msg, ...d }, x + k * (DOC_W + 40), y, z + k))   // 정리 문서 두 장(발표용·읽기용, 2026-11-05) = 나란히 — 안 쓸 쪽은 지움
     if (msg.html) return [docItem(msg, x, y, z)]   // 정리 문서 = 문서 카드 하나
     return answerItems(msg, x, y, z)
   }
@@ -1525,7 +1526,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const LIVE_DOC_W = 480   // 움직이는 카드(§8 항목66 4단계) — 기준 칸 720×480을 2/3로(높이 = 띠 + 같은 비율)
   function docItem(msg, x, y, z) {
     if (msg.live || msg.kind === 'live') return base([x, y], { type: 'doc', live: true, rect: [0, 0, LIVE_DOC_W, WEB_HEAD + Math.round(LIVE_DOC_W * LIVE_H / LIVE_W)], title: msg.title || '인터랙티브 HTML', html: msg.html, model: msg.model || '', chat_at: msg.at, z })
-    return base([x, y], { type: 'doc', rect: [0, 0, DOC_W, WEB_HEAD + Math.round(DOC_W * 1.414)], title: msg.title || '정리 문서', html: msg.html, model: msg.model || '', chat_at: msg.at, z })
+    return base([x, y], { type: 'doc', rect: [0, 0, DOC_W, WEB_HEAD + Math.round(DOC_W * 1.414)], title: msg.title || '정리 문서', html: msg.html, model: msg.model || '', chat_at: msg.at, ...(msg.style ? { style: msg.style } : {}), z })   // style = 발표용·읽기용(남긴 쪽 세기 `web/usage.py`)
   }
   // 「칠판에서」 답(§8 항목61 ③-2) = 메모 + 근거가 된 칠판 도형으로 가는 점선 화살표(메모 쪽 변 → 근거 쪽 변, 가까운 포트끼리). 근거 도형은 제자리 그대로 — 메모와 화살표만 한 묶음
   function boardRefItems(memo, refs, z) {

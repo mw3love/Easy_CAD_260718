@@ -230,15 +230,15 @@ def test_server_picked_model_first_then_default_when_it_cannot(server, monkeypat
     base, srv = server
     used = []
 
-    def make(client, material, ask, prev_html="", model="", images=None):
+    def make(client, material, ask, prev_html="", model="", images=None, style="present"):
         used.append(model)
         if model == "bad-model":
             raise RuntimeError("정리 문서 HTML이 아닌 답")
         if model == "broke-model":
             raise RuntimeError("Error code: 429 - quota exceeded")
-        return {"title": "점검", "html": "<p>x</p>", "model": model, "elapsed": 1.0}
+        return {"title": "점검", "html": "<p>x</p>", "model": model, "elapsed": 1.0, "style": style}
     monkeypatch.setattr(srv.board_report, "make", make)
-    ask = lambda picks: _post(base, {"board": "b", "kind": "report", "models": picks, "messages": [{"role": "user", "content": "정리해 줘", "context": "VSWR 1.12"}]})   # noqa: E731
+    ask = lambda picks: _post(base, {"board": "b", "kind": "report", "models": picks, "messages": [{"role": "user", "content": "발표용으로만 정리해 줘", "context": "VSWR 1.12"}]})   # noqa: E731  (한 장 — 두 장이면 부른 횟수가 둘, 2026-11-05)
     code, out = ask({"report": "claude-sonnet-5-5"})
     assert code == 200 and out["model"] == "claude-sonnet-5-5" and "swap" not in out and used == ["claude-sonnet-5-5"]
     code, out = ask({"report": "bad-model"})

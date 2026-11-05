@@ -23,7 +23,39 @@ SYSTEM = """너는 칠판에 흩어진 메모·검색 결과·회의록·표를 
 - A4 세로로 인쇄해도 손색없게: @page { size: A4; margin: 14mm }, 화면에서도 A4 폭(210mm) 가운데 정렬, 흰 바탕. 1~2쪽 안에.
 - 스크립트·외부 파일·외부 글꼴·외부 그림을 쓰지 않는다(인터넷 없이 열려야 함). 글꼴은 'Pretendard','Malgun Gothic',sans-serif.
 - 한국어. 칠판에 없는 사실은 지어내지 않는다. 계산한 값(합계·비율)은 자료에서 계산했다고 작게 밝힌다.
+- 칠판에 없는 연결·담당·계산 표를 그림이나 표에도 지어 넣지 않는다(흐름도의 담당 칸, 자료에 없는 값으로 만든 표 등 — 비어 있으면 비어 있다고 쓴다).
 - 마지막에 짧은 「핵심 의견」 한 칸은 넣어도 되지만 작성자 의견임을 밝힌다. 출처 주소가 있으면 각주처럼 작게 남긴다."""
+
+# 「읽기용」(2026-11-05 사용자 — /pic A/B의 「C」): 모양은 모델이 고르고 지시문엔 놓이는 자리 규칙만 + 결론 맨 위·용어 풀이·구조는 그림으로.
+# 위 SYSTEM = 「발표용」(화려·전문적 — 발표하기 좋음), 이쪽 = 정돈·차분(혼자 읽기 좋음). 당분간 둘 다 만들어 써 보고 하나로 합칠지 정한다(남긴 쪽 세기 `python web/usage.py`).
+# ⚠ 좋은 디자인의 모양을 여기 베껴 적지 말 것 — 그날 모양으로 굳는다(/pic 교훈). A/B 경위: docs/history/2026-11.md
+SYSTEM_READ = """너는 칠판에 흩어진 메모·검색 결과·회의록·표를 읽고, 읽는 사람이 바로 이해하도록 정리한 문서 한 장을 만든다.
+출력은 완결된 HTML 문서 하나뿐이다(설명·코드펜스 없이 <!doctype html>로 시작). <title>에 문서 제목을 쓴다.
+디자인(배치·색·글꼴 크기·형식)은 이 자료에 가장 알맞게 네가 정한다. 아래는 이 문서가 놓이는 자리 때문에 꼭 지킬 것뿐이다.
+
+[놓이는 자리]
+- 칠판 위 카드(스크립트가 돌지 않는 틀)로 보이고, 크게 열어 A4 세로로 인쇄·PDF로 저장한다. @page { size: A4; margin: 14mm }, 화면에서도 A4 폭 안에. 1~2쪽 안에.
+- 스크립트·외부 파일·외부 글꼴·외부 그림을 쓰지 않는다(인터넷 없이 열려야 함). 글꼴은 한글이 있는 것만 — 목록 끝에 'Malgun Gothic','Apple SD Gothic Neo',sans-serif.
+- 정지된 문서다: 버튼·탭·접기·마우스 올리기처럼 누르거나 움직이는 것을 쓰지 않고, 누르는 것처럼 보이는 모양도 그리지 않는다. 숨길 내용은 펼쳐서 보인다.
+- 인쇄하는 문서라 넓은 면을 진한 색으로 채우지 않는다.
+- body에 word-break: keep-all(한글이 낱말 중간에서 줄바꿈되지 않게). 칸 높이를 고정하지 않는다(글이 넘쳐 겹치지 않게 내용만큼 늘게).
+
+[내용]
+- 이 문서의 결론(가장 중요한 한 문장)을 맨 위에, 문서에서 가장 눈에 띄게 둔다.
+- 처음 보는 사람이 모를 용어는 그 자리에서 한 줄로 풀어 쓴다.
+- 흐름·단계·시간 순서·추이·갈래·비교처럼 구조가 있는 내용은 글이나 표 대신 그 구조를 그대로 그린다(흐름도·타임라인·그래프·나란한 칸 — 인라인 SVG나 HTML로). 읽는 사람이 글을 따라가지 않고 한눈에 보게. 몇 개 안 되는 숫자는 숫자 그대로 쓰고, 꾸미려고 넣는 그림은 쓰지 않는다. 칠판에 없는 연결·담당은 그림에도 지어 넣지 않는다.
+- 한국어. 칠판에 없는 사실은 지어내지 않는다. 계산한 값(합계·비율)은 자료에서 계산했다고 작게 밝힌다. 값을 옮기거나 계산할 때 그 값의 뜻(무엇의 평균인지 등)이 결론과 맞는지 확인한다.
+- 마지막에 짧은 「핵심 의견」 한 칸은 넣어도 되지만 작성자 의견임을 밝힌다. 출처 주소가 있으면 각주처럼 작게 남긴다."""
+
+STYLES = {"present": "발표용", "read": "읽기용"}   # 차례 = 칠판에 놓는 차례(왼쪽부터)
+_STYLE_WORDS = {"present": r"발표용|발표\s*(?:자료\s*)?(?:느낌|스타일)", "read": r"읽기용|읽기\s*(?:좋|느낌|스타일)|차분하게"}
+
+
+def style_of(ask: str) -> str:
+    """요청 속 「발표용」·「읽기용」 → 그 하나만(없거나 둘 다면 "" = 둘 다 만듦)."""
+    hits = [k for k, rx in _STYLE_WORDS.items() if re.search(rx, ask or "")]
+    return hits[0] if len(hits) == 1 else ""
+
 
 REVISE = """아래는 앞서 만든 정리 문서다. 사용자의 요청대로 고친 완결된 HTML 문서 하나만 다시 출력한다(같은 규칙 — 스크립트·외부 파일 없음, A4 인쇄).
 
@@ -139,20 +171,22 @@ def unchecked_numbers(doc: str, material: str, limit: int = 8) -> list:
     return out[:limit]
 
 
-def make(client, material: str, ask: str = "", *, prev_html: str = "", model: str = REPORT_MODEL, images=None) -> dict:
-    """칠판 자료(+요청) → {"html", "title", "model", "elapsed", "tone", "unchecked"}. `prev_html`이 있으면 그 문서를 `ask`대로 고쳐 씀(톤은 말했을 때만 바꿈).
-    unchecked = 자료에서 그대로 못 찾은 숫자(`unchecked_numbers` — 서버가 답 글에 알림). images = 칠판 그림(`see` — 새로 쓸 때만, 고쳐 쓰기는 앞 문서가 재료)."""
+def make(client, material: str, ask: str = "", *, prev_html: str = "", model: str = REPORT_MODEL, images=None, style: str = "present") -> dict:
+    """칠판 자료(+요청) → {"html", "title", "model", "elapsed", "tone", "unchecked", "style"}. `prev_html`이 있으면 그 문서를 `ask`대로 고쳐 씀(톤은 말했을 때만 바꿈).
+    unchecked = 자료에서 그대로 못 찾은 숫자(`unchecked_numbers` — 서버가 답 글에 알림). images = 칠판 그림(`see` — 새로 쓸 때만, 고쳐 쓰기는 앞 문서가 재료).
+    style = "present"(발표용 — 기본 톤 차분) / "read"(읽기용 — 색은 모델이 고르고 톤은 말했을 때만)."""
+    style = style if style in STYLES else "present"
     tone = tone_of(ask)
     images = [] if prev_html else list(images or [])
     if prev_html:
         user = REVISE.format(prev=prev_html[:60_000], ask=ask or "더 보기 좋게") + ("\n\n" + tone_line(tone) if tone else "")
     else:
-        tone = tone or "calm"
-        user = ("[칠판 자료]\n" + (material or "").strip()[:MAX_MATERIAL] + see.note(len(images)) + "\n\n" + (f"[요청]\n{ask}\n\n" if ask else "") + tone_line(tone) + "\n\n"
+        tone = tone or ("calm" if style == "present" else "")
+        user = ("[칠판 자료]\n" + (material or "").strip()[:MAX_MATERIAL] + see.note(len(images)) + "\n\n" + (f"[요청]\n{ask}\n\n" if ask else "") + (tone_line(tone) + "\n\n" if tone else "")
                 + "위 자료를 정리한 문서 한 장을 만들어 줘.")
     t0 = time.time()
-    r = client.chat.completions.create(model=model, max_tokens=MAX_TOKENS, messages=see.attach([{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}], images))
+    r = client.chat.completions.create(model=model, max_tokens=MAX_TOKENS, messages=see.attach([{"role": "system", "content": SYSTEM_READ if style == "read" else SYSTEM}, {"role": "user", "content": user}], images))
     doc = clean_html(r.choices[0].message.content or "")
     if "<" not in doc:
         raise RuntimeError("정리 문서를 만들지 못했어요(HTML이 아닌 답)")
-    return {"html": doc, "title": title_of(doc), "model": model, "elapsed": round(time.time() - t0, 1), "tone": tone, "unchecked": unchecked_numbers(doc, material)}
+    return {"html": doc, "title": title_of(doc), "model": model, "elapsed": round(time.time() - t0, 1), "tone": tone, "unchecked": unchecked_numbers(doc, material), "style": style}

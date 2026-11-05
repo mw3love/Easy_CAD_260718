@@ -180,3 +180,13 @@ def test_hwpx_spaces_side_by_side_cells_but_keeps_particles():
     h = ('<div><b>회의</b>11월 정기 점검</div><ul><li><span>11/8</span><span>진공관 견적</span><span>박 주임</span></li></ul>'
          '<p><b>송신기</b>를 교체하고 <b>안테나</b> 점검</p><div>핵심 의견<span>작성자 의견</span></div>')
     assert [b[1] for b in hwpxout.blocks(h)] == ["회의 11월 정기 점검", "• 11/8 진공관 견적 박 주임", "송신기를 교체하고 안테나 점검", "핵심 의견 작성자 의견"]
+
+
+def test_report_styles_counts_which_style_was_kept(tmp_path):
+    """2026-11-05 — 정리 문서 발표용·읽기용 두 장 중 칠판에 남긴 쪽(같은 답 `chat_at`끼리): 둘 다 / 발표용만 / 읽기용만. 옛 한 장(style 없음)·.prev는 안 셈."""
+    import usage
+    doc = lambda at, st: {"type": "doc", "chat_at": at, **({"style": st} if st else {})}
+    (tmp_path / "a.ecad").write_text(json.dumps({"items": [doc(1, "present"), doc(1, "read"), doc(2, "present"), doc(3, "read"), doc(4, None)]}), encoding="utf-8")
+    (tmp_path / "b.ecad").write_text(json.dumps({"items": [doc(1, "read")]}), encoding="utf-8")
+    (tmp_path / "b.prev.ecad").write_text(json.dumps({"items": [doc(9, "present")]}), encoding="utf-8")
+    assert usage.report_styles(str(tmp_path)) == {"both": 1, "present": 1, "read": 2}

@@ -122,7 +122,7 @@ easycad/
 │   ├── pdf_to_mermaid.py   PDF 쪽 글 뽑기·긴 문서 나눠 요약(§8 항목45 — 흐름도 그리기는 지움, 이제 pdf_to_board가 씀, Qt 비의존)
 │   ├── pdf_to_board.py     PDF → 「한 장 보드」 블록 설계서 JSON·이어 고치기(§8 항목53 → 57 `block-board`, 옛 `paper-board`는 읽기만, 배치는 host_blocks)
 │   ├── drawing_explain.py  도면 상자·연결 → 단계별 설명 JSON — 「설명 페이지 만들기」(§8 항목47, Qt 비의존)
-│   ├── board_report.py     웹 칠판 「정리해 줘」 ① — 칠판 자료 → 아티팩트 같은 정리 문서 HTML 한 장(claude-opus-5-5, 청소·제목·쉬운 글, 앞 문서 고쳐 쓰기)
+│   ├── board_report.py     웹 칠판 「정리해 줘」 ① — 칠판 자료 → 아티팩트 같은 정리 문서 HTML(claude-opus-5-5, 청소·제목·쉬운 글, 앞 문서 고쳐 쓰기) — 2026-11-05부터 **발표용(`SYSTEM`)·읽기용(`SYSTEM_READ`) 두 장을 동시에**(써 보고 하나로 합칠지 정함 — 남긴 쪽 세기 `python web/usage.py`, 「발표용으로만」 = 한 장)
 │   ├── board_image.py      웹 칠판 그림 — 「그려줘」 → KAIROS 그림 후보 2장(gpt-image-2.5-flare — 10-20 실측, §8 항목61 ③-4, 서버가 `<이름>.img/`에 두고 주소만) + 이어 고치기(`followup`)·원본 유지 편집(`input_images`)·인포그래픽
 │   ├── board_icon.py       웹 칠판 아이콘 — 「○○ 아이콘 그려 줘」 → KAIROS SVG 후보 둘(claude-sonnet-5-5 — 10-23 실측, 지시문은 데스크톱 `text_to_svg`) + 고른 아이콘 고치기·고른 그림 보고 그리기, 도형으로는 칠판 `svgin.js`(§8 항목63)
 │   ├── board_diagram.py    웹 칠판 🔷 도형 그리기 — 말 → 데스크톱 흐름도 설계서(`text_to_flow`) + 배치(`flow_spec.layout`, 글 폭은 글자 수 짐작) → 서버 `/api/chat` `kind: 'diagram'`(`spec`·`place`), 칠판은 `flowboard.js`가 지음 · 고치는 말(`FOLLOW_WORDS`) = 앞 설계서 고치기(claude-sonnet-5-5, 2026-11-03)
