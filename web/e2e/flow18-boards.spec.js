@@ -36,13 +36,13 @@ test('「＋ 새 칠판」 = 바로 새 칠판(칠판 코드만) · 빈 칠판�
   await expect(rows.nth(0)).toContainText(a)
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('mb.myBoards')).map(x => x.name))).toEqual([a, b])
 
-  await form.locator(`[data-board="${b}"]`).dblclick()                                        // 두 번 누르기 = 이름 바꾸기(옮겨 가지 않음)
+  await form.locator(`[data-board="${b}"]`).focus(); await page.keyboard.press('F2')                // 다른 칠판 이름 = F2(두 번 누르기는 지금 칠판만 — 한 번 누르면 바로 옮겨 감, 2026-11-05)
   await form.getByTestId('board-rename').fill('송신소 점검'); await page.keyboard.press('Enter')
   await expect(rows.nth(1)).toContainText('송신소 점검')
   await expect.poll(() => savedDoc(b)?.title).toBe('송신소 점검')                       // 문서 이름만 — 주소(칠판 코드)는 그대로
   await page.waitForTimeout(400); expect(page.url()).toContain(encodeURIComponent(a))
 
-  await rows.nth(0).hover(); await rows.nth(0).getByTestId('board-more').click()      // ⋯ = 우클릭 메뉴와 같음
+  await rows.nth(1).hover(); await rows.nth(0).hover(); await rows.nth(0).getByTestId('board-more').click()      // ⋯ = 우클릭 메뉴와 같음(마우스가 이미 그 줄 위면 「올림」이 안 일어나 ⋯가 안 보임 — 다른 줄을 거쳐 옴)
   await page.locator('div[style*="z-index: 30"] > div > button', { hasText: '이름 바꾸기' }).click()
   await form.getByTestId('board-rename').fill('본사 회의'); await page.keyboard.press('Enter')
   await expect(page.getByTestId('board-title')).toHaveText(/^본사 회의/)               // 지금 칠판 = 위 막대·탭 제목도(받아 오기로 따라옴)

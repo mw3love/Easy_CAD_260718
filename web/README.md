@@ -60,6 +60,7 @@ KAIROS는 가짜 답으로 바꿔 끼워 크레딧을 안 쓴다. 글쇠를 바�
 실패하면 `web/test-results/`의 trace를 `npx playwright show-trace <경로>`로 본다.
 
 칠판은 직접 만든 것(`src/next/`) — 2026-10-18 tldraw에서 갈아탐(§8 항목61 5단계). 문서는 `.ecad` 그대로, 서버 저장은 `/api/doc/<이름>`.
+웹 화면은 `?lite=1`로 받는다(2026-11-05) — 큰 그림은 데이터 대신 주소 `/api/blob/<지문>.<확장자>`(데이터 폴더 `blobs/`, 칠판 파일에서 다시 만들어지니 지워도 됨)를 받아 도형부터 그리고, 그림을 받아 채운다(`docblobs.py`·`src/next/blobs.js`). 디스크·데스크톱·내려받기는 그대로 통째.
 옛 주소 `next.html?board=…`는 `/`로 넘어간다(즐겨찾기용). 글 편집은 TipTap 3.32.0(MIT), 부품은 `package.json`에 모두 버전 고정.
 
 ## 예시 칠판 (2026-10-28)

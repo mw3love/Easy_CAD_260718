@@ -50,6 +50,7 @@ import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
 import usage  # noqa: E402  (사용 기록 — web/usage.py, 2026-11-04)
 import cleanup  # noqa: E402  (칠판 자동 정리 — web/cleanup.py, 2026-11-04)
 import hwpxout  # noqa: E402  (정리 문서 → 한글 파일 — web/hwpxout.py, 2026-11-04)
+import docblobs  # noqa: E402  (칠판 그림 따로 보내기 — web/docblobs.py, 2026-11-05)
 
 NAME_RE = re.compile(r"^[\w\-가-힣]{1,64}$")
 MAX_BYTES = 200 * 1024 * 1024   # 그림이 든 칠판도 넉넉히, 하지만 끝없이는 아니게
@@ -57,6 +58,9 @@ _MODELS = {}                    # 키 지문 → (받은 시각, 모델 목록) 
 PICK_JOBS = ("image", "icon", "diagram", "report", "live", "deep_plan", "deep_write", "slides")   # 「모델 설정」으로 고를 수 있는 일(대화·회의 요약은 원래 `model`) — 2026-10-26 사용자: 고를 의미 있는 일만 · slides = 2026-11-04(칸이 빠져 있었음)
 # 그림 요청에 날짜 말이 있을 때만 오늘 날짜를 알려 줌(없는데 알려 주면 그림에 오늘 날짜를 써 넣음 — 2026-10-20 실측)
 DATE_WORDS = re.compile(r"오늘|내일|모레|어제|그제|날짜|요일|주말|이번\s*주|다음\s*주|지난\s*주|이번\s*달|다음\s*달|\d+\s*월\s*\d+\s*일")
+
+
+IMMUTABLE = {"Cache-Control": "private, max-age=31536000, immutable"}   # 이름이 바뀌지 않는 그림
 
 
 def default_data_dir() -> str:
@@ -80,7 +84,10 @@ class Handler(SimpleHTTPRequestHandler):
         # 그대로 써 새로 빌드한 화면이 안 보였음: 어두운 화면 발표 장 고침이 반영 안 된 채 보였음)
         path = self.path.split("?")[0]
         if not path.startswith("/api/"):
-            self.send_header("Cache-Control", "public, max-age=31536000, immutable" if path.startswith("/assets/") else "no-cache")
+            # 글꼴(`/fonts.css`·`/fonts/`) = 30일 — 칠판을 옮길 때마다(페이지를 새로 엶) 「바뀌었나」를 두 번 줄 서서 물었음(2026-11-05, 노트북 칠판 옮기기).
+            # 글꼴 파일을 바꿀 일이 생기면 이름을 바꿀 것(브라우저가 옛 것을 한 달 씀)
+            long = path.startswith("/assets/") or path == "/fonts.css" or path.startswith("/fonts/")
+            self.send_header("Cache-Control", ("public, max-age=31536000, immutable" if path.startswith("/assets/") else "public, max-age=2592000") if long else "no-cache")
         super().end_headers()
 
     def __init__(self, *a, **kw):
@@ -567,6 +574,10 @@ class Handler(SimpleHTTPRequestHandler):
             f.write(data)
         return f"/api/img/{quote(name)}/{fn}"
 
+    def _blob_dir(self) -> str:
+        """칠판 속 그림을 지문 이름으로 둔 곳(`docblobs.py`) — 칠판 파일에서 다시 만들어지니 통째로 지워도 됨."""
+        return os.path.join(self.data_dir, "blobs")
+
     def _img_dir(self, name: str) -> str:
         return os.path.join(self.data_dir, name + ".img")
 
@@ -780,7 +791,8 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        if "Cache-Control" not in (headers or {}):   # 이름이 바뀌지 않는 그림(`/api/img`·`/api/blob`)은 오래 기억(2026-11-05)
+            self.send_header("Cache-Control", "no-store")
         for k, v in (headers or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -1075,8 +1087,15 @@ class Handler(SimpleHTTPRequestHandler):
             p = os.path.join(self._img_dir(name), m.group(2)) if name else ""
             if not p or not os.path.exists(p):
                 return self._send(404, b'{"error":"none"}')
-            with open(p, "rb") as f:
-                return self._send(200, f.read(), ctype={"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}[m.group(3)])
+            with open(p, "rb") as f:   # 새 이름이라 덮어쓸 일 없음 → 오래 기억(칠판 옮길 때마다 대화창 그림 몇 MB를 다시 받았음, 2026-11-05)
+                return self._send(200, f.read(), ctype={"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}[m.group(3)], headers=IMMUTABLE)
+        m = re.match(r"^/api/blob/([^/]+)$", path)
+        if m:   # 칠판 속 그림(웹이 칠판을 열 때 따로 받음 — `docblobs.py`), 이름 = 내용 지문
+            hit = docblobs.blob_path(self._blob_dir(), m.group(1))
+            if not hit:
+                return self._send(404, b'{"error":"none"}')
+            with open(hit[0], "rb") as f:
+                return self._send(200, f.read(), ctype=hit[1], headers=IMMUTABLE)
         m = re.match(r"^/api/pdf/([^/]+)/(\d+_[0-9a-f]{6})(?:/(page|clip|text|lines)/(\d+))?$", path)
         if m:   # PDF 보기 카드 — 원본(↗ 새 탭)·쪽 그림·오려 오기·그 부분 글(`pdfview.py`)
             return self._pdf_get(self._name(m.group(1)), m.group(2), m.group(3), int(m.group(4) or 0), q)
@@ -1108,6 +1127,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._send(204)   # 그 뒤로 바뀐 것 없음
             if m.group(1) == "doc":
                 Handler.usage and Handler.usage.seen(name)   # 연 날(자동 정리 — 받아 오기 `since`는 몇 초마다라 안 셈)
+            if q.get("lite"):   # 웹 화면 = 그림 데이터 대신 주소(2026-11-05 — 데스크톱·내려받기는 그대로 통째)
+                doc = docblobs.lite(doc, self._blob_dir())
             return self._json(200, doc)
         p = self._board_path()
         if p is None:
@@ -1276,6 +1297,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self._send(410, b'{"error":"gone"}')
         with self.lock:   # 부분 저장 — 도형 단위로 덮어씀(서로 다른 도형이면 둘 다 남음)
             doc = self._doc_load(name) or {"format": "easycad-doc", "version": 1, "items": []}
+            req["upsert"] = docblobs.keep_image_data(req.get("upsert") or [], doc.get("items"))   # 그림을 채우기 전에 옮긴 것 = 데이터는 서버 것 그대로
             out = collab.apply_patch(doc, req)
             self._doc_save(name, out)
         Handler.usage and Handler.usage.touch(name)
@@ -1302,6 +1324,8 @@ class Handler(SimpleHTTPRequestHandler):
             with self.lock:
                 old = self._doc_load(name) or {}
                 collab.ensure_uids(doc)
+                if isinstance(doc.get("items"), list):
+                    doc["items"] = docblobs.keep_image_data(doc["items"], old.get("items"))
                 if not doc.get("title") and old.get("title"):   # 칠판 이름은 그대로(파일 열기·데스크톱 올리기 = 내용만 바꿈, 2026-10-28)
                     doc["title"] = old["title"]
                 doc["rev"] = int(old.get("rev") or 0) + 1

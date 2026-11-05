@@ -5,6 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { createRoot } from 'react-dom/client'
 import { Editor, rightInset, personColor } from './Editor.jsx'
 import { AUTO_BOARD, DOC_NAME, VIEW_TOKEN, api, docBounds, emptyDoc, loadServerDoc, parseDoc, saveServerDoc } from './doc.js'
+import { fetchFills, fillInPlace, needsFill } from './blobs.js'
 import { diffModel, rebase, snapshotModel } from './sync.js'
 import { Viewer } from './viewer.jsx'
 import { fromEcad, toEcad } from './model.js'
@@ -184,7 +185,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
   const [list, setList] = useState(null), [mine, setMine] = useState(cached), [name, setName] = useState(''), [all, setAll] = useState(false), [making, setMaking] = useState(false), [why, setWhy] = useState(''), [menu, setMenu] = useState(null)
   const [newMenu, setNewMenu] = useState(null), [codeOn, setCodeOn] = useState(false), [codeText, setCodeText] = useState(''), [codeWhy, setCodeWhy] = useState(''), menuRef = useRef(null), moreRef = useRef(null), fileRef = useRef(null)
   const [del, setDel] = useState(null)   // 지울까요 확인 = { name }
-  const [people, setPeople] = useState({}), [renaming, setRenaming] = useState(null), [renameText, setRenameText] = useState(''), [hov, setHov] = useState(null), [drag, setDrag] = useState(null), [over, setOver] = useState(null), clickT = useRef(null)
+  const [people, setPeople] = useState({}), [renaming, setRenaming] = useState(null), [renameText, setRenameText] = useState(''), [hov, setHov] = useState(null), [drag, setDrag] = useState(null), [over, setOver] = useState(null)
   // 서버가 아는 칠판만(+ 지금 것) — 빈 칠판도 남음: 열 때 서버에 빈 칠판을 바로 만듦(App, 2026-10-28 사용자: 칠판을 먼저 여러 개 만들고 작업할 수도).
   // 서버에 없는 이름 = 지운 칠판·팀 서버에서 우리 팀 것이 아닌 칠판(옛 기본 main 등)이라 빼야 함
   const loadMine = () => { const my = myBoards(); api.boardInfo(my.map(b => b.name)).then(info => { const at = new Map(info.map(b => [b.name, b]))
@@ -222,7 +223,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
     tick(); const t = setInterval(tick, 3000); return () => { live = false; clearInterval(t) } }, [watch])
   // 이름 바꾸기(2026-10-28 사용자 — 두 번 누르기·우클릭·⋯) = 문서 `title`만, 주소(칠판 코드)는 그대로라 남에게 준 링크가 안 끊김
   const findB = n => (mine || []).concat(list || []).find(b => b.name === n)
-  const startRename = n => { clearTimeout(clickT.current); setMenu(null); const t = boardTitle(n, findB(n)?.title); setRenameText(t === UNTITLED ? '' : t); setRenaming(n) }
+  const startRename = n => { setMenu(null); const t = boardTitle(n, findB(n)?.title); setRenameText(t === UNTITLED ? '' : t); setRenaming(n) }
   const commitRename = async () => { const n = renaming; if (!n) return; setRenaming(null)
     const t = renameText.trim().slice(0, 60), b = findB(n); if (t === (b?.title || '') || (!b?.title && t === boardLabel(n).title)) return
     const put = xs => xs?.map(x => (x.name === n ? { ...x, title: t } : x)); setMine(put); setList(put); noteBoards([{ name: n, title: t }])
@@ -231,17 +232,18 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
   const download = async n => { setMenu(null); if (n === DOC_NAME) { onDownload?.(); return }
     const text = await api.getDoc(n); if (!text) return
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = `${boardTitle(n, findB(n)?.title)}.ecad`; a.click(); URL.revokeObjectURL(a.href) }
-  // 줄 누르기 = 그 칠판으로 — 두 번 누르기(이름 바꾸기)와 가르려고 잠깐 기다림(어차피 페이지를 다시 엶)
-  const onRow = n => { if (renaming) return; clearTimeout(clickT.current); if (n === DOC_NAME) { onClose(); return } clickT.current = setTimeout(() => goTo(n), 230) }
+  // 줄 누르기 = 그 칠판으로 바로(2026-11-05 사용자 — 칠판 옮기기 지연: 두 번 누르기와 가르려고 0.23초 기다렸음). 두 번 눌러 이름 바꾸기는 지금 칠판 줄만(눌러도 안 옮겨 감),
+  // 다른 칠판 이름 = 우클릭·⋯·F2
+  const onRow = n => { if (renaming) return; if (n === DOC_NAME) { onClose(); return } goTo(n) }
   // 끌어서 순서 바꾸기(2026-10-28 사용자 — 누를 때마다 맨 위로 올라가던 것 대신) — 내 칠판만(이 브라우저 목록), 놓은 줄의 위·아래 절반으로 앞·뒤
   const dropRow = () => { const d = drag, o = over; setDrag(null); setOver(null); if (!d || !o || d === o.name) return
     const names = (mine || []).map(b => b.name).filter(x => x !== d), i = names.indexOf(o.name), before = o.after ? names[i + 1] : o.name
     moveBoard(d, before); setMine(m => { const at = new Map((m || []).map(b => [b.name, b])); return myBoards().map(b => at.get(b.name)).filter(Boolean) }) }
   const menuAt = (n, at) => setMenu(m => (m?.name === n && at.anchor ? null : { name: n, mine: myNames.has(n), ...at }))   // at.anchor = ⋯(다시 누르면 닫힘)
   const row = b => { const cur = b.name === DOC_NAME, isMine = myNames.has(b.name), ppl = people[b.name] || [], edit = renaming === b.name, lit = cur ? 'rgba(218,119,86,.18)' : hov === b.name ? C.group : 'transparent', code = boardLabel(b.name).code
-    const tip = `${boardTitle(b.name, b.title)}${code ? ` · 칠판 코드 ${code}` : ''} — 두 번 누르면 이름 바꾸기${isMine ? ' · 끌어서 순서 바꾸기' : ''}\n${b.fresh ? '아직 빈 칠판' : b.mtime ? `${ago(b.mtime)} 고침` : ''}${ppl.length ? ` · 지금 ${ppl.map(p => (p.id === myId ? `${me || '나'} (나)` : p.name)).join(', ')}` : ''}`
+    const tip = `${boardTitle(b.name, b.title)}${code ? ` · 칠판 코드 ${code}` : ''} — ${cur ? '두 번 누르면' : '우클릭·F2로'} 이름 바꾸기${isMine ? ' · 끌어서 순서 바꾸기' : ''}\n${b.fresh ? '아직 빈 칠판' : b.mtime ? `${ago(b.mtime)} 고침` : ''}${ppl.length ? ` · 지금 ${ppl.map(p => (p.id === myId ? `${me || '나'} (나)` : p.name)).join(', ')}` : ''}`
     return <div key={b.name} data-testid="board-row" data-board={b.name} role="button" tabIndex={0} title={edit ? '' : tip} draggable={isMine && !edit}
-      onClick={() => onRow(b.name)} onDoubleClick={() => startRename(b.name)} onKeyDown={e => { if (edit) return; if (e.key === 'Enter') onRow(b.name); if (e.key === 'F2') startRename(b.name) }}
+      onClick={() => onRow(b.name)} onDoubleClick={() => cur && startRename(b.name)} onKeyDown={e => { if (edit) return; if (e.key === 'Enter') onRow(b.name); if (e.key === 'F2') startRename(b.name) }}
       onContextMenu={e => { e.preventDefault(); menuAt(b.name, { x: e.clientX, y: e.clientY }) }} onMouseEnter={() => setHov(b.name)} onMouseLeave={() => setHov(h => (h === b.name ? null : h))}
       onDragStart={e => { setDrag(b.name); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('application/x-mb-board', b.name) }}   // 칠판 위 놓기(파일·주소)와 안 섞이게 따로 종류
       onDragOver={e => { if (!drag || !isMine) return; e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2; if (over?.name !== b.name || over.after !== after) setOver({ name: b.name, after }) }}
@@ -595,6 +597,10 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
   useEffect(() => { if (!server) return; let live = true
     ;(async () => { while (live) { const t0 = Date.now(); await pull(null, 20).catch(() => null); if (live && Date.now() - t0 < 250) await new Promise(r => setTimeout(r, 300)) } })()
     return () => { live = false } }, [server, pull])
+  // 칠판 그림 채우기(2026-11-05 — `blobs.js`): 서버가 주소만 보낸 그림(`_ref`)을 받아 원래 데이터로(그 자리에서 — 다시 그리지 않음). 열 때·받아 오기·되돌리기 뒤 모두 여기 한 곳
+  useEffect(() => { if (!needsFill(model.items)) return
+    const fill = () => fillInPlace(modelRef.current.items, sync.current.base)
+    fill(); fetchFills(model.items).then(fill) }, [model])
   useEffect(() => { if (!server) return   // 접속자 — 5초마다 이름 신호
     // 1초마다 — 내가 고른·고치는 도형도 같이(2026-10-19 사용자: 누가 어디를 고치는지). 바뀐 게 없어도 보냄(5초 안 오면 나간 것으로 — 서버 `Presence` ttl)
     const ping = () => api.presence(sync.current.id, me || '이름 없음', ed.current?.getSel?.() || [], ed.current?.editingId?.() || '').then(p => { if (!p) return; setOthers(o => (JSON.stringify(o) === JSON.stringify(p.others || []) ? o : p.others || [])) })

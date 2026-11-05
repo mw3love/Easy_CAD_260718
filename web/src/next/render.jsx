@@ -250,7 +250,8 @@ export const ink = (c, onBoard) => { const css = cssColor(c); if (onBoard) retur
 // 딥모드 판 프레임 = 흰 종이(2026-10-25 사용자 「어두운 화면에서도 잘 보여야」) — 판의 제목·밑 글은 투명 메모(메모 글은 늘 검은 잉크)·흰 종이 기준 톤이라 어두운 칠판에 묻혔음.
 // 판 = 인쇄하는 한 장이라 바탕째 종이로(메모 = 흰 종이 그대로와 같은 생각). 발표 화면은 프레임을 안 그려 종이만 네모로(`deepPaper`). 데스크톱 core_web `_FrameItem`도 같게
 // 그림 데이터(base64, 머리 없음) → 주소. JPEG(「/9j/」로 시작)면 jpeg 이름표 — 2026-11-02부터 큰 그림은 JPEG로 담음(15MB 칠판이 밖에서 10초 넘게 열렸음), 브라우저 추측에 기대지 않게
-export const imgSrc = d => (String(d).startsWith('data:') ? d : (String(d).startsWith('/9j/') ? 'data:image/jpeg;base64,' : 'data:image/png;base64,') + d)
+export const imgSrc = d => (String(d).startsWith('data:') || String(d).startsWith('/api/') ? d :   // /api/ = 서버가 데이터 대신 보낸 주소(`blobs.js`, 2026-11-05)
+   (String(d).startsWith('/9j/') ? 'data:image/jpeg;base64,' : 'data:image/png;base64,') + d)
 export const isDeepPaper = it => it.type === 'frame' && !!(it.deep_plan || it.deep_of || it.slide)   // 발표 자료 장(`slide`)도 한 장 종이(2026-11-02 실검증 — 어두운 화면에서 단계 줄 글자가 밝은 바탕에 묻혔음)
 export const deepPaper = it => ({ ...it, type: 'rect', fill: '#ffffff', style: 0, label: undefined, cuts: undefined })
 // Qt QColor.darker(118)/lighter(135) — HSV 명도만
@@ -415,7 +416,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
     }
     case 'image': {
       const [x, y, w, h] = it.rect
-      return <g transform={T}><image href={imgSrc(it.data)} x={x} y={y} width={w} height={h} preserveAspectRatio="none" transform={flipT(it)} /></g>
+      return <g transform={T}><image href={imgSrc(it.data || it._ref)} x={x} y={y} width={w} height={h} preserveAspectRatio="none" transform={flipT(it)} /></g>
     }
     case 'board': {
       const [x, y, w, h] = it.rect, bg = cssColor(it.bg) || '#ffffff'

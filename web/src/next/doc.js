@@ -56,9 +56,15 @@ export const AUTO_BOARD = PICK.auto
 export const DOC_NAME = (PICK.name || 'main').replace(/[^\w\-가-힣]/g, '').slice(0, 64) || 'main'
 if (PICK.auto) { const u = new URL(location.href); u.searchParams.set('board', DOC_NAME); history.replaceState(null, '', u.pathname + u.search + u.hash) }
 const URL_ = `/api/doc/${encodeURIComponent(DOC_NAME)}`
+// 칠판 내용은 페이지가 뜨자마자 미리 물음(2026-11-05 노트북 칠판 옮기기 — 전엔 로그인 확인(`/api/session`)이 끝나고 화면이 선 뒤에야 물어 한 번 더 줄을 섬).
+// `lite` = 그림 데이터 대신 주소(`docblobs.py` → `blobs.js`가 채움). 5초 넘게 묵었으면(이름 묻는 창 등) 다시, 받은 답이 「있음」·「없음」(404)이 아니면 다시
+// (로그인 전 401·다른 팀 칠판 403 — 그 뒤 같은 페이지에서 들어오면 열려야 함, flow42)
+const LITE = `${URL_}?lite=1`, PRE_AT = typeof performance === 'undefined' ? 0 : performance.now()
+let prefetch = typeof location === 'undefined' || new URLSearchParams(location.search).get('view') ? null : fetch(LITE, { cache: 'no-store' }).catch(() => null)
 export async function loadServerDoc() {
   try {
-    const r = await fetch(URL_, { cache: 'no-store' })
+    const pre = prefetch && performance.now() - PRE_AT < 5000 ? await prefetch : null; prefetch = null
+    const r = pre && (pre.ok || pre.status === 404) ? pre : await fetch(LITE, { cache: 'no-store' })
     if (r.status === 404) return { server: true, doc: null }
     if (!r.ok) return { server: false }
     return { server: true, doc: parseDoc(await r.text()) }
@@ -79,7 +85,7 @@ export const api = {
   session: async (board = DOC_NAME) => { try { const r = await fetch(`/api/session?board=${encodeURIComponent(board)}`, { cache: 'no-store' }); return r.ok ? await r.json() : { auth: false, ok: true, none: true } } catch { return { auth: false, ok: true, none: true } } },
   login: async password => (await post('/api/login', { password })).ok,
   patch: async body => { const r = await post(`/api/patch/${B}`, body); return r.status === 410 ? 'gone' : r.ok ? (await r.json()).rev : null },   // 'gone' = 다른 창에서 지운 칠판(2026-10-28)
-  since: async (rev, wait = 0) => { const r = await fetch(`/api/since/${B}?rev=${rev}${wait ? `&wait=${wait}` : ''}`, { cache: 'no-store' }); return r.status === 410 ? 'gone' : r.status === 200 ? parseDoc(await r.text()) : null },   // 'gone' = 지운 칠판 · wait = 바뀔 때까지 서버가 기다림(롱 폴링)
+  since: async (rev, wait = 0) => { const r = await fetch(`/api/since/${B}?lite=1&rev=${rev}${wait ? `&wait=${wait}` : ''}`, { cache: 'no-store' }); return r.status === 410 ? 'gone' : r.status === 200 ? parseDoc(await r.text()) : null },   // 'gone' = 지운 칠판 · wait = 바뀔 때까지 서버가 기다림(롱 폴링)
   leave: id => { try { fetch(`/api/presence/${B}`, { method: 'POST', headers: J, body: JSON.stringify({ id, leave: true }), keepalive: true }) } catch { /* 닫히는 중 — 못 보내면 5초 뒤 빠짐 */ } },   // 창 닫힘 = 접속자에서 바로 빠짐(keepalive = 닫혀도 보냄)
   presence: async (id, name, sel = [], edit = '') => { try { const r = await post(`/api/presence/${B}`, { id, name, sel, edit }); return r.ok ? await r.json() : null } catch { return null } },   // → { people: 이름들, others: [{ id, name, sel, edit }] }
   getPublish: async () => { try { const r = await fetch(`/api/publish/${B}`, { cache: 'no-store' }); return r.ok ? (await r.json()).token : null } catch { return null } },

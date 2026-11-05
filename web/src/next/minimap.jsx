@@ -26,7 +26,7 @@ function pic(src, onLoad) {
   if (im.complete) return im.naturalWidth ? im : null
   im.addEventListener('load', onLoad, { once: true }); return null
 }
-const picOf = it => (it.type === 'image' && it.data ? imgSrc(it.data) : (it.type === 'web' || it.type === 'pdf') && it.thumb ? it.thumb : '')
+const picOf = it => (it.type === 'image' && (it.data || it._ref) ? imgSrc(it.data || it._ref) : (it.type === 'web' || it.type === 'pdf') && it.thumb ? it.thumb : '')
 
 function draw(ctx, items, f, dark, W, H, again) {
   ctx.clearRect(0, 0, W, H); if (!f) return
