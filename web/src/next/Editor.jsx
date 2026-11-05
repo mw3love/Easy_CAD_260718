@@ -294,6 +294,11 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function onPointerDown(e) {
     if (phone) { if (e.button === 0) { svg.current.setPointerCapture(e.pointerId); touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY }); touchStart()
       if (touches.current.size === 1) tapFrom.current = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now() }; else if (tapFrom.current) tapFrom.current.multi = true } return }
+    // 태블릿(손가락인데 휴대폰 화면이 아님 — 2026-11-06 휴대폰 점검): 두 번째 손가락 = 두 손가락 확대·이동. 첫 손가락이 아직 아무것도 안 바꿨을 때만(옮기던 도형은 그대로)
+    if (e.pointerType === 'touch' && e.button === 0) { touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY }); svg.current.setPointerCapture(e.pointerId)   // 바로 잡음 — 손가락을 뗀 것이 꼭 여기로 와야 수가 안 꼬임
+      if (touches.current.size >= 2) { const k = st.current.kind
+        if (!k || k === 'pan' || k === 'rubber' || k === 'pinch' || (k === 'move' && !st.current.moved)) { setOverlay(o => ({ ...o, rubber: null })); touchStart() }
+        return } }
     if (readOnly) { svg.current.setPointerCapture(e.pointerId); st.current = { ...st.current, kind: 'pan', right: false, sx: e.clientX, sy: e.clientY, cam: R.current.cam }; setCursor('grabbing'); return }   // 보기 전용 = 끌면 화면 이동
     if (R.current.editing && e.button === 0) return   // 고치는 중에도 휠·오른쪽 끌기 = 화면 이동(입력은 그대로 — 2026-10-18 사용자)
     if (R.current.webOn && !(e.button === 2 && pdfBodyAt(toSceneP(e))?._id === R.current.webOn)) setWebOn(null)   // 웹 카드 조작 중 바깥을 누름 = 끝(칸 안 누르기는 페이지가 받아 여기 안 옴). 넘겨 보는 PDF 안 우클릭 = 안쪽 메뉴(끝내지 않음)
@@ -383,6 +388,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (lockTap && add) { const m2 = R.current.model, ids = R.current.sel
       setSel(ids.includes(lockTap._id) ? ids.filter(i => i !== lockTap._id && !(lockTap.group_id && m2.items.find(x => x._id === i)?.group_id === lockTap.group_id)) : expandGroups(m2.items, [...ids, lockTap._id])); return }
     if (!add) setSel([])
+    if (e.pointerType === 'touch') { st.current = { ...st.current, kind: 'pan', right: false, sx: e.clientX, sy: e.clientY, cam: R.current.cam }; return }   // 태블릿 = 빈 곳 한 손가락 끌기는 화면 이동(끌어 고르기는 마우스·펜만 — 2026-11-06)
     // 끌어 고르기 — Ctrl = 더하기, Shift = 빼기(2026-10-18 사용자 선택 — 클릭은 둘 다 뒤집기 그대로). 방향 규칙(왼→오 다 들어간 것, 오→왼 걸친 것)은 빼기에도 같음
     const sub = e.shiftKey && !(e.ctrlKey || e.metaKey)
     st.current = { ...st.current, kind: 'rubber', start: p, add: add && !sub ? R.current.sel : [], sub, base: R.current.sel, lockTap: lockTap?._id }
@@ -390,6 +396,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
 
   function onPointerMove(e) {
     if (phone) { if (touches.current.has(e.pointerId)) touchMove(e); return }
+    if (e.pointerType === 'touch' && touches.current.has(e.pointerId)) { if (st.current.kind === 'pinch') { touchMove(e); return } touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY }) }   // 태블릿
+    if (st.current.kind === 'pinch' || st.current.kind === 'pinched') return
     const s = st.current, p = toSceneP(e), z = R.current.cam.z
     R.current.mouse = p   // 주소 붙여넣기 = 커서 자리에
     if (!s.kind) { hoverCursor(p); if ((R.current.poly && R.current.tool === 'polygon') || (R.current.lpt && R.current.tool === 'line')) setOverlay(o => { const last = o.lpt || o.poly?.at(-1); return { ...o, pcur: polyCloseAt(o.poly, p) ? o.poly[0] : e.shiftKey && last ? snap45(last, p) : p } }); return }   // Shift = 45° — 다각형은 마지막 점 기준(2026-10-20 사용자: 다각형만 안 먹었음)   // 클릭 배치 중 = 마지막 점에서 커서까지 따라오는 선(데스크톱 `_draw_pts[-1]`)
@@ -508,6 +516,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
 
   function onPointerUp(e) {
     if (phone) { touchEnd(e); return }
+    if (e.pointerType === 'touch') { touches.current.delete(e.pointerId)   // 태블릿 — 두 손가락 확대 중 하나를 떼면 남은 손가락은 아무것도 안 함(화면이 튀지 않게), 다 떼면 끝
+      if (st.current.kind === 'pinch' || st.current.kind === 'pinched') { st.current = touches.current.size ? { ...st.current, kind: 'pinched' } : { space: st.current.space }; return } }
     const s = st.current, p = toSceneP(e)
     st.current = { space: s.space }
     setCursor('default')
@@ -2690,7 +2700,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     <div style={{ position: 'absolute', inset: 0 }}>
       {/* 칠판 판 = 화면 전체 상자(누르기·휠·자리 재기 — svg ref), 그 안 svg는 CSS로 옮기고 늘림(2026-11-05 — SVG transform 배율이 바뀌면 크롬이 글자를 전부 다시 배치: 예시 칠판 한 칸 21ms → CSS 0.7ms) */}
       <div ref={svg} data-testid="board" style={{ position: 'absolute', inset: 0, overflow: 'hidden', cursor, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
-        onPointerDown={e => { stopZoom(); if (R.current.stylePv) setStylePv(false); onPointerDown(e) }} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={phone ? touchEnd : undefined} onDoubleClick={phone ? undefined : onDoubleClick} onContextMenu={e => e.preventDefault()}
+        onPointerDown={e => { stopZoom(); if (R.current.stylePv) setStylePv(false); onPointerDown(e) }} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={phone ? touchEnd : e => { if (e.pointerType === 'touch') { touches.current.delete(e.pointerId); if (!touches.current.size && (st.current.kind === 'pinch' || st.current.kind === 'pinched')) st.current = { space: st.current.space } } }} onDoubleClick={phone ? undefined : onDoubleClick} onContextMenu={e => e.preventDefault()}
         onMouseDown={e => { if (R.current.editing && e.button !== 0) e.preventDefault() }}>
       <svg width={size.w} height={size.h} style={{ display: 'block', overflow: 'visible', transformOrigin: '0 0', transform: `translate(${cam.x}px,${cam.y}px) scale(${cam.z})` }}>
         <g style={{ '--z': z, '--cz': z }}>

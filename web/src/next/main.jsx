@@ -16,7 +16,7 @@ import { Layers, layersOf, layerIdOf } from './layers.jsx'
 import { Frames } from './frames.jsx'
 import { UNTITLED, boardFromText, boardLabel, boardTitle, forgetBoard, isMyBoard, knownTitle, moveBoard, myBoards, newBoardName, noteBoards, rememberBoard } from './myboards.js'
 import { FloatMenu } from './ctxmenu.jsx'
-import { Confirm, HOVER, hoverBg, menuBelow, moreBtn } from './ui.jsx'
+import { Confirm, HOVER, hoverBg, isPhone, menuBelow, moreBtn, usePhoneViewport } from './ui.jsx'
 import { QrBig } from './qr.jsx'
 import { Minimap } from './minimap.jsx'
 import { ChatPanel, CHAT_W, chatClamp, Spinner } from './chat.jsx'
@@ -27,7 +27,7 @@ import { Bubble, BubbleBadge } from './bubble.jsx'
 
 const ZMIN = 0.02, ZMAX = 40, LEFT_CARDS = 24   // LEFT_CARDS = 맞출 때 왼쪽 여백 — 카드가 칠판 위에 떠 있던 때는 220(2026-10-23 왼쪽 판으로 붙이며 칠판 밖으로 나감)
 // 화면 색은 next.html의 CSS 변수(밝은/어두운 화면 — 어두운 쪽은 데스크톱과 같은 값)
-import { orderedFrames } from './edit.js'
+import { orderedFrames, presentFrames } from './edit.js'
 import ICONS from './icons.json' with { type: 'json' }   // 위 막대 아이콘 = 데스크톱 손그림 A2(`tools/export_web_icons.py`, 2026-10-22 사용자 W1)
 const C = { bar: 'var(--mb-bar)', group: 'var(--mb-group)', ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', accent: 'var(--mb-accent)', board: 'var(--mb-board)', line: 'var(--mb-line)', card: 'var(--mb-card)' }
 const SAMPLES = [['모든 종류', '/samples/all_types.ecad'], ['보드 샘플', '/samples/paper_board.ecad'], ['login_flow', '/_local/login_flow.ecad'], ['1TV 계통도', '/_local/1TV_계통도_시험.ecad']]
@@ -41,9 +41,7 @@ function useSize(ref) {
 // 위 막대 버튼 — 아이콘 밑 짧은 이름(데스크톱 첫 화면 원칙), 켜짐은 옅은 코랄 바탕
 // 좁은 창(NARROW_W 미만 — 브라우저 옆에 띄워 쓸 때, 2026-10-19 사용자 선택)은 아이콘만(이름은 툴팁) — 지침 「자리가 모자랄 때만 아이콘만」
 const NARROW_W = 1440, Narrow = createContext(false)
-const PHONE_W = 700   // 휴대폰(2026-10-27) = 보기·묻기·회의만 — 위 막대는 이름만, 아래 큰 버튼 셋, 왼쪽 판 없음, 대화창은 화면 전체, 손가락 = 이동·확대
-// 휴대폰 = 손가락 기기 + 좁은 화면(2026-10-27 저녁 사용자 — 폭만 보면 PC 창을 반으로 나눴을 때도 고치기가 막혔음. 「브라우저 옆에 띄워 두고 쓴다」가 목표)
-const isPhone = () => window.innerWidth < PHONE_W && !!window.matchMedia?.('(pointer: coarse)').matches
+// 휴대폰(2026-10-27, 기준 `ui.jsx` `isPhone`) = 보기·묻기·회의만 — 위 막대는 이름(누르면 칠판 판)·되돌리기, 아래 큰 버튼, 왼쪽 판 없음, 대화창은 화면 전체, 손가락 = 이동·확대
 // special = KAIROS(2026-10-23 사용자: 다른 버튼과 다른 특별한 버튼 — 오른쪽 구석, 코랄로 채움. 열림은 한 단계 진하게)
 const SPECIAL_BG = on => (on ? '#c4613f' : 'var(--mb-accent)')
 // 「도구 유지」 반복 화살표 — 데스크톱에 없는 웹 버튼이라 icons.json(데스크톱에서 뽑음) 대신 여기, 같은 선 굵기 1.6(2026-10-27).
@@ -179,7 +177,7 @@ async function openExample() {
   location.href = `${location.pathname}?board=${encodeURIComponent(n)}`; return true
 }
 
-function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, children }) {   // docked = 왼쪽 판 「칠판」 칸(2026-10-23 — 위 막대 팝업에서 옮김), open = 비밀번호 없는 서버, myId·me = 내 접속 이름표(줄 동그라미의 「나」), onDownload = 지금 칠판 내려받기, children = 서버 없을 때 파일 단추들
+function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, big = false, children }) {   // big = 휴대폰 칠판 판(손가락 — 줄 높이 44·⋯ 늘 보임, 2026-11-06)   // docked = 왼쪽 판 「칠판」 칸(2026-10-23 — 위 막대 팝업에서 옮김), open = 비밀번호 없는 서버, myId·me = 내 접속 이름표(줄 동그라미의 「나」), onDownload = 지금 칠판 내려받기, children = 서버 없을 때 파일 단추들
   // 처음엔 지난번 서버 답으로 그림(「불러오는 중…」 → 목록으로 바뀌며 아래가 출렁였음 — 2026-10-28 사용자 「새 칠판 누르면 살짝 깜빡」)
   const cached = () => myBoards().filter(b => b.ok !== false || b.name === DOC_NAME).map(b => ({ name: b.name, title: b.title, mtime: b.mtime || 0, c: b.c || b.t }))
   const [list, setList] = useState(null), [mine, setMine] = useState(cached), [name, setName] = useState(''), [all, setAll] = useState(false), [making, setMaking] = useState(false), [why, setWhy] = useState(''), [menu, setMenu] = useState(null)
@@ -248,7 +246,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
       onDragStart={e => { setDrag(b.name); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('application/x-mb-board', b.name) }}   // 칠판 위 놓기(파일·주소)와 안 섞이게 따로 종류
       onDragOver={e => { if (!drag || !isMine) return; e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2; if (over?.name !== b.name || over.after !== after) setOver({ name: b.name, after }) }}
       onDrop={e => { e.preventDefault(); e.stopPropagation(); dropRow() }} onDragEnd={() => { setDrag(null); setOver(null) }}
-      style={{ cursor: edit ? 'default' : 'pointer', display: 'flex', gap: 6, alignItems: 'center', minHeight: 24, padding: '3px 4px', borderRadius: 6, background: lit, opacity: drag === b.name ? 0.45 : 1, outline: 'none',
+      style={{ cursor: edit ? 'default' : 'pointer', display: 'flex', gap: 6, alignItems: 'center', minHeight: big ? 44 : 24, padding: big ? '4px 6px' : '3px 4px', borderRadius: 6, background: lit, opacity: drag === b.name ? 0.45 : 1, outline: 'none',
         boxShadow: over?.name === b.name ? `inset 0 ${over.after ? -2 : 2}px 0 #da7756` : 'none' }}>
       {edit ? <input data-testid="board-rename" autoFocus value={renameText} placeholder={UNTITLED} maxLength={60} onChange={e => setRenameText(e.target.value)} onBlur={commitRename} onFocus={e => e.target.select()}
           onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}
@@ -258,11 +256,11 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
       {!edit && <MiniFaces list={ppl} myId={myId} me={me} />}
       {!edit && <button data-testid="board-more" aria-label="칠판 메뉴" title="이름 바꾸기·새 탭·주소 복사·내려받기·목록에서 빼기" onClick={e => { e.stopPropagation(); menuAt(b.name, menuBelow(e)) }}
         onDoubleClick={e => e.stopPropagation()}
-        style={moreBtn(hov === b.name || menu?.name === b.name)}>⋯</button>}
+        style={big ? { ...moreBtn(true), width: 36, lineHeight: '36px', fontSize: 16 } : moreBtn(hov === b.name || menu?.name === b.name)}>⋯</button>}
     </div> }
   const ok = open || !!clean
   const accent = { all: 'unset', cursor: 'pointer', background: 'var(--mb-accent)', color: '#fff', fontWeight: 600 }
-  return <div data-testid="board-form" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') { if (newMenu) closeMenu(); else onClose() } }} style={{ ...(docked ? { padding: '8px 10px' } : { position: 'absolute', top: 48, left: 0, zIndex: 20, width: 280, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, boxShadow: '0 4px 14px rgba(0,0,0,.18)' }), display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif", color: C.ink }}>
+  return <div data-testid="board-form" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') { if (newMenu) closeMenu(); else onClose() } }} style={{ ...(docked ? { padding: '8px 10px' } : { position: 'absolute', top: 48, left: 0, zIndex: 20, width: 280, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, boxShadow: '0 4px 14px rgba(0,0,0,.18)' }), display: 'flex', flexDirection: 'column', gap: 8, font: big ? "400 14px 'Pretendard', sans-serif" : "400 12px 'Pretendard', sans-serif", color: C.ink }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
       <span style={{ flex: 1, font: docked ? "700 15px 'Pretendard', sans-serif" : "700 13px 'Pretendard', sans-serif" }}>칠판</span>
       {!making && <div style={{ display: 'flex' }}>   {/* 갈라진 단추(2026-10-28 사용자 고름) — 왼쪽 = 바로 새 칠판(한 번), ▾ = 칠판 코드로 열기·파일로 새 칠판 */}
@@ -300,7 +298,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
     {why && <span data-testid="board-new-why" style={{ fontSize: 11, color: '#d44c47' }}>{why}</span>}
     {/* 「내 칠판」(2026-10-28 사용자 — 「— 이 브라우저」는 마우스 올리면 설명으로만) */}
     <span style={{ color: C.muted }} title="이 브라우저에서 만들거나 열어 본 칠판이에요 — 다른 PC·다른 브라우저엔 안 보여요(칠판 코드나 주소로 열면 그쪽 목록에도 들어가요)">내 칠판</span>
-    <div data-testid="my-boards" onDragOver={e => { if (drag) e.preventDefault() }} onDrop={e => { e.preventDefault(); dropRow() }} style={{ display: 'flex', flexDirection: 'column', maxHeight: 300, overflowY: 'auto', margin: '-4px -4px 0' }}>
+    <div data-testid="my-boards" onDragOver={e => { if (drag) e.preventDefault() }} onDrop={e => { e.preventDefault(); dropRow() }} style={{ display: 'flex', flexDirection: 'column', maxHeight: big ? 'none' : 300, overflowY: 'auto', margin: '-4px -4px 0' }}>
       {mine.map(row)}
     </div>
     {keepDays > 0 && <span data-testid="board-keep" style={{ fontSize: 11, color: C.muted }} title="서버 공간을 아끼려고 오래 안 쓴 칠판은 자동으로 치워요 — 받기만 하고 안 고친 예시 칠판은 7일. 남겨 두려면 ⋯ › 내려받기 (.ecad)">{keepDays}일 동안 아무도 안 연 칠판은 자동으로 지워져요</span>}
@@ -434,7 +432,7 @@ function LoginForm({ onDone, nameOnly = false, title = '' }) {   // nameOnly = �
     </div></div>
 }
 // 「공유」 — 노션처럼 두 탭(2026-10-19 사용자): 공유 = 편집 초대 링크(비밀번호 없이 이름만 적고 편집) + 지금 접속한 사람, 게시 = 로그인 없이 보기·발표만
-function ShareForm({ onClose, people = [], title = '' }) {   // people = [{ id, name, me }] — 사람(창)마다 하나, 이름이 같아도 따로, title = 칠판 이름(QR 화면)
+function ShareForm({ onClose, people = [], title = '', inline = false }) {   // inline = 휴대폰 칠판 판 안(떠 있는 팝업이 아님, 2026-11-06)   // people = [{ id, name, me }] — 사람(창)마다 하나, 이름이 같아도 따로, title = 칠판 이름(QR 화면)
   const [tab, setTab] = useState('share')
   const [tok, setTok] = useState(undefined), [inv, setInv] = useState(undefined), [msg, setMsg] = useState(''), [qr, setQr] = useState(null)   // qr = 크게 띄운 링크 { link, view }
   useEffect(() => { api.getPublish().then(setTok); api.getInvite().then(r => setInv(r || { token: null, password: true })) }, [])
@@ -443,17 +441,18 @@ function ShareForm({ onClose, people = [], title = '' }) {   // people = [{ id, 
   const setPub = async (on, renew) => { const t = await api.setPublish(on, renew); setTok(on ? t : null); setMsg(on ? (renew ? '새 링크 — 옛 링크는 이제 안 열려요' : '게시했어요') : '게시를 껐어요 — 링크가 안 열려요') }
   const setInvT = async (on, renew) => { const t = await api.setInvite(on, renew); setInv(v => ({ ...v, token: on ? t : null })); setMsg(on ? (renew ? '새 초대 링크 — 옛 링크로는 이제 못 들어와요' : '초대 링크를 켰어요') : '초대 링크를 껐어요 — 이제 팀 비밀번호로만') }
   const copy = l => navigator.clipboard?.writeText(l).then(() => setMsg('링크를 복사했어요'), () => setMsg('복사가 막혔어요 — 칸을 눌러 직접 복사'))
-  const b = (bg, fg = '#fff') => ({ all: 'unset', cursor: 'pointer', padding: '5px 10px', borderRadius: 6, background: bg, color: fg, fontWeight: 600, fontSize: 12 })
+  const b = (bg, fg = '#fff') => ({ all: 'unset', cursor: 'pointer', padding: inline ? '9px 14px' : '5px 10px', borderRadius: 6, background: bg, color: fg, fontWeight: 600, fontSize: inline ? 14 : 12, ...(inline && bg === 'transparent' ? { border: `1px solid ${C.line}` } : {}) })   // 휴대폰 = 손가락 크기
+  const send = l => navigator.share?.({ title: title ? `「${title}」 칠판` : 'Magic Board 칠판', url: l }).catch(() => {})   // 휴대폰 보내기(카톡·문자 — 2026-11-06)
   const linkBox = l => <input readOnly value={l} onFocus={e => e.target.select()} style={{ height: 26, border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px', font: 'inherit' }} />
   const qrBtn = (link, view = false) => <button data-testid="qr-btn" style={b('transparent', C.ink)} title="큰 화면에 QR — 휴대폰 카메라로 비추면 바로 들어와요" onClick={() => setQr({ link, view })}>QR 크게</button>
   const tabBtn = (k, t) => <button key={k} data-testid={'share-tab-' + k} onClick={() => { setTab(k); setMsg('') }} style={{ all: 'unset', cursor: 'pointer', padding: '4px 2px', borderBottom: `2px solid ${tab === k ? C.ink : 'transparent'}`, fontWeight: tab === k ? 700 : 400, color: tab === k ? C.ink : C.muted }}>{t}</button>
-  return <div onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }} style={{ position: 'absolute', top: 48, right: 0, zIndex: 20, width: 340, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, boxShadow: '0 4px 14px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif", color: C.ink }}>
+  return <div data-testid="share-form" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }} style={{ ...(inline ? { padding: '8px 10px' } : { position: 'absolute', top: 48, right: 0, zIndex: 20, width: 340, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, boxShadow: '0 4px 14px rgba(0,0,0,.18)' }), display: 'flex', flexDirection: 'column', gap: 8, font: inline ? "400 14px 'Pretendard', sans-serif" : "400 12px 'Pretendard', sans-serif", color: C.ink }}>
     <div style={{ display: 'flex', gap: 14, borderBottom: `1px solid ${C.line}`, fontSize: 13 }}>{tabBtn('share', '공유')}{tabBtn('publish', '게시')}</div>
     {tab === 'share' ? <>
       {inv?.password && <div style={{ color: C.muted }}>같이 고칠 사람에게 보내는 링크예요. 들어오면 이름만 적고 바로 편집해요.</div>}{/* 비밀번호 없는 서버는 아래 「이 주소가 곧 열쇠」가 같은 말이라 뺌(두 번 읽혔음, 2026-11-03 UX 검토) */}
       {inv === undefined ? <span style={{ color: C.muted }}>확인 중…</span> : !inv.password ? <>
         <div data-testid="share-open">이 주소가 곧 열쇠예요 — 받은 사람은 처음 한 번 이름만 적고 바로 같이 고쳐요. 주소를 모르는 사람은 이 칠판을 찾을 수 없어요.</div>{linkBox(board)}
-        <div style={{ display: 'flex', gap: 6 }}><button style={b('var(--mb-accent)')} onClick={() => copy(board)}>주소 복사</button>{qrBtn(board)}</div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}><button style={b('var(--mb-accent)')} onClick={() => copy(board)}>주소 복사</button>{qrBtn(board)}{inline && navigator.share && <button data-testid="share-send" style={b('transparent', C.ink)} onClick={() => send(board)}>보내기…</button>}</div>
         {boardLabel(DOC_NAME).code && <div data-testid="share-code" style={{ fontSize: 11.5, color: C.muted }}>칠판 코드 <b style={{ font: "700 13px ui-monospace, Consolas, monospace", letterSpacing: '.12em', color: C.ink }}>{boardLabel(DOC_NAME).code.slice(0, 4)} {boardLabel(DOC_NAME).code.slice(4)}</b> — 말로 알려 줄 때(받은 사람은 칠판 판 「▾ › 칠판 코드로 열기」)</div>}</>
       : inv.token ? <>{linkBox(editLink)}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -480,6 +479,22 @@ function ShareForm({ onClose, people = [], title = '' }) {   // people = [{ id, 
   </div>
 }
 
+// 휴대폰 칠판 판(2026-11-06 휴대폰 점검 — 다른 칠판으로 갈 길이 링크밖에 없었음): 위 이름 톡 = 아래에서 올라오는 판. 위 = 칠판(PC 왼쪽 판 「칠판」 칸과 같은 부품), 아래 = 공유(위 막대 「공유」와 같은 부품).
+// 바깥(어두운 곳) 톡·✕ = 닫기, 👥 톡 = 공유 칸부터
+function PhoneSheet({ board, share, focus, onClose }) {
+  const shareRef = useRef(null)
+  useEffect(() => { if (focus === 'share') shareRef.current?.scrollIntoView({ block: 'start' }) }, [focus])
+  return <div data-testid="phone-sheet-back" onPointerDown={e => { if (e.target === e.currentTarget) onClose() }}
+    style={{ position: 'fixed', inset: 0, zIndex: 35, background: 'rgba(0,0,0,.32)', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+    <div data-testid="phone-sheet" style={{ maxHeight: '85%', overflowY: 'auto', background: C.card, color: C.ink, borderRadius: '14px 14px 0 0', padding: '4px 4px calc(10px + env(safe-area-inset-bottom))', boxShadow: '0 -6px 20px rgba(0,0,0,.18)' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button data-testid="phone-sheet-close" aria-label="닫기" onClick={onClose} style={{ all: 'unset', cursor: 'pointer', width: 40, height: 36, textAlign: 'center', lineHeight: '36px', fontSize: 18, color: C.muted }}>✕</button></div>
+      {board}
+      <div ref={shareRef} style={{ borderTop: `1px solid ${C.line}`, marginTop: 8, paddingTop: 4 }}>
+        <div style={{ padding: '8px 10px 0', font: "700 15px 'Pretendard', sans-serif" }}>이 칠판 공유</div>{share}</div>
+    </div></div>
+}
+
 function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목67)에서 내 팀 이름(관리자 = '관리자'), 팀 없는 서버면 없음 · openServer = 비밀번호 없는 서버(칠판 주소 = 열쇠)
   const [tableOpen, setTableOpen] = useState(false), [exportOpen, setExportOpen] = useState(false), [webOpen, setWebOpen] = useState(false)
   const [dockTab, setDockTabS] = useState(() => { try { const v = localStorage.getItem('mb-dock'); return v ?? (window.innerWidth < NARROW_W ? '' : 'shape') } catch { return 'shape' } })   // 왼쪽 판 열린 칸('' = 접힘) — 이 브라우저에 기억, 좁은 창은 처음엔 접힘
@@ -493,12 +508,8 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
   const [narrow, setNarrow] = useState(() => window.innerWidth < NARROW_W)   // 좁은 창 = 위 막대 아이콘만 + 대화창은 칠판 위에 뜸
   const [phone, setPhone] = useState(isPhone), phoneRef = useRef(phone); phoneRef.current = phone
   useEffect(() => { const on = () => { setNarrow(window.innerWidth < NARROW_W); setPhone(isPhone()) }; window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
-  // 휴대폰 = 브라우저가 화면 전체를 그림처럼 키우지 않게(2026-10-27 사용자: 확대하면 뭉개짐 — 칠판 밖(위·아래 막대·대화창)을 벌리면 브라우저 확대가 됐음, 아이폰 Safari는 칠판의 touch-action도 무시)
-  // 확대는 칠판 두 손가락(Editor)만 — 글자를 다시 그려 또렷함
-  useEffect(() => { if (!phone) return; const meta = document.querySelector('meta[name=viewport]'), old = meta?.content
-    meta?.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no')
-    const stop = e => e.preventDefault(); document.addEventListener('gesturestart', stop); document.addEventListener('gesturechange', stop)   // 아이폰 Safari 확대 몸짓
-    return () => { if (old) meta.setAttribute('content', old); document.removeEventListener('gesturestart', stop); document.removeEventListener('gesturechange', stop) } }, [phone])
+  usePhoneViewport(phone)   // 브라우저 확대 막기(칠판 두 손가락 확대만 — `ui.jsx`)
+  const [sheet, setSheet] = useState(false)   // 휴대폰 칠판 판(2026-11-06 — 위 이름 톡: 내 칠판·새 칠판·코드로 열기·공유)
   const [activeLayer, setActiveLayer] = useState('default')   // 「그리는 중」 레이어(파일을 열면 기본부터 — 데스크톱 `_apply_loaded_layers`)
   const [model, setModel] = useState(() => fromEcad(emptyDoc()))
   const [cam, setCam] = useState({ x: 0, y: 0, z: 1 })   // 화면 = 칠판 × z + (x, y)
@@ -618,11 +629,13 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
       if (typeof rev === 'number') r = { ...r, doc: { ...emptyDoc(), rev } }
       setExample(r.doc?.example || '')
       setServer(r.server); setSrvKnown(true); if (r.doc) open(r.doc, r.doc.title ? `「${r.doc.title}」` : `서버 「${DOC_NAME}」`, true, true);   // 알림 = 칠판 이름(처음 온 사람에겐 코드가 뜻 없음 — 2026-11-03 UX 검토), 이름 없으면 전처럼
+      if (r.doc?.example && phoneRef.current) setStatus(`${r.doc.title ? `「${r.doc.title}」` : '예시 칠판'} — 아래 「▶ 차례로」로 한 장씩 크게 봐요`)   // 여는 알림 = 칠판 이름은 그대로(11-03)   // 예시 칠판 1번 장의 「둘러보는 법」은 PC 기준(왼쪽 판·위 막대) — 휴대폰은 이 길(2026-11-06)
       else if (r.server) { const m = modelRef.current; sync.current.base = snapshotModel(m); sync.current.rev = 0 }
       if (fresh || !r.server) setStatus(r.server ? (boardLabel(DOC_NAME).code ? '새 칠판' : `서버 「${DOC_NAME}」 · 새 칠판`) : '서버 없음 — 파일로 열고 저장') }) }, [])   // eslint-disable-line
 
   // 카드 버튼: 클릭 = 그리기 도구, 6px 넘게 끌면 도형을 칠판에 바로 놓기(데스크톱 `_PaletteButton._DRAG_THRESH`)
   // 미니맵에 그릴 것 — 숨긴 레이어 뺌(화면을 옮길 때마다 다시 그리지 않게 문서가 바뀔 때만)
+  const hasFrames = useMemo(() => phone && presentFrames(model.items).length > 0, [phone, model])   // 휴대폰 아래 「▶ 차례로」
   const mapItems = useMemo(() => { const hid = new Set(layersOf(model).filter(l => !l.visible).map(l => l.id)); return hid.size ? model.items.filter(it => !hid.has(layerIdOf(it))) : model.items }, [model])
   const lastTable = useRef([3, 3, true])   // 위 막대에서 표를 끌면 = 마지막에 넣은 행·열(처음은 3×3)
   const [webAt, setWebAt] = useState(null)   // 위 막대에서 「웹」을 끌어 놓은 자리 — 주소 칸이 뜨고 그 자리에 넣음
@@ -691,10 +704,22 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
   useEffect(() => { if (server) noteBoards([{ name: DOC_NAME, title: model.title || '' }]) }, [server, model.title])   // 다음에 열 때 첫 모습
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
-      {phone && <div data-testid="phone-top" style={{ touchAction: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>   {/* 휴대폰 위 = 칠판 이름·사람 수·밝기만 */}
-        <span style={{ flex: 1, minWidth: 0, font: "700 15px 'Pretendard', sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{live ? `「${title}」` : 'Magic Board'}{live && team && <span style={{ marginLeft: 6, font: "600 12px 'Pretendard', sans-serif", color: C.muted }}>{team}</span>}</span>
-        {live && <span data-testid="people-count" title={crowd.map(p => p.name).join(', ')} style={{ fontSize: 13, color: C.muted, whiteSpace: 'nowrap' }}>👥 {crowd.length}</span>}
+      {/* 휴대폰 위 = 칠판 이름(누르면 칠판 판 — 2026-11-06 휴대폰 점검: 다른 칠판으로 갈 길이 링크밖에 없었음)·사람 수·되돌리기·밝기 */}
+      {phone && <div data-testid="phone-top" style={{ touchAction: 'none', display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px 6px 6px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>
+        <button data-testid="phone-title" onClick={() => setSheet(true)} disabled={!server} title="칠판 — 내 칠판·새 칠판·코드로 열기·공유"
+          style={{ all: 'unset', flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '6px 8px', borderRadius: 8, cursor: 'pointer', font: "700 15px 'Pretendard', sans-serif" }}>
+          <span style={{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{live ? title : 'Magic Board'}</span>
+          {live && team && <span style={{ flex: 'none', font: "600 12px 'Pretendard', sans-serif", color: C.muted }}>{team}</span>}
+          {server && <span aria-hidden style={{ flex: 'none', fontSize: 11, color: C.muted }}>▾</span>}</button>
+        {live && <button data-testid="people-count" onClick={() => server && setSheet('share')} title={crowd.map(p => p.name).join(', ')} style={{ all: 'unset', cursor: 'pointer', fontSize: 13, color: C.muted, whiteSpace: 'nowrap', padding: '6px 4px' }}>👥 {crowd.length}</button>}
+        {/* 되돌리기(2026-11-06) — 휴대폰은 고치기가 없지만 대화창 답·회의록을 칠판에 붙이므로, 잘못 붙인 것을 뺄 길 */}
+        <button data-testid="phone-undo" onClick={() => ed.current?.undo()} title="되돌리기 — 방금 칠판에 붙인 것 빼기" aria-label="되돌리기"
+          style={{ all: 'unset', cursor: 'pointer', width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, color: 'var(--mb-icon)' }}>
+          <span aria-hidden style={{ width: 20, height: 20, display: 'block' }} dangerouslySetInnerHTML={{ __html: ICONS.undo.replace('<svg ', '<svg width="20" height="20" ') }} /></button>
         <button onClick={toggleDark} title="밝게 / 어둡게" style={{ all: 'unset', cursor: 'pointer', fontSize: 18, padding: '2px 4px' }}>{dark ? '☀️' : '🌙'}</button></div>}
+      {phone && sheet && server && <PhoneSheet focus={sheet === 'share' ? 'share' : 'board'} onClose={() => setSheet(false)}
+        board={<BoardForm docked big open={openServer} myId={sync.current.id} me={me} onDownload={saveFile} keepDays={keepDays} onClose={() => setSheet(false)} />}
+        share={<ShareForm inline people={crowd} title={title} onClose={() => setSheet(false)} />} />}
       <Narrow.Provider value={narrow}>
       <div style={{ display: phone ? 'none' : 'flex', flexWrap: narrow ? 'wrap' : 'nowrap', rowGap: 4, alignItems: 'center', gap: narrow ? 4 : 8, padding: '4px 8px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>   {/* 좁은 PC 창(반 화면)은 두 줄로 — 한 줄이면 칠판 이름·공유·KAIROS가 잘렸음(2026-10-27 저녁) */}
         {/* 칠판 이름 = 맨 왼쪽(2026-10-27 사용자 — Figma·Miro처럼 파일 이름은 왼쪽 위), 누르면 왼쪽 판 「칠판」 칸(새 칠판·최근 칠판·파일) */}
@@ -797,7 +822,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
         {symAdd && <SymAddForm init={symAdd} folders={mySyms.folders} onClose={() => setSymAdd(null)} onOk={(name, folder) => {
           const ok = myApi.addSymbol(name, folder, symAdd.items); setSymAdd(null)
           if (ok) { setDockTab('shape'); setStatus(`「${name}」을 내 심볼 「${folder}」에 넣었어요 — 이 브라우저에 저장`) } else setStatus('이 브라우저 저장 공간이 모자라요 — 그림이 든 것은 클 수 있어요') }} />}
-        {!model.items.length && !meetSt && !aiBusy && <EmptyGuide onExample={() => openExample()} onAsk={() => { setChatOpen(true); setChatFocus({ id: Date.now() }) }} onDeep={() => { setChatOpen(true); setChatFocus({ id: Date.now(), tool: 'deep' }) }}
+        {!model.items.length && !meetSt && !aiBusy && <EmptyGuide phone={phone} onExample={() => openExample()} onAsk={() => { setChatOpen(true); setChatFocus({ id: Date.now() }) }} onDeep={() => { setChatOpen(true); setChatFocus({ id: Date.now(), tool: 'deep' }) }}
           onMeet={() => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : ed.current?.meetStart())} />}
         <span data-testid="save-note" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{saveNote}</span>
         {status && <div data-testid="status-toast" role="status" title={status} style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 6, maxWidth: 'min(640px, max(240px, calc(100% - 480px)))', padding: '6px 14px', borderRadius: 99,
@@ -811,7 +836,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
       {phone && <div data-testid="phone-bar" style={{ touchAction: 'none', display: 'flex', gap: 8, padding: '8px 10px calc(8px + env(safe-area-inset-bottom))', background: C.bar, borderTop: `1px solid ${C.line}` }}>   {/* 휴대폰 아래 = 엄지로 누르는 큰 버튼 셋 */}
         {[['⤢', '다 보기', () => fit(modelRef.current.items), false, false],
           ['🎙', meetSt === 'saved' ? '정리하기' : meetSt ? '끝내기' : '회의', () => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : meetSt ? ed.current?.meetStop() : ed.current?.meetStart()), !!meetSt, meetSt === 'start' || meetSt === 'stopping'],
-          ...(example ? [['▶', '차례로', () => ed.current?.startPresent(ed.current?.frameIds()[0]), false, false]] : []),   // 예시 칠판 = 휴대폰에서도 1번부터 크게(전체 보기는 글씨가 안 읽힘 — 2026-11-03 UX 검토)
+          ...(example || hasFrames ? [['▶', '차례로', () => ed.current?.startPresent(ed.current?.frameIds()[0]), false, false]] : []),   // 1번부터 크게(전체 보기는 글씨가 안 읽힘 — 2026-11-03 UX 검토) · 내 칠판도 발표할 프레임이 있으면(2026-11-06 — 예시 칠판에만 있었음)
           ['✦', 'KAIROS', () => setChatOpen(true), false, false]].map(([ic, label, f, on, off]) =>
           <button key={ic} data-testid={ic === '▶' ? 'phone-tour' : undefined} onClick={f} disabled={off} style={{ all: 'unset', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, height: 44, borderRadius: 10, cursor: 'pointer', opacity: off ? 0.5 : 1,
             font: "600 15px 'Pretendard', sans-serif", color: ic === '✦' || on ? '#fff' : C.ink, background: ic === '✦' ? 'var(--mb-accent)' : on ? '#d44c47' : 'var(--mb-card)', border: `1px solid ${ic === '✦' || on ? 'transparent' : C.line}` }}><span aria-hidden>{ic}</span>{label}</button>)}

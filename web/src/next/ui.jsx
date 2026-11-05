@@ -6,6 +6,19 @@ const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line
 export const ACCENT = 'var(--mb-accent)', DANGER = '#d44c47', HOVER = 'var(--mb-group)'
 const F = "'Pretendard', sans-serif"
 
+// 휴대폰 = 손가락 기기 + 짧은 변이 700 미만(2026-10-27 저녁 사용자 — 폭만 보면 PC 창을 반으로 나눴을 때도 고치기가 막혔음).
+// 짧은 변으로(2026-11-06 휴대폰 점검 — 폭만 보면 휴대폰을 가로로 돌렸을 때(폭 750) PC 화면이 됐음). 태블릿(짧은 변 700 이상)은 PC 화면 + 손가락 이동·확대(Editor)
+export const PHONE_W = 700
+export const isPhone = () => Math.min(window.innerWidth, window.innerHeight) < PHONE_W && !!window.matchMedia?.('(pointer: coarse)').matches
+// 휴대폰 = 브라우저가 화면 전체를 그림처럼 키우지 않게(2026-10-27 사용자: 확대하면 뭉개짐 — 칠판 밖(위·아래 막대·대화창)을 벌리면 브라우저 확대가 됐음, 아이폰 Safari는 칠판의 touch-action도 무시)
+// 확대는 칠판 두 손가락(Editor)만 — 글자를 다시 그려 또렷함. 칠판 화면·보기 링크 화면이 같이 씀
+export function usePhoneViewport(phone) {
+  useEffect(() => { if (!phone) return; const meta = document.querySelector('meta[name=viewport]'), old = meta?.content
+    meta?.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no')
+    const stop = e => e.preventDefault(); document.addEventListener('gesturestart', stop); document.addEventListener('gesturechange', stop)   // 아이폰 Safari 확대 몸짓
+    return () => { if (old) meta.setAttribute('content', old); document.removeEventListener('gesturestart', stop); document.removeEventListener('gesturechange', stop) } }, [phone])
+}
+
 // 규칙 ③ 마우스 올림 = 회색 바탕(뜻 있는 「켜짐」만 코랄)
 export const hoverBg = { onMouseEnter: e => { e.currentTarget.style.background = HOVER }, onMouseLeave: e => { e.currentTarget.style.background = 'transparent' } }
 

@@ -6,14 +6,20 @@ import { Editor } from './Editor.jsx'
 import { api, docBounds } from './doc.js'
 import { fromEcad } from './model.js'
 import { setInkDark } from './render.jsx'
+import { isPhone, usePhoneViewport } from './ui.jsx'
 
 const C = { bar: 'var(--mb-bar)', ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', board: 'var(--mb-board)', line: 'var(--mb-line)' }
 const btn = { all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 6, font: "600 12px 'Pretendard', sans-serif", color: C.ink, background: 'rgba(218,119,86,.14)' }
+const btnP = { ...btn, flex: 'none', padding: '8px 12px', font: "600 14px 'Pretendard', sans-serif" }   // 휴대폰 = 손가락 크기
 
 export function Viewer({ token }) {
   const [model, setModel] = useState(null), [gone, setGone] = useState(false), [cam, setCam] = useState({ x: 0, y: 0, z: 1 }), [size, setSize] = useState({ w: 1, h: 1 })
   const [dark, setDark] = useState(() => document.documentElement.dataset.theme === 'dark'), box = useRef(null), ed = useRef(null), rev = useRef(-1), fitted = useRef(false)
   setInkDark(dark)
+  // 휴대폰(2026-11-06 휴대폰 점검 — 발표 QR로 들어온 관객이 처음 보는 화면): 칠판 화면과 같은 손가락(한 손가락 이동·두 손가락 확대·카드 톡 = 새 탭·아이폰 카드 속 페이지는 위층)·브라우저 확대 막기, 막대는 짧게
+  const [phone, setPhone] = useState(isPhone)
+  useEffect(() => { const on = () => setPhone(isPhone()); window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
+  usePhoneViewport(phone)
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light' }, [dark])
   useEffect(() => { const ro = new ResizeObserver(([e]) => setSize({ w: e.contentRect.width, h: e.contentRect.height })); if (box.current) ro.observe(box.current); return () => ro.disconnect() }, [model])
   const fit = useCallback((items, s) => { const b = docBounds(items); if (!b) return; const z = Math.min(1, (s.w - 80) / Math.max(b.w, 1), (s.h - 80) / Math.max(b.h, 1)); setCam({ z, x: s.w / 2 - (b.x + b.w / 2) * z, y: s.h / 2 - (b.y + b.h / 2) * z }) }, [])
@@ -32,15 +38,15 @@ export function Viewer({ token }) {
   if (gone) return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.muted, background: C.board, font: "400 14px 'Pretendard', sans-serif" }}>게시가 꺼졌거나 링크가 바뀌었어요 — 칠판을 고치는 분께 새 링크를 받아 주세요.</div>
   if (!model) return <div style={{ height: '100%', background: C.board }} />
   return <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink, userSelect: 'none' }}>   {/* 보기 화면 — Ctrl+A가 글자를 칠하지 않게 */}
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>
-      <b>Magic Board</b><span style={{ color: C.muted, fontSize: 12 }}>보기 전용 · 고치는 내용이 몇 초 안에 보여요</span>
+    <div data-testid="view-bar" style={{ display: 'flex', alignItems: 'center', gap: phone ? 6 : 8, padding: phone ? '6px 8px' : '6px 10px', background: C.bar, borderBottom: `1px solid ${C.line}`, touchAction: phone ? 'none' : undefined, whiteSpace: 'nowrap' }}>
+      <b style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{phone && model.title ? model.title : 'Magic Board'}</b><span style={{ color: C.muted, fontSize: 12 }}>{phone ? '보기 전용' : '보기 전용 · 고치는 내용이 몇 초 안에 보여요'}</span>
       <span style={{ flex: 1 }} />
-      <button style={btn} data-testid="view-present" onClick={() => ed.current?.startPresent()} title="발표 — 프레임 순서대로 한 장씩 전체 화면">▶ 발표</button>
-      <button style={btn} onClick={() => fit(model.items, size)} title="칠판 전체가 화면에 들어오게 맞춤">⤢ 다 보기</button>
-      <button style={btn} onClick={() => setDark(d => !d)}>{dark ? '☀ 밝게' : '☾ 어둡게'}</button>
+      <button style={phone ? btnP : btn} data-testid="view-present" onClick={() => ed.current?.startPresent()} title="발표 — 프레임 순서대로 한 장씩 전체 화면">{phone ? '▶ 차례로' : '▶ 발표'}</button>
+      <button style={phone ? btnP : btn} onClick={() => fit(model.items, size)} title="칠판 전체가 화면에 들어오게 맞춤">⤢{phone ? '' : ' 다 보기'}</button>
+      <button style={phone ? btnP : btn} onClick={() => setDark(d => !d)} title="밝게 / 어둡게">{phone ? (dark ? '☀' : '☾') : dark ? '☀ 밝게' : '☾ 어둡게'}</button>
     </div>
     <div ref={box} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-      <Editor ref={ed} readOnly dark={dark} model={model} setModel={setModel} onCommit={() => {}} size={size} cam={cam} setCam={setCam} tool="select" setTool={() => {}} setStatus={() => {}} activeLayer="default" />
+      <Editor ref={ed} readOnly phone={phone} dark={dark} model={model} setModel={setModel} onCommit={() => {}} size={size} cam={cam} setCam={setCam} tool="select" setTool={() => {}} setStatus={() => {}} activeLayer="default" />
     </div>
   </div>
 }
