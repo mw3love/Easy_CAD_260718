@@ -228,3 +228,14 @@ test('작은 책 ③ — 갈래가 있는 책은 장끼리 →·장에서 판으
   await page.keyboard.press(' '); await expect(pr).toHaveAttribute('data-cur', id[2])             // 기본(스페이스) = 판부터 = 다 보기
   await page.keyboard.press('ArrowLeft'); await fork.getByRole('button', { name: /중계소/ }).click(); await expect(pr).toHaveAttribute('data-cur', id[3])   // 갈림길 단추
 })
+
+test('표지 — 제목이 두 줄이면 부제가 제목 밑으로 내려감(겹치지 않음, 2026-11-06)', async ({ page }) => {
+  await openBoard(page, boardName('cover2')); await setCam(page)
+  const make = t => page.evaluate(d => window.__mb.ed.slidesBoard(d), { title: 't', sources: [], slides: [{ title: t, layout: '표지', bullets: ['신입사원·견학 엔지니어를 위한 안내'] }, { title: '끝', layout: '마무리', bullets: ['b'] }] })
+  const gap = async () => { const its = (await liveDoc(page)).items.filter(it => it.type === 'text'), sub = its.findLast(it => it.text.startsWith('신입사원')), ti = its.findLast(it => it.weight === 700 && it.font === 56)
+    return { gap: sub.pos[1] - ti.pos[1], lines: ti.text.split('\n').length } }
+  await make('짧은 제목'); const one = await gap(); expect(one.lines).toBe(1)
+  await make('KBS 모악산 송신소 소개: 전북 방송을 하늘로 보내는 곳, 산 위에서 하루도 쉬지 않는 송출 현장 이야기'); const two = await gap()
+  expect(two.lines).toBeGreaterThan(1)
+  expect(two.gap).toBeGreaterThan(one.gap + 56)                                                    // 제목 한 줄만큼 더 아래
+})

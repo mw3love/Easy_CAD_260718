@@ -1103,8 +1103,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     } else if (kind === '표지') {
       const dy = cv ? 200 : 0   // 표지 그림(3단계) = 오른쪽 위, 제목은 그 밑으로
       if (cv) { const iw = 560, ih = Math.min(400, iw * cv.h / cv.w); out.push(base([X + W - 96 - iw, Y + 64], { type: 'image', rect: [0, 0, iw, ih], data: cv.data, z, alt: cv.alt, slide_role: 'cover' })) }
-      out.push(box(X, Y, 28, H, CORAL), box(L + 24, Y + 300 + dy, 120, 10, CORAL, 5), txt(L + 24, Y + 340 + dy, wrap(s.title, cv ? 48 : 56, CW - 24, 700), cv ? 48 : 56, { weight: 700 }))
-      if (lines.length) out.push(txt(L + 24, Y + 450 + dy, wrap(lines.join('\n'), 26, CW - 24), 26, { color: MUTE }))
+      const tf = cv ? 48 : 56, tt = wrap(s.title, tf, CW - 24, 700), th = layoutText(tt, null, tf * PT, 'app', 700).h   // 부제 = 제목 밑(2026-11-06 — 두 줄 제목이 고정 자리 부제와 겹쳤음)
+      out.push(box(X, Y, 28, H, CORAL), box(L + 24, Y + 300 + dy, 120, 10, CORAL, 5), txt(L + 24, Y + 340 + dy, tt, tf, { weight: 700 }))
+      if (lines.length) out.push(txt(L + 24, Y + 340 + dy + Math.max(110, th + 36), wrap(lines.join('\n'), 26, CW - 24), 26, { color: MUTE }))
     } else {
       out.push(txt(L, Y + 72, s.title, fit(s.title, 40, CW, 700, 26), { weight: 700 }), box(L, Y + 150, 96, 8, CORAL, 4))
       if (kind === '숫자' && s.numbers?.length) {
