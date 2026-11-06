@@ -104,8 +104,11 @@ test('휴대폰 — 위 이름 톡 = 칠판 판(새 칠판·다른 칠판으로�
   await expect(sheet.getByTestId('share-form')).toHaveCount(0)                             // 공유는 따로
   expect(await sheet.evaluate(el => { const t = document.createElement('div'); t.style.background = 'var(--mb-accent)'; document.body.appendChild(t)
     const c = getComputedStyle(t).backgroundColor; t.remove(); return [...el.querySelectorAll('button')].filter(b => getComputedStyle(b).backgroundColor === c).length })).toBe(0)
+  expect((await sheet.getByTestId('board-new').boundingBox()).y).toBeLessThan((await sheet.getByTestId('my-boards').boundingBox()).y)   // 새로 시작 = 맨 위(칠판이 많아도 안 밀림)
   await row.locator('[data-testid=board-more]').tap()
   await expect(page.getByText('이름 바꾸기')).toBeVisible()
+  const item = await page.getByRole('button', { name: '이름 바꾸기' }).boundingBox()
+  expect(item.height).toBeGreaterThanOrEqual(44); expect(item.width).toBeLessThan(220)                       // 폰 ⋯ 메뉴 = 손가락 크기·글자 폭(PC 메뉴 최소 폭 190 아님)
   await expect(page.getByText('새 탭에서 열기')).toHaveCount(0); await expect(page.getByText('내려받기 (.ecad)')).toHaveCount(0)
   await page.screenshot({ path: 'test-results/phone-sheet.png' })
   await page.touchscreen.tap(200, 780); await expect(page.getByText('이름 바꾸기')).toHaveCount(0)   // 바깥 톡 = 줄 메뉴 닫힘

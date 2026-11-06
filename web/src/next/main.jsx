@@ -188,7 +188,9 @@ const PICON = {
   check: `<svg viewBox="0 0 24 24"><path d="M5 12.5 L10 17 L19 7.5" ${PS}/></svg>`,
   send: `<svg viewBox="0 0 24 24"><path d="M12 15 V4 M7.5 8.5 L12 4 L16.5 8.5 M5 13 V18.5 a1.5 1.5 0 0 0 1.5 1.5 H17.5 a1.5 1.5 0 0 0 1.5 -1.5 V13" ${PS}/></svg>`,
   people: `<svg viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.2" ${PS}/><path d="M3.5 19 a5.5 5.5 0 0 1 11 0" ${PS}/><path d="M15.5 5.6 a3 3 0 0 1 0 5.8 M17.5 14 a5 5 0 0 1 3 5" ${PS}/></svg>`,
-  present: ICONS.present, share: ICONS.share, theme: ICONS.theme,
+  minus: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" ${PS}/><path d="M8.5 12 H15.5" ${PS}/></svg>`,
+  trash: `<svg viewBox="0 0 24 24"><path d="M4.5 7 H19.5 M9.5 7 V5 h5 v2 M6.5 7 l1 12.5 a1 1 0 0 0 1 .9 h7 a1 1 0 0 0 1 -.9 l1 -12.5 M10 11 v5.5 M14 11 v5.5" ${PS}/></svg>`,
+  present: ICONS.present, share: ICONS.share, theme: ICONS.theme, pen: ICONS.pen,
 }
 const PI = ({ n, s = 18 }) => <span aria-hidden style={{ width: s, height: s, display: 'inline-block', flex: 'none' }} dangerouslySetInnerHTML={{ __html: PICON[n].replace('<svg ', `<svg width="${s}" height="${s}" `) }} />
 const PILL = { all: 'unset', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5, height: 34, padding: '0 11px', borderRadius: 17, background: C.group, color: C.ink, fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap' }
@@ -334,11 +336,11 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
     <input ref={fileRef} data-testid="board-file-input" type="file" accept=".ecad,application/json" hidden onChange={fileNew} />
     {!big && makingBox}
     {/* 「내 칠판」(2026-10-28 사용자 — 「— 이 브라우저」는 마우스 올리면 설명으로만) */}
+    {phoneActions}   {/* 휴대폰 = 새로 시작하는 길이 맨 위(2026-11-06 사용자 — 칠판이 많아지면 아래로 밀려 굴려야 보였음), 목록만 굴림 */}
     {!big && <span style={{ color: C.muted }} title="이 브라우저에서 만들거나 열어 본 칠판이에요 — 다른 PC·다른 브라우저엔 안 보여요(칠판 코드나 주소로 열면 그쪽 목록에도 들어가요)">내 칠판</span>}
-    <div data-testid="my-boards" onDragOver={e => { if (drag) e.preventDefault() }} onDrop={e => { e.preventDefault(); dropRow() }} style={{ display: 'flex', flexDirection: 'column', ...(big ? {} : { maxHeight: 300, overflowY: 'auto', margin: '-4px -4px 0' }) }}>
+    <div data-testid="my-boards" onDragOver={e => { if (drag) e.preventDefault() }} onDrop={e => { e.preventDefault(); dropRow() }} style={{ display: 'flex', flexDirection: 'column', ...(big ? { maxHeight: 'min(52vh, 360px)', overflowY: 'auto', overscrollBehavior: 'contain' } : { maxHeight: 300, overflowY: 'auto', margin: '-4px -4px 0' }) }}>
       {mine.map(row)}
     </div>
-    {phoneActions}
     {keepDays > 0 && !big && <span data-testid="board-keep" style={{ fontSize: 11, color: C.muted }} title="서버 공간을 아끼려고 오래 안 쓴 칠판은 자동으로 치워요 — 받기만 하고 안 고친 예시 칠판은 7일. 남겨 두려면 ⋯ › 내려받기 (.ecad)">{keepDays}일 동안 아무도 안 연 칠판은 자동으로 지워져요</span>}
     {!open && (list === null || others.length > 0) && <>
       <span style={{ color: C.muted }}>이 서버의 칠판</span>
@@ -349,7 +351,13 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
     {children}
     {/* 줄 메뉴 = 우클릭·⋯(2026-10-28 — 우클릭을 모르면 못 찾음). 이름 바꾸기 = 문서 이름만(주소 그대로), 지우기는 없음(남과 같이 쓰는 칠판일 수 있음) — 「목록에서 빼기」 = 이 브라우저 목록에서만(칠판은 그대로) */}
     {/* 휴대폰 = 글쇠(F2)·새 탭·내려받기(.ecad를 열 데스크톱이 없음)는 빼고, 주소는 「보내기…」(카톡·문자 — 없으면 복사), 2026-11-06 */}
-    {menu && <FloatMenu at={menu} onClose={() => setMenu(null)} entries={[['이름 바꾸기', big ? '' : 'F2', () => startRename(menu.name)], ...(big ? [] : [['새 탭에서 열기', '', () => { setMenu(null); window.open(boardUrl(menu.name), '_blank', 'noopener') }]]),
+    {menu && big && <FloatMenu touch at={menu} onClose={() => setMenu(null)} entries={[   // 휴대폰 = 글자 폭·줄 44px·아이콘(2026-11-06 사용자 — PC 메뉴 그대로라 가로로 길고 줄이 작았음)
+      [<><PI n="pen" />이름 바꾸기</>, '', () => startRename(menu.name)],
+      navigator.share ? [<><PI n="send" />주소 보내기</>, '', () => { setMenu(null); navigator.share({ title: `「${boardTitle(menu.name, findB(menu.name)?.title)}」 칠판`, url: location.origin + boardUrl(menu.name) }).catch(() => {}) }]
+        : [<><PI n="copy" />주소 복사</>, '', () => { setMenu(null); navigator.clipboard?.writeText(location.origin + boardUrl(menu.name)) }],
+      '-', ...(menu.mine && menu.name !== DOC_NAME ? [[<><PI n="minus" />목록에서 빼기</>, '', () => { setMenu(null); forgetBoard(menu.name); loadMine() }]] : []),
+      [<span style={{ display: 'contents', color: '#d44c47' }}><PI n="trash" />칠판 지우기</span>, '', () => { setMenu(null); setDel({ name: menu.name }) }]]} />}
+    {menu && !big && <FloatMenu at={menu} onClose={() => setMenu(null)} entries={[['이름 바꾸기', big ? '' : 'F2', () => startRename(menu.name)], ...(big ? [] : [['새 탭에서 열기', '', () => { setMenu(null); window.open(boardUrl(menu.name), '_blank', 'noopener') }]]),
       ...(big && navigator.share ? [['주소 보내기…', '', () => { setMenu(null); navigator.share({ title: `「${boardTitle(menu.name, findB(menu.name)?.title)}」 칠판`, url: location.origin + boardUrl(menu.name) }).catch(() => {}) }]]
         : [['주소 복사', '', () => { setMenu(null); navigator.clipboard?.writeText(location.origin + boardUrl(menu.name)) }]]), ...(big ? [] : [['내려받기 (.ecad)', '', () => download(menu.name)]]),
       '-', ...(menu.mine && menu.name !== DOC_NAME ? [['목록에서 빼기', '', () => { setMenu(null); forgetBoard(menu.name); loadMine() }]] : []), ['칠판 지우기…', '', () => { setMenu(null); setDel({ name: menu.name }) }]]} />}
@@ -478,7 +486,7 @@ function ShareForm({ onClose, people = [], title = '', inline = false }) {   // 
   useEffect(() => { api.getPublish().then(setTok); api.getInvite().then(r => setInv(r || { token: null, password: true })) }, [])
   const viewLink = tok ? `${location.origin}/?view=${tok}` : ''
   const board = `${location.origin}/?board=${encodeURIComponent(DOC_NAME)}`, editLink = inv?.token ? `${board}&join=${inv.token}` : ''
-  const setPub = async (on, renew) => { const t = await api.setPublish(on, renew); setTok(on ? t : null); setMsg(on ? (renew ? '새 링크 — 옛 링크는 이제 안 열려요' : '게시했어요') : '게시를 껐어요 — 링크가 안 열려요') }
+  const setPub = async (on, renew) => { const t = await api.setPublish(on, renew); setTok(on ? t : null); setMsg(on ? (renew ? '새 링크 — 옛 링크는 이제 안 열려요' : '보기 전용 링크를 만들었어요') : '보기 전용 링크를 껐어요 — 링크가 안 열려요') }
   const setInvT = async (on, renew) => { const t = await api.setInvite(on, renew); setInv(v => ({ ...v, token: on ? t : null })); setMsg(on ? (renew ? '새 초대 링크 — 옛 링크로는 이제 못 들어와요' : '초대 링크를 켰어요') : '초대 링크를 껐어요 — 이제 팀 비밀번호로만') }
   const copy = l => navigator.clipboard?.writeText(l).then(() => setMsg('링크를 복사했어요'), () => setMsg(inline ? '복사가 막혔어요 — 「보내기…」나 QR로 알려 주세요' : '복사가 막혔어요 — 칸을 눌러 직접 복사'))
   const b = (bg, fg = '#fff') => ({ all: 'unset', cursor: 'pointer', padding: inline ? '9px 14px' : '5px 10px', borderRadius: 6, background: bg, color: fg, fontWeight: 600, fontSize: inline ? 14 : 12, ...(inline && bg === 'transparent' ? { border: `1px solid ${C.line}` } : {}) })   // 휴대폰 = 손가락 크기
@@ -487,7 +495,7 @@ function ShareForm({ onClose, people = [], title = '', inline = false }) {   // 
   const qrBtn = (link, view = false) => <button data-testid="qr-btn" style={b('transparent', C.ink)} title="큰 화면에 QR — 휴대폰 카메라로 비추면 바로 들어와요" onClick={() => setQr({ link, view })}>QR 크게</button>
   const tabBtn = (k, t) => <button key={k} data-testid={'share-tab-' + k} onClick={() => { setTab(k); setMsg('') }} style={{ all: 'unset', cursor: 'pointer', padding: '4px 2px', borderBottom: `2px solid ${tab === k ? C.ink : 'transparent'}`, fontWeight: tab === k ? 700 : 400, color: tab === k ? C.ink : C.muted }}>{t}</button>
   return <div data-testid="share-form" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }} style={{ ...(inline ? { padding: '8px 10px' } : { position: 'absolute', top: 48, right: 0, zIndex: 20, width: 340, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, boxShadow: '0 4px 14px rgba(0,0,0,.18)' }), display: 'flex', flexDirection: 'column', gap: 8, font: inline ? "400 14px 'Pretendard', sans-serif" : "400 12px 'Pretendard', sans-serif", color: C.ink }}>
-    <div style={{ display: 'flex', gap: 14, borderBottom: `1px solid ${C.line}`, fontSize: 13 }}>{tabBtn('share', '공유')}{tabBtn('publish', '게시')}</div>
+    <div style={{ display: 'flex', gap: 14, borderBottom: `1px solid ${C.line}`, fontSize: 13 }}>{tabBtn('share', '공유')}{tabBtn('publish', '보기 전용')}</div>
     {tab === 'share' ? <>
       {inv?.password && <div style={{ color: C.muted }}>같이 고칠 사람에게 보내는 링크예요. 들어오면 이름만 적고 바로 편집해요.</div>}{/* 비밀번호 없는 서버는 아래 「이 주소가 곧 열쇠」가 같은 말이라 뺌(두 번 읽혔음, 2026-11-03 UX 검토) */}
       {inv === undefined ? <span style={{ color: C.muted }}>확인 중…</span> : !inv.password ? <>
@@ -515,7 +523,7 @@ function ShareForm({ onClose, people = [], title = '', inline = false }) {   // 
           <button style={b('var(--mb-accent)')} onClick={() => copy(viewLink)}>링크 복사</button>{qrBtn(viewLink, true)}
           <button style={b('transparent', C.ink)} onClick={() => window.open(viewLink, '_blank', 'noopener')}>열어 보기</button>
           <button style={b('transparent', C.ink)} onClick={() => setPub(true, true)}>새 링크로 바꾸기</button>
-          <button style={b('transparent', '#d44c47')} onClick={() => setPub(false)}>게시 끄기</button></div></> : <div><button style={b('var(--mb-accent)')} onClick={() => setPub(true)}>게시하기</button></div>}
+          <button style={b('transparent', '#d44c47')} onClick={() => setPub(false)}>링크 끄기</button></div></> : <div><button style={b('var(--mb-accent)')} onClick={() => setPub(true)}>보기 전용 링크 만들기</button></div>}
     </>}
     {msg && <div style={{ color: 'var(--mb-accent)' }}>{msg}</div>}
     {qr && <QrBig pop="share" link={qr.link} view={qr.view} code={qr.view ? '' : boardLabel(DOC_NAME).code} title={title} onClose={() => setQr(null)} />}
@@ -542,9 +550,9 @@ function PhoneShare({ title = '' }) {
     {code && <div data-testid="share-code" style={row}><span style={{ fontSize: 13, color: C.muted, flex: 'none' }}>칠판 코드</span><span style={{ ...mono, flex: 1 }}>{code.slice(0, 4)} {code.slice(4)}</span>
       <button aria-label="칠판 코드 복사" onClick={() => copy(code, '칠판 코드를')} style={IBTN}><PI n="copy" /></button></div>}
     <div data-testid="share-url" style={row}><span style={{ flex: 1, minWidth: 0, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{short(board)}</span>
+      {navigator.share && <button data-testid="share-send" aria-label="보내기" onClick={() => navigator.share({ title: title ? `「${title}」 칠판` : 'Magic Board 칠판', url: board }).catch(() => {})} style={IBTN}><PI n="send" /></button>}
       <button aria-label="주소 복사" onClick={() => copy(board, '주소를')} style={IBTN}><PI n="copy" /></button>
       <button data-testid="qr-btn" aria-label="QR 크게" onClick={() => setQr({ link: board, view: false })} style={IBTN}><PI n="qr" /></button></div>
-    {navigator.share && <div><button data-testid="share-send" onClick={() => navigator.share({ title: title ? `「${title}」 칠판` : 'Magic Board 칠판', url: board }).catch(() => {})} style={PILL}><PI n="send" />보내기</button></div>}
     <div style={{ height: 1, background: C.line, margin: '6px -10px' }} />
     <div style={row}><PI n="present" /><span style={{ flex: 1 }}>보기 전용 링크</span>
       <button data-testid="publish-switch" role="switch" aria-checked={!!tok} aria-label="보기 전용 링크" disabled={tok === undefined} onClick={() => pub(!tok)}

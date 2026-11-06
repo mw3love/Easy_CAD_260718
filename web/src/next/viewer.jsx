@@ -35,7 +35,7 @@ export function Viewer({ token }) {
     return () => { live = false }
   }, [token])
   useEffect(() => { if (model && !fitted.current && size.w > 1) { fitted.current = true; fit(model.items, size) } }, [model, size, fit])
-  if (gone) return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.muted, background: C.board, font: "400 14px 'Pretendard', sans-serif" }}>게시가 꺼졌거나 링크가 바뀌었어요 — 칠판을 고치는 분께 새 링크를 받아 주세요.</div>
+  if (gone) return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.muted, background: C.board, font: "400 14px 'Pretendard', sans-serif" }}>보기 전용 링크가 꺼졌거나 바뀌었어요 — 칠판을 고치는 분께 새 링크를 받아 주세요.</div>
   if (!model) return <div style={{ height: '100%', background: C.board }} />
   return <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink, userSelect: 'none' }}>   {/* 보기 화면 — Ctrl+A가 글자를 칠하지 않게 */}
     <div data-testid="view-bar" style={{ display: 'flex', alignItems: 'center', gap: phone ? 6 : 8, padding: phone ? '6px 8px' : '6px 10px', background: C.bar, borderBottom: `1px solid ${C.line}`, touchAction: phone ? 'none' : undefined, whiteSpace: 'nowrap' }}>

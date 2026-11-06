@@ -8,7 +8,7 @@ const box = { position: 'absolute', zIndex: 30, pointerEvents: 'auto',minWidth: 
 const row = dis => ({ all: 'unset', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '5px 10px', borderRadius: 5, cursor: dis ? 'default' : 'pointer', opacity: dis ? 0.4 : 1 })
 const Sep = () => <div style={{ height: 1, background: C.line, margin: '4px 6px' }} />
 
-export function ContextMenu({ at, entries, onClose, testid }) {
+export function ContextMenu({ at, entries, onClose, testid, touch = false }) {   // touch = 휴대폰(글자 폭·줄 44px·글자 15px — 2026-11-06)
   const ref = useRef(null), [sub, setSub] = useState(null), [pos, setPos] = useState(at)
   useEffect(() => {   // 화면 밖으로 나가면 안쪽으로
     const el = ref.current, P = el?.parentElement; if (!el || !P) return
@@ -31,11 +31,11 @@ export function ContextMenu({ at, entries, onClose, testid }) {
   useEffect(() => { if (none) onClose() }, [none, onClose])   // 띄울 것이 없으면(빈 곳·붙일 것 없음) 바로 닫음 — 남아 있으면 나중에 복사했을 때 옛 자리에 뜸
   if (none) return null
   const hover = e => { e.currentTarget.style.background = 'var(--mb-group)' }, leave = e => { e.currentTarget.style.background = 'transparent' }
-  return <div ref={ref} data-testid={testid} onContextMenu={e => e.preventDefault()} onPointerDown={e => e.stopPropagation()} style={{ ...box, left: pos.x, top: pos.y }}>
+  return <div ref={ref} data-testid={testid} onContextMenu={e => e.preventDefault()} onPointerDown={e => e.stopPropagation()} style={{ ...box, ...(touch ? { minWidth: 0, padding: 6, borderRadius: 12, font: "400 15px 'Pretendard', sans-serif" } : {}), left: pos.x, top: pos.y }}>
     {entries.map((en, i) => en === '-' ? <Sep key={i} /> : (
       <div key={i} style={{ position: 'relative' }} onMouseEnter={() => setSub(en[3] ? i : null)}>
-        <button onClick={en[3] ? () => setSub(i) : en[2]} onMouseEnter={hover} onMouseLeave={leave} style={row(false)}>
-          <span style={{ flex: 1 }}>{en[0]}</span>
+        <button onClick={en[3] ? () => setSub(i) : en[2]} onMouseEnter={hover} onMouseLeave={leave} style={{ ...row(false), ...(touch ? { minHeight: 44, padding: '0 14px 0 10px', borderRadius: 8 } : {}) }}>
+          <span style={{ flex: 1, ...(touch ? { display: 'flex', alignItems: 'center', gap: 10, whiteSpace: 'nowrap' } : {}) }}>{en[0]}</span>
           {en[1] && <span style={{ color: C.muted, fontSize: 11 }}>{en[1]}</span>}
           {en[3] && <span style={{ color: C.muted }}>▸</span>}
         </button>

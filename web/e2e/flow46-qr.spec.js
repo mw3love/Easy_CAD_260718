@@ -45,7 +45,7 @@ test('공유 「QR 크게」 · 게시 QR · 발표 중 Q · 칠판 코드로 �
   // 게시 탭 = 보기 링크, 코드 없음(코드는 고치는 칠판의 열쇠)
   await page.getByRole('button', { name: '공유' }).click()
   await page.getByTestId('share-tab-publish').click()
-  await page.getByRole('button', { name: '게시하기' }).click()
+  await page.getByRole('button', { name: '보기 전용 링크 만들기' }).click()
   const view = await page.locator('input[readonly]').first().inputValue()
   expect(view).toContain('/?view=')
   await page.getByTestId('qr-btn').click()

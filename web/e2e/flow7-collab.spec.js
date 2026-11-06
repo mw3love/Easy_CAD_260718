@@ -36,7 +36,7 @@ test('게시 링크 — 로그인 없이 보이고, 고치는 도구는 없고, 
   await a.keyboard.type('첫 장'); await clickScene(a, 700, 500); await waitSaved(a)
   await a.getByRole('button', { name: '공유', exact: true }).click()
   await a.getByTestId('share-tab-publish').click()
-  await a.getByRole('button', { name: '게시하기' }).click()
+  await a.getByRole('button', { name: '보기 전용 링크 만들기' }).click()
   const link = await a.locator('input[readonly]').inputValue()
   expect(link).toContain('/?view=')
 

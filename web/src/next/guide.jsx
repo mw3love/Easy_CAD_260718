@@ -31,7 +31,7 @@ export function EmptyGuide({ onAsk, onDeep, onMeet, onExample, phone = false }) 
       <span aria-hidden style={{ width: 20, height: 20, flex: 'none', display: 'block', color: 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ICONS[icon].replace('<svg ', '<svg width="20" height="20" ') }} />
       <span><span style={{ display: 'block', fontWeight: 700 }}>{title}</span><span style={{ color: C.muted, fontSize: 12 }}>{tip}</span></span>
     </button>)}
-    <div data-testid="empty-guide-tip" style={{ color: C.muted, fontSize: 12, marginTop: 8, lineHeight: 1.6 }}>{phone ? '한 손가락 = 칠판 옮기기 · 두 손가락 = 확대 · 위 칠판 이름을 누르면 다른 칠판·공유'
+    <div data-testid="empty-guide-tip" style={{ color: C.muted, fontSize: 12, marginTop: 8, lineHeight: 1.6 }}>{phone ? '한 손가락 = 칠판 옮기기 · 두 손가락 = 확대 · 위 칠판 이름 = 다른 칠판'
       : '그림·PDF·녹음 파일은 칠판에 끌어다 놓기 · 빈 곳 두 번 누르기 = 글 · F1 = 도움말'}</div>
   </div>
 }
