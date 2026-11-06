@@ -107,8 +107,13 @@ test('작은 책 ② — 🖼 세 번째 = 글+그림 → 갈래가 있으면 �
   await pics.nth(0).click(); await expect(pics.nth(0)).toHaveAttribute('data-pic', 'false')       // 한 바퀴 = 글
   await expect(page.getByTestId('slides-build')).toContainText('약 28~48크레딧')
   await pics.nth(0).click(); await pics.nth(0).click()                                            // 다시 글+그림
+  const nos = page.getByTestId('slides-no')
+  await expect(nos).toHaveText(['1', '2·3', '4', '5'])                                            // 줄 번호 = 될 프레임 번호(글+그림 = 둘, 11-06)
+  await page.getByTestId('slides-x').nth(2).click(); await expect(nos).toHaveText(['1', '2·3', '–', '4'])   // 뺀 장 = –, 뒤가 당겨짐
+  await page.getByTestId('slides-x').nth(2).click()
   await page.getByTestId('slides-build').click()
   await expect(page.getByTestId('slides-show')).toContainText('프레임 5장')
+  await expect(nos).toHaveText(['1', '2·3', '4', '5'])                                            // 지은 뒤 = 칠판이 매긴 번호 그대로
   expect(seen[1].slides.plan.slides[1].pic).toBe('both')
   const its = (await liveDoc(page)).items, fr = its.filter(it => it.type === 'frame').sort((a, b) => a.no - b.no)
   expect(fr.map(f => f.name)).toEqual(['표지', '송신소', '송신소 · 그림', '중계소', '끝'])          // 번호 = 발표 순서: 장 → 그 판

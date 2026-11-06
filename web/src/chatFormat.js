@@ -105,7 +105,8 @@ export function nearSpot(c, boxes, w, h, { pad = 24, step = 24, view = null } = 
   const x0 = c.x - w / 2, y0 = c.y - h / 2
   if (free(x0, y0)) return { x: x0, y: y0 }
   const inView = (x, y) => !view || (x >= view.x && y >= view.y && x + w <= view.x + view.w && y + h <= view.y + view.h)
-  const maxR = view ? Math.ceil(Math.max(view.w, view.h) / step) : 40
+  // 화면 제한이 없으면 놓을 것 크기만큼은 찾음(2026-11-06 — 8장 발표 자료(5,000 넘음)를 앞 묶음 옆에 놓을 때 40칸 안에 빈자리가 없어 가운데 = 겹쳐 놓였음)
+  const maxR = view ? Math.ceil(Math.max(view.w, view.h) / step) : Math.max(40, Math.ceil((2 * Math.max(w, h) + pad) / step))
   for (let r = 1; r <= maxR; r++) {
     const ring = []
     for (let i = -r; i <= r; i++) ring.push([i, -r], [i, r], [-r, i], [r, i])

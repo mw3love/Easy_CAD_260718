@@ -433,7 +433,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     for (const f of ['pic', 'alt_pic']) if (deck?.slides?.some(s => s[f]?.img)) { const got = await deepImgs(deck.slides.map(s => ({ body: s[f] || {} })))   // 그림 장·그림 판(2026-11-04) = 칠판 그림 칸으로, 못 받으면 글 장·판 없음(`slidesBoard`)
       deck = { ...deck, slides: deck.slides.map((s, k) => (s[f] ? { ...s, [f]: got[k].body } : s)) } }
     const r = ed.current?.slidesBoard?.(deck); if (!r) return
-    setMsg(i, { built: r.ids[0], frames: r.frames, model: d.model, elapsed: d.elapsed, credits: d.credits })
+    setMsg(i, { built: r.ids[0], frames: r.frames, nos: r.nos, model: d.model, elapsed: d.elapsed, credits: d.credits })
     ed.current?.showIds(r.ids); setSkipSel(r.ids.join())
   }
   // 꼭지 다시 쓰기(§8 항목66 5단계) — tg = ed.deepTarget(), ask = 고칠 말(비면 「더 자세히」). 손으로 고친 판이면 크레딧 쓰기 전에 먼저 물음(덮어쓰기 확인 카드)
@@ -681,7 +681,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
                   build={() => deepBuild(i)} show={() => ed.current?.showIds([m.built]) || setGone(g => ({ ...g, [m.at + ':deep']: true }))} />)
                 : m.kind === 'slides' ? (m.step === 'ask'
                   ? <DeepAsk m={m} busy={busy} css={css} qs={SLIDES_QS} slides shape={m.shapes && !m.done && models?.jobs?.deep && models?.jobs?.slides ? k => setMsg(i, { kind: k, brief: {} }) : null} set={(q, v) => setMsg(i, { brief: { ...m.brief, [q]: v } })} go={() => slidesGo(i, draft.trim())} />
-                  : <SlidesPlan m={m} busy={busy} css={css} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
+                  : <SlidesPlan m={m} busy={busy} css={css} base={(ed.current?.frameIds?.().length || 0) + 1} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
                     flip={k => setMsg(i, { pics: { ...(m.pics || {}), [k]: nextPic(picOf(m, k)) } })}
                     build={() => slidesBuild(i)} show={() => ed.current?.showIds([m.built]) || setGone(g => ({ ...g, [m.at + ':slides']: true }))} />)
                 : <Answer text={m.content} chart={m.kind === 'ask' ? null : chartAct(m)} />}

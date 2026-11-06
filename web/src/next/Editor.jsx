@@ -982,9 +982,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const PER = anyBranch ? pages.length : 3, cols = Math.min(PER, pages.length), rows = anyBranch ? 2 : Math.ceil(pages.length / PER)
     const BW = cols * W + (cols - 1) * GX, BH = rows * ROW, c = R.current.cam, view = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
     const at = nearSpot({ x: view.x + view.w / 2, y: view.y + view.h / 2 }, hitPool().map(it => sceneBox(it, textBox)), BW, BH, { pad: 48, step: 96 })
-    const zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, z = topZ(m.items) + 1, out = [], ids = []
+    const zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, z = topZ(m.items) + 1, out = [], ids = [], nos = []   // nos = 장마다 붙은 프레임 번호들(계획 카드가 그대로 보임 — 2026-11-06 「번호가 안 맞아 헷갈림」)
     let no = nextFrameNo(m.items), prevMain = null
     pages.forEach((s, i) => {
+      nos.push(branch(s) ? [no, no + 1] : [no])
       const X = at.x + (i % PER) * (W + GX), Y = at.y + Math.floor(i / PER) * ROW
       const cover = i === 0 && ok(deck.cover) ? { data: deck.cover.data, w: deck.cover.w, h: deck.cover.h, alt: `표지 그림 — ${deck.title || s.title}` } : null
       const story = deck.story ? { slide_story: true } : {}   // 이야기 책(작은 책 ⑤) — 「다른 판 더하기 › 그림으로」가 첫 그림 장을 참고로
@@ -999,7 +1000,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     bringIn({ x: at.x, y: at.y, w: BW, h: BH }); setTool('select')
     const np = pages.filter(s => s.layout === '그림' && ok(s.pic)).length, nb = pages.filter(branch).length
     setStatus(`발표 자료 ${pages.length}장${np || nb ? `(${[np && `그림 장 ${np}`, nb && `아래 그림 판 ${nb}`].filter(Boolean).join(' · ')})` : ''} — 위 막대 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모`)
-    return { ids, frames: ids.length }
+    return { ids, frames: ids.length, nos }
   }
   // 장 사이 화살표(작은 책 ③, 2026-11-04) — 프레임 테두리에 붙음(프레임을 옮기면 따라옴). right = 오른쪽 변 → 왼쪽 변(높이 450 — 3:2 그림 장과 16:9 글 장이 섞여도 곧게),
   // down = 아래 변 → 위 변(가로 3/4 자리 — 장 밑 발표자 메모(왼쪽)를 비켜 감). 발표는 칠판의 프레임 사이 화살표를 따라감(사람이 그은 것도)

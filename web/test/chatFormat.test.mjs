@@ -1,7 +1,7 @@
 // node --test web/test — KAIROS 대화창 순수 함수(§8 항목61 ⓒ)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { answerToRichText, contextText, freeSpot, iconName, inlineParts, parseAnswer, sourceLine } from '../src/chatFormat.js'
+import { answerToRichText, contextText, freeSpot, nearSpot, iconName, inlineParts, parseAnswer, sourceLine } from '../src/chatFormat.js'
 
 test('답 글 읽기 — 표(| 가 | 나 |): 붙은 줄 한 덩어리, |---| 이면 첫 줄 머리글(2026-10-20)', () => {
   const ln = parseAnswer('날씨 요약\n| 항목 | 내일 |\n|---|:---:|\n| 기온 | **9~18℃** |\n| 오전 | 비 |\n\n끝')
@@ -76,4 +76,11 @@ test('아이콘 이름 — 요청에서 「아이콘·SVG·그려 줘」를 뗌(
   assert.equal(iconName('카메라 아이콘을 그려주세요.'), '카메라')
   assert.equal(iconName('파라볼라 안테나'), '파라볼라 안테나')
   assert.equal(iconName('SVG 아이콘 만들어줘'), '')
+})
+
+test('가까운 빈자리 — 큰 묶음(발표 자료 8장)도 앞 묶음과 안 겹침(2026-11-06)', () => {
+  const A = { x: 0, y: 0, w: 5120, h: 5500 }, hitA = p => p.x < A.x + A.w && p.x + 5120 > A.x && p.y < A.y + A.h && p.y + 5500 > A.y
+  const p = nearSpot({ x: 2600, y: 2800 }, [A], 5120, 5500, { pad: 48, step: 96 })
+  assert.equal(hitA(p), false)
+  assert.deepEqual(nearSpot({ x: 100, y: 100 }, [], 50, 50), { x: 75, y: 75 })   // 빈 곳은 그 자리
 })

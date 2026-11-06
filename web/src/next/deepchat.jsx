@@ -116,8 +116,18 @@ export const picOf = (m, i) => (m.pics && i in m.pics ? m.pics[i] : m.plan?.slid
 export const nextPic = v => (v === false ? true : v === true ? 'both' : false)
 export const keptSlides = m => ({ ...m.plan, slides: (m.plan.slides || []).map((s, i) => ({ ...s, pic: picOf(m, i) })).filter((_, i) => !(m.drop || []).includes(i)) })
 const PIC_CREDITS = 12   // 그림 장 한 장(서버 `slides.PIC_CREDITS` — 2026-11-04 실측 11.22)
-export function SlidesPlan({ m, flip, drop, build, show, busy, css }) {
-  const sl = m.plan?.slides || [], dropped = new Set(m.drop || []), left = sl.length - dropped.size, lock = !!m.built || !!m.stale || !!busy
+// 줄 번호 = 그 장이 될 프레임 번호(2026-11-06 사용자 「계획 번호와 프레임 번호가 안 맞아 헷갈림」) — 칠판에 이미 있는 프레임 뒤(base)부터, 글+그림 = 두 번호, 뺀 장 = –.
+// 지은 뒤엔 칠판이 실제로 매긴 번호(`m.nos`, 그림을 못 받아 판이 빠지면 그만큼 당겨짐). 이 기능 전에 지은 계획은 옛 번호(1부터)
+export const slideNos = (m, base = 1) => {
+  const sl = m.plan?.slides || [], dropped = new Set(m.drop || [])
+  if (m.built && !m.nos) return sl.map((_, i) => [i + 1])
+  let n = base, j = 0
+  return sl.map((_, i) => { if (dropped.has(i)) return null
+    const got = m.built ? m.nos[j++] : null; if (got) return got
+    const k = picOf(m, i) === 'both' ? [n, n + 1] : [n]; n += k.length; return k })
+}
+export function SlidesPlan({ m, flip, drop, build, show, busy, css, base = 1 }) {
+  const sl = m.plan?.slides || [], dropped = new Set(m.drop || []), left = sl.length - dropped.size, lock = !!m.built || !!m.stale || !!busy, nos = slideNos(m, base)
   const per = PIC_CREDITS * (m.brief?.['내용'] === '이야기' ? 2 : 1)   // 이야기 책 = 참고 그림을 같이 보내 약 2배(서버 `slides.estimate`)
   const drawn = v => (v ? 1 : 0), extra = Object.keys(m.pics || {}).map(Number).filter(i => !dropped.has(i)).reduce((a, i) => a + (drawn(picOf(m, i)) - drawn(sl[i]?.pic)) * per, 0)   // 🖼 바꾼 만큼 어림을 고침
   const est = m.estimate && { ...m.estimate, credits: m.estimate.credits?.map(c => Math.max(0, c + extra)) }, rng = (a, u) => (Array.isArray(a) ? `${a[0]}~${a[1]}${u}` : '')
@@ -126,7 +136,7 @@ export function SlidesPlan({ m, flip, drop, build, show, busy, css }) {
     <div style={{ fontWeight: 700 }}>{m.plan?.title || '장 계획'}</div>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
       {sl.map((s, i) => <div key={i} data-testid="slides-row" data-dropped={dropped.has(i) ? '1' : undefined} style={{ display: 'flex', gap: 6, alignItems: 'center', opacity: dropped.has(i) ? 0.4 : 1 }}>
-        <span style={{ ...css.kind, flex: 'none', minWidth: 22, textAlign: 'center' }}>{i + 1}</span>
+        <span data-testid="slides-no" style={{ ...css.kind, flex: 'none', minWidth: 22, textAlign: 'center' }} title={nos[i]?.length > 1 ? '글 장 + 아래 그림 판 = 프레임 두 개' : '프레임 번호'}>{nos[i] ? nos[i].join('·') : '–'}</span>
         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: dropped.has(i) ? 'line-through' : 'none' }} title={s.point || s.title}>{s.title}</span>
         <span style={{ ...css.meta, flex: 'none' }}>{SOURCE[s.source] || ''}</span>
         {/* 🖼 = 누를 때마다 글 → 그림 → 글+그림(아래에 그림 판 — 작은 책 ② 갈래). 켜짐 = 코랄 테두리. 표지(첫 장)는 글 장만 */}
