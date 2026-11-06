@@ -81,11 +81,11 @@ test('「나감」 신호가 안 와도 5초쯤이면 빠짐 · 이름이 같아
   const [a, b, c] = await Promise.all(cs.map(x => x.newPage()))
   for (const p of [a, b, c]) await openBoard(p, name, { who: '이름 없음' })
   await expect(a.getByTestId('people')).toHaveAttribute('aria-label', '접속자 3명', { timeout: 4000 })
-  await expect(c.getByTestId('people-count')).toHaveText('👥 3')
+  await expect(c.getByTestId('people-count')).toHaveText('3')
   const t0 = Date.now(); await b.evaluate(() => { window.fetch = () => new Promise(() => {}) })            // 신호가 그냥 끊김(휴대폰 다른 앱·노트북 덮기 — 「나감」 없음)
   await expect(a.getByTestId('people')).toHaveAttribute('aria-label', '접속자 2명', { timeout: 9000 })
   expect(Date.now() - t0).toBeGreaterThan(3000)                                                           // 나감 신호가 정말 막혔음 = ttl로 빠짐
-  await expect(c.getByTestId('people-count')).toHaveText('👥 2')
+  await expect(c.getByTestId('people-count')).toHaveText('2')
   for (const x of cs) await x.close()
 })
 
