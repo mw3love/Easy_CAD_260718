@@ -97,6 +97,17 @@ test('휴대폰 — 위 이름 톡 = 칠판 판(새 칠판·다른 칠판으로�
   await sheet.getByTestId('qr-btn').tap(); await expect(page.getByTestId('qr-big')).toBeVisible()
   await page.getByTestId('qr-big').tap(); await expect(page.getByTestId('qr-big')).toHaveCount(0)
   await expect(sheet).toBeVisible()                                                     // QR을 닫아도 판은 그대로
+  // 2026-11-06 사용자 검토 — 순서 = 지금 칠판(공유) → 내 칠판 → 새로 시작, 코랄 채움은 하나, 줄에 고친 때가 보임, ⋯ 메뉴는 폰에 맞게
+  const y = async id => (await sheet.getByTestId(id).boundingBox()).y
+  expect(await y('share-form')).toBeLessThan(await y('my-boards'))
+  expect(await y('my-boards')).toBeLessThan(await y('board-new'))
+  expect(await sheet.evaluate(el => { const t = document.createElement('div'); t.style.background = 'var(--mb-accent)'; document.body.appendChild(t)
+    const c = getComputedStyle(t).backgroundColor; t.remove(); return [...el.querySelectorAll('button')].filter(b => getComputedStyle(b).backgroundColor === c).length })).toBe(1)
+  await expect(sheet.locator(`[data-testid=board-row][data-board="${a}"] [data-testid=board-sub]`)).toContainText('지금 보는 칠판')
+  await sheet.locator(`[data-testid=board-row][data-board="${a}"] [data-testid=board-more]`).tap()
+  await expect(page.getByText('이름 바꾸기')).toBeVisible()
+  await expect(page.getByText('새 탭에서 열기')).toHaveCount(0); await expect(page.getByText('내려받기 (.ecad)')).toHaveCount(0)
+  await page.getByTestId('phone-sheet-title').tap(); await expect(page.getByText('이름 바꾸기')).toHaveCount(0)   // 바깥 톡 = 메뉴만 닫힘
   await page.screenshot({ path: 'test-results/phone-sheet.png' })
   await page.getByTestId('phone-sheet-close').tap(); await expect(sheet).toHaveCount(0)
 
