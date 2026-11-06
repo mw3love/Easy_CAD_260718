@@ -84,11 +84,17 @@ test('휴대폰 — 위 이름 톡 = 칠판 판(새 칠판·다른 칠판으로�
   const a = boardName('phonesheet')
   await openBoard(page, a, { guide: true })
   await expect(page.getByTestId('empty-guide-tip')).toContainText('두 손가락')                // PC 말(끌어다 놓기·F1) 대신
+  await expect(page.getByTestId('phone-undo')).toHaveCount(0)                           // 되돌리기 = 붙인 직후 알림 줄에만(위 막대 ↶ 없앰 — 2026-11-06 사용자)
   await page.evaluate(() => window.__mb.ed.dropFiles([new File(['<h1>보고서</h1>'], '보고서.html', { type: 'text/html' })]))
+  await expect(page.getByTestId('phone-undo-snack')).toContainText('칠판에 붙였어요')
   await expect.poll(async () => (await liveDoc(page)).items.length).toBe(1)
   await page.getByTestId('phone-undo').tap()                                            // 잘못 붙인 것 빼기
   await expect.poll(async () => (await liveDoc(page)).items.length).toBe(0)
 
+  await expect(page.getByTestId('phone-undo-snack')).toHaveCount(0)
+  await page.getByTestId('people-count').tap(); await expect(page.getByTestId('people-pop')).toContainText('지금 이 칠판에 1명')   // 👥 = 누가 있나만(칠판 판은 이름 단추 하나로)
+  await expect(page.getByTestId('phone-sheet')).toHaveCount(0)
+  await page.getByTestId('people-pop-back').tap({ position: { x: 20, y: 400 } }); await expect(page.getByTestId('people-pop')).toHaveCount(0)
   await page.getByTestId('phone-title').tap()
   const sheet = page.getByTestId('phone-sheet'); await expect(sheet).toBeVisible()
   await expect(sheet.locator(`[data-testid=board-row][data-board="${a}"]`)).toBeVisible()
@@ -130,6 +136,24 @@ test('휴대폰 — 가로로 돌려도 휴대폰 화면 · 내 칠판도 프레
   await p.getByTestId('phone-tour').tap(); await expect(p.getByTestId('presenter')).toBeVisible()
   await p.screenshot({ path: 'test-results/phone-landscape.png' })
   await c.close()
+})
+
+test('휴대폰 발표 — 옆으로 쓸기 = 넘기기 · 아래 막대는 가장자리에서 띄우고 손가락 크기', async ({ page }) => {   // 2026-11-06 아이폰 사용자 「넘기기 단추 안 됨·스와이프도」
+  const name = boardName('phoneswipe'), d = frameDoc('쓸기 시험')
+  d.items.push({ ...d.items[0], pos: [2000, 0], name: 'Deep Mode — 점심 30분 걷기, 몸에 무엇이 달라지나', no: 2, uid: 'f2' })   // 긴 장 이름 = 막대가 화면 밖으로 밀렸음(예시 칠판 5번 장)
+  expect((await page.request.put(`/api/doc/${name}`, { data: d })).ok()).toBeTruthy()
+  await openBoard(page, name)
+  await page.getByTestId('phone-tour').tap(); const pr = page.getByTestId('presenter'); await expect(pr).toBeVisible()
+  const first = await pr.getAttribute('data-cur')
+  await fingers(page, [[{ x: 300, y: 400 }, { x: 80, y: 410 }]])                        // 왼쪽으로 쓸기 = 다음 장
+  await expect(pr).not.toHaveAttribute('data-cur', first)
+  await fingers(page, [[{ x: 80, y: 400 }, { x: 300, y: 390 }]])                        // 오른쪽으로 = 이전 장
+  await expect(pr).toHaveAttribute('data-cur', first)
+  const bar = await page.getByTestId('present-bar').boundingBox(), btn = await page.getByTestId('present-bar').locator('button').first().boundingBox()
+  expect(844 - (bar.y + bar.height)).toBeGreaterThanOrEqual(36)                          // 아이폰 사파리 가장자리 톡 자리 피함
+  expect(btn.height).toBeGreaterThanOrEqual(44)
+  await fingers(page, [[{ x: 300, y: 400 }, { x: 80, y: 410 }]])                        // 긴 이름 장에서도
+  for (const b of await page.getByTestId('present-bar').locator('button').all()) { const r = await b.boundingBox(); expect(r.x).toBeGreaterThanOrEqual(0); expect(r.x + r.width).toBeLessThanOrEqual(390) }
 })
 
 test('보기 링크(발표 QR 관객) — 휴대폰이면 짧은 막대·두 손가락 확대·브라우저 확대 막기', async ({ browser }) => {

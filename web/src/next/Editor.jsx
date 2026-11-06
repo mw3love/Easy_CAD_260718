@@ -158,7 +158,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     R.current.model = { ...R.current.model, items: fixed }   // 다시 그리기 전에 또 고쳐도(표 칸 Tab 연타) 앞 고침 위에서
     setModel(m => ({ ...m, items: fixed })); setLive(null)
     if (nextSel) setSel(nextSel.filter(id => fixed.some(it => it._id === id)))
-    onCommit?.(label)
+    onCommit?.(label, fixed.length - prev.length)   // 둘째 = 늘어난 개수(휴대폰 「붙였어요 · 되돌리기」 알림 — main)
   }, [setModel, onCommit])
   const undo = () => { const h = hist.current, p = h.past.pop(); h.mergeKey = null; if (!p) return; h.future.push(p); const items = applyDelta(R.current.model.items, p.before); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); setSel(p.sel.filter(id => items.some(it => it._id === id))); onCommit?.('되돌림') }
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }

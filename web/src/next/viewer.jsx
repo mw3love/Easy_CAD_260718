@@ -41,7 +41,7 @@ export function Viewer({ token }) {
     <div data-testid="view-bar" style={{ display: 'flex', alignItems: 'center', gap: phone ? 6 : 8, padding: phone ? '6px 8px' : '6px 10px', background: C.bar, borderBottom: `1px solid ${C.line}`, touchAction: phone ? 'none' : undefined, whiteSpace: 'nowrap' }}>
       <b style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{phone && model.title ? model.title : 'Magic Board'}</b><span style={{ color: C.muted, fontSize: 12 }}>{phone ? '보기 전용' : '보기 전용 · 고치는 내용이 몇 초 안에 보여요'}</span>
       <span style={{ flex: 1 }} />
-      <button style={phone ? btnP : btn} data-testid="view-present" onClick={() => ed.current?.startPresent()} title="발표 — 프레임 순서대로 한 장씩 전체 화면">{phone ? '▶ 차례로' : '▶ 발표'}</button>
+      <button style={phone ? btnP : btn} data-testid="view-present" onClick={() => ed.current?.startPresent()} title="발표 — 프레임 순서대로 한 장씩 전체 화면">▶ 발표</button>
       <button style={phone ? btnP : btn} onClick={() => fit(model.items, size)} title="칠판 전체가 화면에 들어오게 맞춤">⤢{phone ? '' : ' 다 보기'}</button>
       <button style={phone ? btnP : btn} onClick={() => setDark(d => !d)} title="밝게 / 어둡게">{phone ? (dark ? '☀' : '☾') : dark ? '☀ 밝게' : '☾ 어둡게'}</button>
     </div>

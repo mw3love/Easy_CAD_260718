@@ -2,9 +2,10 @@
 // 넘길 때 0.4초 카메라 이동(실제 칠판 위를 옮겨 감) — M으로 「바로 넘김」. 레이저 = 따로 켜는 커서(` · L, 도구와 같이). 우클릭·휠 클릭 끌기 = 화면 이동(편집 화면과 같음). 마지막 장에서 멈춤(끝 = Esc). → · 스페이스 · 휠 = 다음(클릭으로는 안 넘김), ← = 이전, Esc = 끝, D = 밝게/어둡게(기본 = 칠판 화면).
 // 판서(2차): 마우스를 움직이면 아래 막대(◀ ▶ · 네모 · 펜 · 형광펜 · 화살표 · 글자 · 지우개) — 도구를 고르면 클릭·끌기 = 그리기, 그린 것은 칠판 「판서」 레이어에 진짜 도형으로(Ctrl+Z 되돌리기) — 발표가 끝나면 이번 판서는 지우고 「남기기」 알약(Editor `endPresent`, 2026-10-28).
 import { useEffect, useRef, useState } from 'react'
-import { Item, setInkDark } from './render.jsx'
-import { APP_FONT, METRICS, PT, TEXT_MARGIN } from './geom.js'
-import { pauseYoutubeOutside, playYoutube, toggleYoutube } from './webcard.js'
+import { Item, setInkDark, docFrame, webFrame } from './render.jsx'
+import { APP_FONT, METRICS, PT, TEXT_MARGIN, itemTransform } from './geom.js'
+import { sceneBox } from './edit.js'
+import { WEB_HEAD, pauseYoutubeOutside, playYoutube, toggleYoutube } from './webcard.js'
 import { QrBig } from './qr.jsx'
 import { DOC_NAME, api } from './doc.js'
 import { boardLabel } from './myboards.js'
@@ -170,6 +171,11 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
   const tx = hx - b.x * k, ty = hy - b.y * k, unz = (x, y) => (zoom ? [(x - zoom.ox) / zoom.s, (y - zoom.oy) / zoom.s] : [x, y])
   const [gx, gy, gk] = useGlide([tx, ty, k], glide && !draft ? (quick ? 120 : 400) : 0), [zx, zy, zs] = useGlide([zoom?.ox || 0, zoom?.oy || 0, zoom?.s || 1], pan.current?.moved ? 0 : 150)   // 휠로 잇따라 넘기는 중 = 0.12초
   if (!f) return null
+  // 휴대폰 = 카드 속 페이지(웹·정리 문서)는 SVG 밖 위층에(편집 화면 `phoneCards`와 같음 — 아이폰 Safari는 SVG 안 iframe에 확대를 안 먹여 페이지가 화면을 덮고 손가락을 가로챘음:
+  // 2026-11-06 사용자 「예시 칠판에서 발표 넘기기가 안 됨」 — 2번 장 웹 카드 셋). 위층은 손가락을 안 받음(넘기기·쓸기가 발표로), 지금 장 안 카드만
+  const pageCard = it => (it.type === 'web' && it.frameable) || it.type === 'doc'
+  const pCards = simple && !zoom?.card ? order.map(([it]) => it).filter(it => pageCard(it) && (s => s.x < b.x + b.w && s.x + s.w > b.x && s.y < b.y + b.h && s.y + s.h > b.y)(sceneBox(it))) : []
+  const cssT = t => t.replace(/translate\(([-\d.e]+),([-\d.e]+)\)/g, 'translate($1px,$2px)').replace(/rotate\(([-\d.e]+)\)/g, 'rotate($1deg)')
   const toScene = (x, y) => { const [ux, uy] = unz(x, y); return { x: (ux - tx) / k, y: (uy - ty) / k } }
   // 유튜브 크게 보기 — fr = 그 카드의 iframe(발표 판 안). 영상 몸통을 위 검은 띠 아래에 꽉, 둘레 검은 곳 = 눌러 돌아옴
   const bigOn = fr => {
@@ -224,7 +230,9 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
     setDraft(d => ({ ...d, b: d.tool === 'arrow' && e.shiftKey ? snap45(d.a, p) : p, pts: d.tool === 'pen' || d.tool === 'hl' ? (Math.hypot(p.x - d.pts.at(-1).x, p.y - d.pts.at(-1).y) >= 2 ? [...d.pts, p] : d.pts) : d.pts })) }
   const up = e => {
     trailOn.current = false
-    if (tapAt.current) { const t = tapAt.current; tapAt.current = null; if (Math.hypot(e.clientX - t.x, e.clientY - t.y) < 12) go(e.clientX < window.innerWidth / 3 ? -1 : 1); return }
+    if (tapAt.current) { const t = tapAt.current, dx = e.clientX - t.x, dy = e.clientY - t.y; tapAt.current = null
+      if (Math.abs(dx) >= 40 && Math.abs(dx) > 1.5 * Math.abs(dy)) go(dx < 0 ? 1 : -1)   // 휴대폰 옆으로 쓸기 = 넘기기(2026-11-06 사용자 — 왼쪽으로 쓸면 다음 장, 사진 넘기듯)
+      else if (Math.hypot(dx, dy) < 12) go(e.clientX < window.innerWidth / 3 ? -1 : 1); return }
     setTimeout(() => { const sl = getSelection(); if (sl?.isCollapsed) sl.removeAllRanges() }, 0)   // 글자 위 클릭이 남긴 빈 선택(깜빡이는 세로 막대)을 지움 — 끌어 고른 글은 그대로(2026-10-18 사용자)
     if ((e.button === 2 || e.button === 1) && pan.current) { const pn = pan.current; pan.current = null; if (!pn.moved && e.button === 2) setMenu({ x: e.clientX, y: e.clientY }); return }   // 휠 클릭은 이동만(메뉴 없음)
     const d = draft; setDraft(null); if (!d || d.tool === 'erase') return
@@ -239,7 +247,8 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
   const commitText = v => { const p = textAt; setTextAt(null); if (!p || !v.trim()) return; const b = textBoxAt(p), s = toScene(b.x, b.y)
     onAdd([{ pos: [s.x, s.y], type: 'text', text: v, color: argb(penColor), font: +(b.F / (k * (zoom?.s || 1) * PT)).toFixed(3), bg: null }]) }
   const show = awake || !!tool || !!draft, barShow = (intro || nearBottom || barHover.current) && !draft && !zoom?.card   // 영상 크게 보기 중엔 숨김(유튜브 재생바를 가렸음)
-  const btn = on => ({ all: 'unset', cursor: 'pointer', minWidth: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, padding: '0 6px', boxSizing: 'border-box',
+  // 휴대폰 = 손가락 크기 단추(44)·막대는 맨 아래 가장자리에서 띄움(아이폰 사파리는 가장자리 톡을 주소창 펼치기로 씀 — 추정, 2026-11-06 「넘기기 단추가 안 됨」)
+  const btn = on => ({ all: 'unset', cursor: 'pointer', minWidth: simple ? 44 : 30, height: simple ? 44 : 30, ...(simple ? { flex: 'none' } : {}), display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, padding: '0 6px', boxSizing: 'border-box',
     color: on ? '#fff' : 'rgba(255,255,255,.85)', background: on ? 'var(--mb-accent)' : 'transparent', font: "600 14px 'Pretendard', sans-serif" })
   const th = THEMES[dark ? 'dark' : 'light']
   const barZoom = Math.min(1.35, Math.max(1, (typeof window !== 'undefined' ? window.innerWidth : 1400) / 1400))   // 큰 화면일수록 막대도 크게(2026-10-22 디자인 점검: TV 앞에 서서 누르기엔 글자가 작았음) — 1400px = 1배, 1920 = 1.35배
@@ -250,12 +259,12 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
     <div style={{ display: 'flex', background: 'rgba(255,255,255,.08)', borderRadius: 6, padding: 1 }}>{opts.map(([v, name, tip]) => <button key={name} title={tip || name} onClick={() => set(v)}
       style={{ all: 'unset', cursor: 'pointer', padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', font: "600 12px 'Pretendard', sans-serif", color: cur === v ? '#fff' : 'rgba(255,255,255,.6)', background: cur === v ? 'var(--mb-accent)' : 'transparent' }}>{name}</button>)}</div>
     <span style={{ fontSize: 11, color: 'rgba(255,255,255,.6)', whiteSpace: 'nowrap' }}>{label}</span></div>
-  return <div ref={root} tabIndex={-1} data-testid="presenter" data-cur={frames[i]?.id} onPointerDown={down} onPointerMove={move} onPointerUp={up} onContextMenu={e => e.preventDefault()}
-    style={{ position: 'fixed', inset: 0, zIndex: 1000, outline: 'none', background: '#000', cursor: laserShown ? LASER_CURSOR : show ? (tool && tool !== 'erase' ? 'crosshair' : zoom?.card ? 'zoom-out' : 'default') : 'none', ...th }}>
+  return <div ref={root} tabIndex={-1} data-testid="presenter" data-cur={frames[i]?.id} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={() => { tapAt.current = null }} onContextMenu={e => e.preventDefault()}
+    style={{ position: 'fixed', inset: 0, zIndex: 1000, outline: 'none', background: '#000', ...(simple ? { touchAction: 'none' } : {}), cursor: laserShown ? LASER_CURSOR : show ? (tool && tool !== 'erase' ? 'crosshair' : zoom?.card ? 'zoom-out' : 'default') : 'none', ...th }}>   {/* 휴대폰 touchAction none = 쓸기를 브라우저가 화면 끌기로 가져가지 않게(가져가면 pointercancel — 손가락을 떼도 up이 안 옴, 2026-11-06) */}
     <svg width={W} height={H} style={{ display: 'block' }}>
       {!zoom?.card && <rect x={hx - g} y={hy - g} width={hw + 2 * g} height={hh + 2 * g} fill={th['--mb-board']} />}
       <g transform={`translate(${zx},${zy}) scale(${zs})`}><g transform={`translate(${gx},${gy}) scale(${gk})`} style={{ '--z': k * (zoom?.s || 1) }}>
-        {order.filter(([it]) => !zoom?.card || it._id === zoom.card).map(([it, idx]) => <Item key={it._id} it={it} idx={idx} onBoard={onBoard[idx]} route={routes.get(idx)} labels="inline" dark={dark} web={it.type === 'web' ? (!tool && webOn === it._id ? 'on' : 'view') : it.type === 'doc' ? (!tool && webOn === it._id ? 'on' : 'view') : undefined} noFs ytBig={zoom?.card === it._id} fsScale={it.type === 'web' ? +(k * (zoom?.s || 1) * (it.scale || 1)).toFixed(2) : undefined} />)}   // fsScale = 목표 배율(넘기는 동안 매 장면이 아니라 한 번만 바뀜)
+        {order.filter(([it]) => !zoom?.card || it._id === zoom.card).map(([it, idx]) => <Item key={it._id} it={it} idx={idx} onBoard={onBoard[idx]} route={routes.get(idx)} labels="inline" dark={dark} web={simple && pageCard(it) ? 'shell' : it.type === 'web' ? (!tool && webOn === it._id ? 'on' : 'view') : it.type === 'doc' ? (!tool && webOn === it._id ? 'on' : 'view') : undefined} noFs ytBig={zoom?.card === it._id} fsScale={it.type === 'web' ? +(k * (zoom?.s || 1) * (it.scale || 1)).toFixed(2) : undefined} />)}   // fsScale = 목표 배율(넘기는 동안 매 장면이 아니라 한 번만 바뀜)
       </g></g>
       {/* 프레임 밖 가림(구멍 뚫린 검은 판) — 출력한 쪽과 같은 범위만 보임 */}
       {!zoom?.card && <path d={`M${hx - g},${hy - g} H${hx + hw + g} V${hy + hh + g} H${hx - g} Z M${hx},${hy} V${hy + hh} H${hx + hw} V${hy} Z`} fill={th['--mb-board']} fillRule="evenodd" />}
@@ -264,6 +273,12 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
         : draft.tool === 'arrow' ? <line x1={draft.a.x} y1={draft.a.y} x2={draft.b.x} y2={draft.b.y} stroke={penColor} strokeWidth={SIZES.line[size]} />
         : <polyline points={draft.pts.map(q => `${q.x},${q.y}`).join(' ')} fill="none" stroke={draft.tool === 'hl' ? hlColor : draft.tool === 'erase' ? 'rgba(160,160,170,.45)' : penColor} strokeOpacity={draft.tool === 'hl' ? 0.45 : 1} strokeWidth={draft.tool === 'hl' ? SIZES.hl[size] : draft.tool === 'erase' ? 12 : SIZES.line[size]} strokeLinecap="round" strokeLinejoin="round" />)}
     </svg>
+    {pCards.length > 0 && <div data-testid="present-cards" style={{ position: 'absolute', left: hx, top: hy, width: hw, height: hh, overflow: 'hidden', pointerEvents: 'none' }}>
+      <div style={{ position: 'absolute', left: 0, top: 0, transformOrigin: '0 0', transform: `translate(${zx - hx}px,${zy - hy}px) scale(${zs}) translate(${gx}px,${gy}px) scale(${gk})` }}>
+        {pCards.map(it => { const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H
+          return <div key={it._id} style={{ position: 'absolute', left: 0, top: 0, transformOrigin: '0 0', transform: cssT(itemTransform(it)) }}>
+            <div style={{ position: 'absolute', left: x, top: y + H, width: w, height: bh, overflow: 'hidden', background: '#fff', borderRadius: '0 0 6px 6px' }}>{it.type === 'doc' ? docFrame(it, bh, 'view') : webFrame(it, 'view')}</div></div> })}
+      </div></div>}
     {list && <div data-testid="slide-list" onPointerDown={e => { e.stopPropagation(); if (e.target === e.currentTarget) setList(null) }}
       style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.72)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, zIndex: 3 }}>
       <div style={{ color: '#fff', font: "600 15px 'Pretendard', sans-serif" }}>장 목록 <span style={{ fontWeight: 400, color: 'rgba(255,255,255,.6)', fontSize: 13 }}>— 누르기 · 방향키 + Enter · 번호 + Enter · Esc 닫기</span>
@@ -302,10 +317,10 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
         style={{ all: 'unset', cursor: 'pointer', padding: '3px 9px', borderRadius: 7, background: 'rgba(255,255,255,.14)', whiteSpace: 'nowrap' }}>{o.dir === 'down' ? '↓' : '→'} {frames[o.j]?.name || `${o.j + 1}장`}</button>)}
     </div>}
     <div data-testid="present-bar" onPointerDown={e => e.stopPropagation()} onPointerEnter={() => { barHover.current = true; setNearBottom(true) }} onPointerLeave={() => { barHover.current = false; wake() }}
-      style={{ position: 'absolute', left: '50%', bottom: 16, transform: 'translateX(-50%)', zoom: barZoom, display: 'flex', alignItems: 'center', gap: 2, padding: 4, borderRadius: 10, background: 'rgba(24,24,27,.86)',
+      style={{ position: 'absolute', left: '50%', bottom: simple ? 'max(36px, calc(16px + env(safe-area-inset-bottom)))' : 16, transform: 'translateX(-50%)', ...(simple ? { maxWidth: 'calc(100vw - 16px)', boxSizing: 'border-box' } : {}), zoom: barZoom, display: 'flex', alignItems: 'center', gap: 2, padding: 4, borderRadius: 10, background: 'rgba(24,24,27,.86)',
         boxShadow: '0 4px 16px rgba(0,0,0,.4)', opacity: barShow || simple ? 1 : 0, pointerEvents: barShow || simple ? 'auto' : 'none', transition: 'opacity .25s' }}>
       <button title="이전 (←)" onClick={() => go(-1)} style={btn(false)}>◀</button>
-      <button title="장 목록 (Tab) — 눌러서 바로 가기 · 방향키 + Enter · 번호 + Enter" onClick={() => setList(l => (l ? null : { typed: '', pick: i }))} style={{ ...btn(!!list), font: "500 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap' }}>{i + 1} / {n}{f.name ? ` · ${f.name}` : ''} ▴</button>
+      <button title="장 목록 (Tab) — 눌러서 바로 가기 · 방향키 + Enter · 번호 + Enter" onClick={() => setList(l => (l ? null : { typed: '', pick: i }))} style={{ ...btn(!!list), font: "500 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap', ...(simple ? { flex: '0 1 auto', minWidth: 0, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: '44px' } : {}) }}>{i + 1} / {n}{f.name ? ` · ${f.name}` : ''} ▴</button>
       <button title="다음 (→ · 스페이스 · 클릭)" onClick={() => go(1)} style={btn(false)}>▶</button>
       {simple ? <button title="끝" onClick={onClose} style={btn(false)}>✕ 끝</button> : <>{sep}
       {TOOLS.map(([id, icon, name, key]) => <button key={id} title={`${name} (${key}) — 다시 누르면 끄기(끄면 클릭 = 다음 장)${id === 'arrow' ? ' · Shift = 45° · X = 방금 그린 화살표 뒤집기' : id === 'erase' ? ' · 판서만, 스치면 지움' : ''} · Ctrl+Z 되돌리기`}

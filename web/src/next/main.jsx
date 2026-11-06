@@ -536,7 +536,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
   const [phone, setPhone] = useState(isPhone), phoneRef = useRef(phone); phoneRef.current = phone
   useEffect(() => { const on = () => { setNarrow(window.innerWidth < NARROW_W); setPhone(isPhone()) }; window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
   usePhoneViewport(phone)   // 브라우저 확대 막기(칠판 두 손가락 확대만 — `ui.jsx`)
-  const [sheet, setSheet] = useState(false)   // 휴대폰 칠판 판(2026-11-06 — 위 이름 톡: 내 칠판·새 칠판·코드로 열기·공유)
+  const [sheet, setSheet] = useState(false), [peopleOpen, setPeopleOpen] = useState(false)   // 휴대폰 칠판 판(2026-11-06 — 위 이름 톡: 내 칠판·새 칠판·코드로 열기·공유)
   const [activeLayer, setActiveLayer] = useState('default')   // 「그리는 중」 레이어(파일을 열면 기본부터 — 데스크톱 `_apply_loaded_layers`)
   const [model, setModel] = useState(() => fromEcad(emptyDoc()))
   const [cam, setCam] = useState({ x: 0, y: 0, z: 1 })   // 화면 = 칠판 × z + (x, y)
@@ -626,7 +626,10 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
       if (rev > rev0 + 1) { S.busy = false; await pull(rev0) }   // 그사이 남도 고쳤음 — 바로 받아 옴
     } catch { setStatus('서버 연결 끊김') } finally { S.busy = false; if (S.again) { S.again = false; flush() } }
   }, [pull])
-  const onCommit = useCallback(() => {
+  // 휴대폰 되돌리기 = 위 막대 ↶ 대신 붙인 직후 알림 줄(2026-11-06 사용자 — 늘 떠 있는 ↶는 무엇을 되돌리는지 몰랐음, 지메일 「보내기 취소」처럼). 폰은 고치기가 없어 늘어나는 건 붙이기뿐
+  const [undoSnack, setUndoSnack] = useState(false), snackT = useRef(0)
+  const onCommit = useCallback((label, added = 0) => {
+    if (phoneRef.current) { clearTimeout(snackT.current); setUndoSnack(added > 0); if (added > 0) snackT.current = setTimeout(() => setUndoSnack(false), 7000) }
     if (!server) { setStatus('고침 — 서버 없음, 「내려받기」로 저장'); return }
     setSaveNote('고치는 중…'); clearTimeout(saveT.current)   // 평소 저장은 알림 없이(2026-10-27 사용자: 고칠 때마다 뜰 필요 없음) — 실패·끊김만 알림
     saveT.current = setTimeout(flush, 150)   // 0.6 → 0.15초(2026-10-19 사용자: 거의 실시간)
@@ -656,7 +659,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
       if (typeof rev === 'number') r = { ...r, doc: { ...emptyDoc(), rev } }
       setExample(r.doc?.example || '')
       setServer(r.server); setSrvKnown(true); if (r.doc) open(r.doc, r.doc.title ? `「${r.doc.title}」` : `서버 「${DOC_NAME}」`, true, true);   // 알림 = 칠판 이름(처음 온 사람에겐 코드가 뜻 없음 — 2026-11-03 UX 검토), 이름 없으면 전처럼
-      if (r.doc?.example && phoneRef.current) setStatus(`${r.doc.title ? `「${r.doc.title}」` : '예시 칠판'} — 아래 「▶ 차례로」로 한 장씩 크게 봐요`)   // 여는 알림 = 칠판 이름은 그대로(11-03)   // 예시 칠판 1번 장의 「둘러보는 법」은 PC 기준(왼쪽 판·위 막대) — 휴대폰은 이 길(2026-11-06)
+      if (r.doc?.example && phoneRef.current) setStatus(`${r.doc.title ? `「${r.doc.title}」` : '예시 칠판'} — 아래 「▶ 발표」로 한 장씩 크게 봐요`)   // 여는 알림 = 칠판 이름은 그대로(11-03)   // 예시 칠판 1번 장의 「둘러보는 법」은 PC 기준(왼쪽 판·위 막대) — 휴대폰은 이 길(2026-11-06)
       else if (r.server) { const m = modelRef.current; sync.current.base = snapshotModel(m); sync.current.rev = 0 }
       if (fresh || !r.server) setStatus(r.server ? (boardLabel(DOC_NAME).code ? '새 칠판' : `서버 「${DOC_NAME}」 · 새 칠판`) : '서버 없음 — 파일로 열고 저장') }) }, [])   // eslint-disable-line
 
@@ -738,11 +741,13 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
           <span style={{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{live ? title : 'Magic Board'}</span>
           {live && team && <span style={{ flex: 'none', font: "600 12px 'Pretendard', sans-serif", color: C.muted }}>{team}</span>}
           {server && <span aria-hidden style={{ flex: 'none', fontSize: 11, color: C.muted }}>▾</span>}</button>
-        {live && <button data-testid="people-count" onClick={() => server && setSheet('share')} title={crowd.map(p => p.name).join(', ')} style={{ all: 'unset', cursor: 'pointer', fontSize: 13, color: C.muted, whiteSpace: 'nowrap', padding: '6px 4px' }}>👥 {crowd.length}</button>}
-        {/* 되돌리기(2026-11-06) — 휴대폰은 고치기가 없지만 대화창 답·회의록을 칠판에 붙이므로, 잘못 붙인 것을 뺄 길 */}
-        <button data-testid="phone-undo" onClick={() => ed.current?.undo()} title="되돌리기 — 방금 칠판에 붙인 것 빼기" aria-label="되돌리기"
-          style={{ all: 'unset', cursor: 'pointer', width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, color: 'var(--mb-icon)' }}>
-          <span aria-hidden style={{ width: 20, height: 20, display: 'block' }} dangerouslySetInnerHTML={{ __html: ICONS.undo.replace('<svg ', '<svg width="20" height="20" ') }} /></button>
+        {live && <button data-testid="people-count" aria-expanded={peopleOpen} onClick={() => setPeopleOpen(v => !v)} title={crowd.map(p => p.name).join(', ')} style={{ all: 'unset', cursor: 'pointer', fontSize: 13, color: C.muted, whiteSpace: 'nowrap', padding: '6px 4px' }}>👥 {crowd.length}</button>}
+        {/* 👥 = 지금 누가 있나만(2026-11-06 사용자 — 칠판 이름과 같은 판을 열어 입구가 둘이었음). 바깥 톡 = 닫힘 */}
+        {live && peopleOpen && <div data-testid="people-pop-back" onPointerDown={() => setPeopleOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 34 }}>
+          <div data-testid="people-pop" onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', top: 50, right: 10, minWidth: 160, maxWidth: 'calc(100vw - 20px)', boxSizing: 'border-box', padding: '10px 14px', borderRadius: 12, background: C.card, color: C.ink, border: `1px solid ${C.line}`, boxShadow: '0 6px 20px rgba(0,0,0,.18)', font: "400 14px 'Pretendard', sans-serif" }}>
+            <div style={{ fontSize: 12, color: C.muted, marginBottom: 4 }}>지금 이 칠판에 {crowd.length}명</div>
+            {crowd.map(p => <div key={p.id} style={{ padding: '3px 0', fontWeight: p.me ? 600 : 400 }}>{p.me ? (p.name === '나' ? '나' : `${p.name} (나)`) : p.name}</div>)}</div></div>}
+        {/* 되돌리기는 붙인 직후 알림 줄로(`undoSnack`, 2026-11-06 사용자) */}
         <button onClick={toggleDark} title="밝게 / 어둡게" style={{ all: 'unset', cursor: 'pointer', fontSize: 18, padding: '2px 4px' }}>{dark ? '☀️' : '🌙'}</button></div>}
       {phone && sheet && server && <PhoneSheet title={title} onClose={() => setSheet(false)}
         board={<BoardForm docked big open={openServer} myId={sync.current.id} me={me} onDownload={saveFile} keepDays={keepDays} onClose={() => setSheet(false)} />}
@@ -840,7 +845,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
           background: C.card, border: `1px solid ${C.line}`, color: C.ink, font: "500 13px 'Pretendard', sans-serif", boxShadow: '0 4px 14px rgba(0,0,0,.12)', whiteSpace: 'nowrap' }}>
           <span><b style={{ fontWeight: 700 }}>예시 칠판</b> — 마음껏 만져 보세요{narrow ? '' : '. 망가져도 한 번에 되돌려요'}</span>   {/* 띠 = 칠판 보이는 칸 가운데(떠 있는 대화창 빼고)·위 막대 팝업(20) 밑, 좁은 창은 짧게 — 속성 카드·공유 창·대화창 머리를 덮었음(2026-11-03 UX 검토) */}
           {/* 차례로 보기(2026-11-03) — 처음 온 사람은 전체 보기라 노트북에서 글씨가 안 읽힘 → 1번 프레임부터 발표처럼. 띠의 대표 행동이라 코랄은 이쪽(규칙 A1), 되돌리기는 회색 테두리(규칙 ⑧ 따로 보이는 단추는 그대로) */}
-          <button data-testid="example-tour" onClick={() => ed.current?.startPresent(ed.current?.frameIds()[0])} title="1번 프레임부터 한 장씩 크게 보기 · → 다음 · ← 이전 · Esc 끝" style={{ all: 'unset', cursor: 'pointer', padding: '4px 10px', borderRadius: 6, background: C.accent, color: '#fff', fontWeight: 600 }}>▶ 차례로 보기</button>
+          <button data-testid="example-tour" onClick={() => ed.current?.startPresent(ed.current?.frameIds()[0])} title="1번 프레임부터 한 장씩 크게 보기 · → 다음 · ← 이전 · Esc 끝" style={{ all: 'unset', cursor: 'pointer', padding: '4px 10px', borderRadius: 6, background: C.accent, color: '#fff', fontWeight: 600 }}>▶ 발표로 보기</button>
           <button data-testid="example-reset" onClick={() => setExAsk(true)} title="이 칠판·KAIROS 대화·예시 심볼을 처음 모습으로" style={{ all: 'unset', cursor: 'pointer', padding: '3px 10px', borderRadius: 6, border: `1px solid ${C.line}`, color: C.ink, fontWeight: 500 }}>↺ 처음 모습으로</button>
           <button aria-label="띠 닫기" title="띠 닫기 — 칠판을 다시 열면 또 보여요" onClick={() => setExHide(true)} style={{ all: 'unset', cursor: 'pointer', padding: '0 6px', color: C.muted, fontSize: 15 }}>×</button></div>}
         {exAsk && <Confirm testid="example-ask" okTestid="example-reset-ok" danger={false} okLabel="되돌리기" title="예시 칠판을 처음 모습으로 되돌릴까요?" onOk={resetExample} onClose={() => setExAsk(false)}>
@@ -860,10 +865,14 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
       </div>
       {chatOpen && srvKnown && <ChatPanel ed={ed} selKey={selKey} floating={narrow} full={phone} onClose={() => setChatOpen(false)} request={chatAsk} focus={chatFocus} onBusy={setAiBusy} width={chatW} setWidth={setChatW} fromTop={!!example} />}
       </div>
+      {phone && undoSnack && <div data-testid="phone-undo-snack" role="status" style={{ position: 'relative', zIndex: 6 }}>
+        <div style={{ position: 'absolute', left: 10, right: 10, bottom: 8, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 6px 6px 14px', borderRadius: 12, background: 'rgba(24,24,27,.92)', color: '#fff', font: "500 14px 'Pretendard', sans-serif", boxShadow: '0 4px 14px rgba(0,0,0,.25)' }}>
+          <span style={{ flex: 1 }}>칠판에 붙였어요</span>
+          <button data-testid="phone-undo" onClick={() => { setUndoSnack(false); ed.current?.undo() }} style={{ all: 'unset', cursor: 'pointer', padding: '8px 12px', borderRadius: 8, color: '#ffb38f', fontWeight: 700 }}>되돌리기</button></div></div>}
       {phone && <div data-testid="phone-bar" style={{ touchAction: 'none', display: 'flex', gap: 8, padding: '8px 10px calc(8px + env(safe-area-inset-bottom))', background: C.bar, borderTop: `1px solid ${C.line}` }}>   {/* 휴대폰 아래 = 엄지로 누르는 큰 버튼 셋 */}
         {[['⤢', '다 보기', () => fit(modelRef.current.items), false, false],
           ['🎙', meetSt === 'saved' ? '정리하기' : meetSt ? '끝내기' : '회의', () => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : meetSt ? ed.current?.meetStop() : ed.current?.meetStart()), !!meetSt, meetSt === 'start' || meetSt === 'stopping'],
-          ...(example || hasFrames ? [['▶', '차례로', () => ed.current?.startPresent(ed.current?.frameIds()[0]), false, false]] : []),   // 1번부터 크게(전체 보기는 글씨가 안 읽힘 — 2026-11-03 UX 검토) · 내 칠판도 발표할 프레임이 있으면(2026-11-06 — 예시 칠판에만 있었음)
+          ...(example || hasFrames ? [['▶', '발표', () => ed.current?.startPresent(ed.current?.frameIds()[0]), false, false]] : []),   // 1번부터 크게(전체 보기는 글씨가 안 읽힘 — 2026-11-03 UX 검토) · 내 칠판도 발표할 프레임이 있으면(2026-11-06 — 예시 칠판에만 있었음)
           ['✦', 'KAIROS', () => setChatOpen(true), false, false]].map(([ic, label, f, on, off]) =>
           <button key={ic} data-testid={ic === '▶' ? 'phone-tour' : undefined} onClick={f} disabled={off} style={{ all: 'unset', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, height: 44, borderRadius: 10, cursor: 'pointer', opacity: off ? 0.5 : 1,
             font: "600 15px 'Pretendard', sans-serif", color: ic === '✦' || on ? '#fff' : C.ink, background: ic === '✦' ? 'var(--mb-accent)' : on ? '#d44c47' : 'var(--mb-card)', border: `1px solid ${ic === '✦' || on ? 'transparent' : C.line}` }}><span aria-hidden>{ic}</span>{label}</button>)}
