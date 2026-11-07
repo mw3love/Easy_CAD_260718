@@ -40,8 +40,10 @@ test('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 
   await expect(ask).toBeVisible()
   expect(sent).toHaveLength(0)                                                       // 질문지는 서버를 안 부름
   await expect(page.getByTestId('tool-chip')).toHaveCount(0)
+  await ask.locator('[data-tab="set"]').click()                                       // 설정 = ⚙ 탭(2026-11-07 질문 탭)
   await expect(ask.locator('[data-q="깊이"] [data-v="알아서"]')).toHaveAttribute('aria-pressed', 'true')   // 안 고르면 알아서
-  await ask.locator('[data-q="누구에게"] [data-v="처음 보는 사람"]').click()
+  await ask.locator('[data-tab="누구에게"]').click()
+  await ask.locator('[data-q="누구에게"] [data-v="처음 보는 사람"]').click()               // 하나 고르기 = 다음 탭으로
   await ask.locator('[data-q="무엇에"] [data-v="공부·교육"]').click()
   await ask.locator('[data-q="꼭 넣을 것"] [data-v="숫자·그래프"]').click()
   await ask.locator('[data-q="꼭 넣을 것"] [data-v="확인 문제"]').click()
@@ -55,7 +57,7 @@ test('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 
   expect(sent[0].kind).toBe('deep')
   expect(sent[0].deep).toEqual({ step: 'plan', topic: '어텐션이 뭐야? 신입 교육용으로',
     brief: { 누구에게: '처음 보는 사람', 무엇에: '공부·교육', 깊이: '알아서', '꼭 넣을 것': ['숫자·그래프'], 재료: '알아서', 더: '그림은 빼 줘' } })
-  await expect(ask.locator('[data-v="발표"]')).toBeDisabled()                         // 질문지는 잠김
+  await expect(ask.locator('[data-v]')).toHaveCount(0); await expect(ask).toContainText('지면 계획을 짰어요')   // 질문지는 잠김 = 고른 답 요약만(2026-11-07)
   const N = FULL.sections.length
   await expect(plan1.getByTestId('deep-sec')).toHaveCount(N)
   await expect(plan1.locator('[data-style]')).toHaveCount(0)                          // 톤은 만든 뒤 속성 카드에서(처음 고르기 없음)
@@ -88,5 +90,6 @@ test('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 
   await page.reload(); await expect(page.getByText(`서버 「${name}」`).first()).toBeVisible()
   await expect(page.getByTestId('deep-plan')).toHaveCount(2)
   await expect(page.getByTestId('deep-show')).toBeVisible()
-  await expect(page.getByTestId('deep-ask').locator('[data-v="발표"]')).toBeDisabled()
+  await expect(page.getByTestId('deep-ask')).toContainText('지면 계획을 짰어요')            // 끝난 질문지 = 고른 답 요약만
+  await expect(page.getByTestId('deep-ask')).toContainText('공부·교육')
 })

@@ -1,7 +1,7 @@
 // 딥모드 대화창 카드(§8 항목66 3-2, 2026-10-25) — ① 질문지 한 장 ② 지면 계획 카드. 상태는 대화 기록의 답 하나(`kind: 'deep'`)에 — 다시 열어도 그대로.
 // 질문지는 한 번에 한 장(항목64가 버린 「여러 번 묻기」의 예외: 몇 분짜리 비싼 일이라 묻는 값이 쌈) — 2026-11-06부터 질문은 서버가 주제 글을 읽고 맞춤(`brief_ask`, 몇 초), 못 하면 고정 질문. 보기에 없는 말은 기존 입력 칸.
 // 계획 카드 = 꼭지(× 빼기) · 예상 크레딧(톤은 만든 뒤 속성 카드 — 2026-10-25 처음 고르기 없앰) → 「이대로 만들기」 전엔 비싼 생성 없음. 말로 고치기 = 입력 칸(chat.jsx가 계획을 다시 짜게 보냄)
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 // [질문, 보기, 여럿 고르기] — 답 꼴은 `tools/deepmode_probe.py` ANSWERS와 같게(3-3 서버가 그대로 지시문에)
 export const DEEP_QS = [
@@ -29,7 +29,7 @@ export const briefOf = (b = {}, more = '', qs = DEEP_QS) => ({ ...Object.fromEnt
 // 화면 = 알아들은 것(회색 칩) + 맞춤 질문 + 아래 설정(코드가 값으로 쓰는 것 — 장 수·그림 장·재료·내용·깊이). 못 만들면 옛 고정 질문(`DEEP_QS`·`SLIDES_QS`)
 export const DEEP_SET = DEEP_QS.filter(([q]) => ['깊이', '재료'].includes(q))
 export const SLIDES_SET = SLIDES_QS.filter(([q]) => ['내용', '장 수', '재료', '그림 장'].includes(q))
-export const askQs = (m, slides) => (m.ai?.questions?.length ? [...m.ai.questions.map(x => [x.q, x.options, !!x.multi]), ...(slides ? SLIDES_SET : DEEP_SET)] : m.asking ? (slides ? SLIDES_SET : DEEP_SET) : slides ? SLIDES_QS : DEEP_QS)   // 정리하는 동안 = 설정만(고정 질문이 떴다 바뀌지 않게)
+export const askQs = (m, slides) => (m.ai?.questions?.length ? [...m.ai.questions.map(x => [x.q, x.options, !!x.multi, x.h]), ...(slides ? SLIDES_SET : DEEP_SET)] : m.asking ? (slides ? SLIDES_SET : DEEP_SET) : slides ? SLIDES_QS : DEEP_QS)   // 정리하는 동안 = 설정만(고정 질문이 떴다 바뀌지 않게) · 넷째 = 탭 이름(맞춤 질문만)
 // 서버에 보낼 답 = 질문 답 + 알아들은 것(「누구에게」 = 딥모드 본문이 독자로 읽음 — 질문으로 물었으면 그 답이 이김)
 export const askBrief = (m, more, slides) => { const b = briefOf(m.brief, more, askQs(m, slides)), ai = m.ai
   if (!ai) return b
@@ -39,34 +39,68 @@ export const keptPlan = m => ({ ...m.plan, sections: (m.plan.sections || []).fil
 
 // 질문지 — m = { topic, brief, done }. set(질문, 값) · go() = 「지면 계획 짜기」(입력 칸 글을 「더」로 같이)
 // shape = 모양 바꾸기(한 판 ↔ 여러 장 — 2026-11-04 입구 합치기, 대화창 「+ › Deep Mode」에서 온 질문지만) — 누르면 그 모양의 질문지로
+// 2026-11-07 대화창 디자인 1~3라운드 확정(사용자 — Claude Code 질문창처럼, 설명 문구 없이 「질문이 가장 잘, 다음이 선택지」):
+// 위 탭 = 맞춤 질문(이름 = AI가 준 짧은 이름) + ⚙ 설정(코드가 값으로 쓰는 것) + ✓ 확인 · 지금 탭의 질문 하나만 · 하나 고르기는 고르면 다음 탭 ·
+// 끝 칸 「직접 적기」(하나 고르기 = 그 글이 답, 여럿 = 고른 것 + 글) · 고른 것 = 회색 채움 ✓, 단추만 코랄 채움(K1) · 「계획 짜기」는 늘 보임(다 알아서면 바로)
+const PICK = { background: 'var(--mb-pick)', border: '1px solid transparent', color: 'var(--mb-ink)', fontWeight: 700 }
+export const GO = { all: 'unset', cursor: 'pointer', alignSelf: 'flex-start', background: 'var(--mb-accent)', color: '#fff', font: "700 12.5px 'Pretendard', sans-serif", padding: '5px 14px', borderRadius: 7 }
+const answerText = (v) => (Array.isArray(v) ? (v.length ? v.join(', ') : AUTO) : v || AUTO)
 export function DeepAsk({ m, set, go, busy, css, slides = false, shape = null }) {
-  const b = m.brief || {}, lock = !!m.done || !!busy, qs = askQs(m, slides), nAi = m.ai?.questions?.length || 0
+  const b = m.brief || {}, lock = !!m.done || !!busy, qs = askQs(m, slides)
+  const setNames = new Set((slides ? SLIDES_SET : DEEP_SET).map(([q]) => q))
+  const content = qs.filter(([q]) => !setNames.has(q)), settings = qs.filter(([q]) => setNames.has(q))
+  const tabs = [...content.map(([q, , , h]) => ({ id: q, label: h || q })), ...(settings.length ? [{ id: 'set', label: '⚙ 설정' }] : []), { id: 'review', label: '✓ 확인' }]
+  const [tab, setTab] = useState(0), cur = tabs[Math.min(tab, tabs.length - 1)], next = () => setTab(t => Math.min(t + 1, tabs.length - 1))
+  useEffect(() => { setTab(0) }, [slides])   // 한 판 ↔ 여러 장 = 첫 탭부터
+  const answered = q => { const v = b[q]; return Array.isArray(v) ? v.length > 0 : !!v && v !== AUTO }
+  if (m.done) return <div data-testid="deep-ask" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+    {qs.filter(([q]) => answered(q)).map(([q, , , h]) => <div key={q} style={{ display: 'flex', gap: 8, fontSize: 12.5 }}><span style={{ ...css.meta, fontSize: 12, flex: 'none' }}>{h || q}</span><b>{answerText(b[q])}</b></div>)}
+    <span style={css.meta}>{m.more ? `덧붙인 말: ${m.more} · ` : ''}이 답으로 {slides ? '장 계획' : '지면 계획'}을 짰어요</span></div>
+  const chip = (q, v, on, onClick) => <button key={v} data-v={v} aria-pressed={on} disabled={lock} onClick={onClick}
+    style={{ ...css.ghost, ...(on ? PICK : null), cursor: lock ? 'default' : 'pointer' }}>{on ? `✓ ${v}` : v}</button>
+  // 질문 하나 — rows = 번호 줄(맞춤 질문) / 칩(설정)
+  const question = ([q, opts, multi], rows) => {
+    const v = b[q], picks = multi ? (v || []).filter(x => opts.includes(x)) : v, own = multi ? (v || []).filter(x => !opts.includes(x)).join(', ') : v && v !== AUTO && !opts.includes(v) ? v : ''
+    const isOn = x => (multi ? picks.includes(x) : (v || AUTO) === x)
+    const pick = x => { if (multi) set(q, isOn(x) ? (v || []).filter(y => y !== x) : [...(v || []), x]); else { set(q, x); if (rows) next() } }
+    const all = multi ? opts : [AUTO, ...opts]
+    if (!rows) return <div key={q} data-q={q} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={css.meta}>{q}</span>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>{all.map(x => chip(q, x, isOn(x), () => pick(x)))}</div></div>
+    return <div key={q} data-q={q} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ font: "800 15px/1.4 'Pretendard', sans-serif" }}>{q}{multi && <span style={{ ...css.meta, marginLeft: 6 }}>여럿</span>}</div>
+      {all.map((x, i) => <button key={x} data-v={x} aria-pressed={isOn(x)} disabled={lock} onClick={() => pick(x)} className="mb-mi"
+        style={{ all: 'unset', cursor: lock ? 'default' : 'pointer', display: 'flex', gap: 8, alignItems: 'baseline', padding: '6px 9px', borderRadius: 7, font: "500 13.5px 'Pretendard', sans-serif", ...(isOn(x) ? { background: 'var(--mb-pick)', fontWeight: 700 } : null) }}>
+        <span style={{ ...css.meta, fontWeight: 700, width: 14, flex: 'none' }}>{i + 1}</span>{isOn(x) ? `✓ ${x}` : x}</button>)}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '2px 9px' }}><span style={{ ...css.meta, fontWeight: 700, width: 14, flex: 'none' }}>{all.length + 1}</span>
+        <input data-testid="ask-own" key={q} defaultValue={own} disabled={lock} placeholder="직접 적기…" aria-label={`${q} — 직접 적기`}
+          onChange={e => { const t = e.target.value.trim(); set(q, multi ? [...picks, ...(t ? [t] : [])] : t || AUTO) }}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); next() } }}
+          style={{ flex: 1, minWidth: 0, font: "400 13px 'Pretendard', sans-serif", color: 'var(--mb-ink)', background: 'transparent', border: 0, borderBottom: '1px solid var(--mb-line)', padding: '3px 0', outline: 'none' }} /></div>
+      {multi && <button data-testid="ask-next" style={{ ...css.ghost, alignSelf: 'flex-start' }} disabled={lock} onClick={next}>다음</button>}
+    </div>
+  }
   return <div data-testid="deep-ask" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <style>{'.mb-mi:hover:not(:disabled){background:var(--mb-seg)}@keyframes mb-spin{to{transform:rotate(360deg)}}'}</style>
     {shape && <div data-testid="deep-shape" style={{ display: 'flex', gap: 6 }}>
-      {SHAPES.map(([k, name, tip]) => { const on = (slides ? 'slides' : 'deep') === k
-        return <button key={k} data-v={k} aria-pressed={on} disabled={lock} onClick={() => !on && shape(k)} title={tip}
-          style={{ ...(on ? css.pin : css.ghost), ...(on ? { background: 'rgba(218,119,86,.12)' } : null), flex: 1, padding: '6px 8px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1, textAlign: 'left', cursor: lock ? 'default' : 'pointer' }}>
-          <span style={{ fontWeight: 700 }}>{name}</span><span style={{ ...css.meta, fontWeight: 400, whiteSpace: 'normal' }}>{tip}</span></button> })}
+      {SHAPES.map(([k, name]) => { const on = (slides ? 'slides' : 'deep') === k
+        return <button key={k} data-v={k} aria-pressed={on} disabled={lock} onClick={() => !on && shape(k)} style={{ ...css.ghost, ...(on ? PICK : null), flex: 1, cursor: lock ? 'default' : 'pointer' }}>{name}</button> })}
     </div>}
-    <div style={{ fontWeight: 700 }}>「{m.topic}」 — {slides ? '발표 자료를 짜기 전에 몇 가지만' : '한 판을 짜기 전에 몇 가지만'}</div>
-    {slides && m.ctxCount > 0 && <span style={css.meta}>칠판에서 고른 것 {m.ctxCount}개를 재료로 같이 보내요</span>}
-    {m.asking && <div data-testid="deep-asking" style={{ ...css.meta, display: 'flex', gap: 6, alignItems: 'center' }}><style>{'@keyframes mb-spin{to{transform:rotate(360deg)}}'}</style><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', border: '2px solid currentColor', borderTopColor: 'transparent', animation: 'mb-spin .8s linear infinite' }} />주제를 읽고 맞춤 질문을 정리하는 중…</div>}
-    {m.ai?.known?.length > 0 && <div data-testid="deep-known" style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-      <span style={css.meta}>주제에서 알아들은 것 — 다시 묻지 않아요</span>
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>{m.ai.known.map(k => <span key={k.label} style={{ ...css.kind, whiteSpace: 'normal' }}>{k.label} · {k.value}</span>)}</div></div>}
-    {m.askFail && <span data-testid="deep-ask-fallback" style={css.meta}>맞춤 질문을 못 만들어 기본 질문으로 물어요</span>}
-    {qs.map(([q, opts, multi], k) => { const cur = b[q], on = v => (multi ? (cur || []).includes(v) : (cur || AUTO) === v)
-      const head = nAi && k === nAi ? <span key="set" style={{ ...css.meta, marginTop: 4, fontWeight: 700 }}>설정</span> : null
-      const pick = v => set(q, multi ? (on(v) ? (cur || []).filter(x => x !== v) : [...(cur || []), v]) : v)
-      return <div key={q} data-q={q} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>{head}
-        <span style={css.meta}>{q}{multi ? ' (여럿 · 안 고르면 알아서)' : ''}</span>
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-          {(multi ? opts : [AUTO, ...opts]).map(v => <button key={v} data-v={v} aria-pressed={on(v)} disabled={lock} onClick={() => pick(v)}
-            style={{ ...(on(v) ? css.pin : css.ghost), ...(on(v) ? { background: 'rgba(218,119,86,.12)' } : null), opacity: lock && !on(v) ? 0.5 : 1, cursor: lock ? 'default' : 'pointer' }}>{v}</button>)}
-        </div></div> })}
-    {m.done ? <span style={css.meta}>{m.more ? `덧붙인 말: ${m.more} · ` : ''}이 답으로 {slides ? '장 계획' : '지면 계획'}을 짰어요</span>
-      : <><span style={css.meta}>보기에 없는 말(꼭 넣을 것·빼 줄 것)은 아래 칸에 적고 Enter — 계획만 짜요({slides ? '약 10크레딧·15초' : '약 40크레딧·20초'}, 만들기는 계획을 보고 나서)</span>
-        <button data-testid="deep-plan-go" style={{ ...css.pin, alignSelf: 'flex-start', padding: '4px 12px' }} disabled={!!busy || !!m.asking} onClick={go}>{slides ? '장 계획 짜기' : '지면 계획 짜기'}</button></>}
+    {m.ctxCount > 0 && <span style={css.meta}>칠판에서 고른 것 {m.ctxCount}개를 재료로 같이 보내요</span>}
+    {m.asking && <div data-testid="deep-asking" style={{ ...css.meta, display: 'flex', gap: 6, alignItems: 'center' }}><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', border: '2px solid currentColor', borderTopColor: 'transparent', animation: 'mb-spin .8s linear infinite' }} />질문 정리 중…</div>}
+    {m.askFail && <span data-testid="deep-ask-fallback" hidden />}
+    <div role="tablist" style={{ display: 'flex', gap: 2, flexWrap: 'wrap', borderBottom: '1px solid var(--mb-line)', paddingBottom: 6 }}>
+      {tabs.map((t, i) => { const now = t === cur, done = t.id !== 'set' && t.id !== 'review' && answered(t.id)
+        return <button key={t.id} role="tab" data-testid="ask-tab" data-tab={t.id} aria-selected={now} onClick={() => setTab(i)} className="mb-mi"
+          style={{ all: 'unset', cursor: 'pointer', display: 'flex', gap: 4, alignItems: 'center', font: "600 11.5px 'Pretendard', sans-serif", padding: '3px 8px', borderRadius: 6, color: now ? 'var(--mb-ink)' : 'var(--mb-muted)', ...(now ? { background: 'var(--mb-pick)' } : null) }}>
+          {t.id !== 'set' && t.id !== 'review' && <span aria-hidden style={{ width: 9, height: 9, borderRadius: 3, border: '1.5px solid currentColor', ...(done ? { background: 'currentColor' } : null) }} />}{t.label}</button> })}
+    </div>
+    {cur.id === 'set' ? settings.map(x => question(x, false))
+      : cur.id === 'review' ? <div data-testid="ask-review" style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {[...content, ...settings].map(([q, , , h]) => <div key={q} style={{ display: 'flex', gap: 8, fontSize: 12.5 }}><span style={{ ...css.meta, fontSize: 12, width: 72, flex: 'none' }}>{h || q}</span><b>{answerText(b[q])}</b></div>)}</div>
+      : question(content.find(([q]) => q === cur.id), true)}
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <button data-testid="deep-plan-go" style={{ ...GO, ...(busy || m.asking ? { opacity: 0.5, cursor: 'default' } : null) }} disabled={!!busy || !!m.asking} onClick={go}>{slides ? '장 계획 짜기' : '지면 계획 짜기'}</button>
+      <span style={css.meta}>{slides ? '약 10크레딧' : '약 40크레딧'}</span></div>
   </div>
 }
 
@@ -91,7 +125,7 @@ export function DeepPlan({ m, drop, build, show, busy, css }) {
         <span style={css.meta}>판을 고르면 톤(색)·꼭지 모양을 바꿀 수 있어요</span>
         {m.missing && <span data-testid="deep-missing" style={css.meta}>그대로 둔 꼭지(못 씀): {m.missing.join(', ')} — 그 꼭지를 골라 다시 쓸 수 있어요</span>}</div>
       : m.stale ? <span style={css.meta}>아래에 고친 계획이 있어요</span>
-      : <><button data-testid="deep-build" style={{ ...css.pin, alignSelf: 'flex-start', padding: '4px 12px' }} disabled={!!busy} onClick={build}>
+      : <><button data-testid="deep-build" style={GO} disabled={!!busy} onClick={build}>
           이대로 만들기{est ? ` · 약 ${rng(est.credits, '크레딧')}` : ''}</button>
         <span style={css.meta}>{est?.seconds ? `${rng(est.seconds, '초')} 걸려요(추정) · ` : ''}꼭지 {left}개 · 고칠 점은 아래 칸에 말하면 계획을 다시 짜요</span></>}
   </div>
@@ -154,10 +188,10 @@ export function SlidesPlan({ m, flip, drop, build, show, busy, css, base = 1 }) 
         <span data-testid="slides-no" style={{ ...css.kind, flex: 'none', minWidth: 22, textAlign: 'center' }} title={nos[i]?.length > 1 ? '글 장 + 아래 그림 판 = 프레임 두 개' : '프레임 번호'}>{nos[i] ? nos[i].join('·') : '–'}</span>
         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: dropped.has(i) ? 'line-through' : 'none' }} title={s.point || s.title}>{s.title}</span>
         <span style={{ ...css.meta, flex: 'none' }}>{SOURCE[s.source] || ''}</span>
-        {/* 🖼 = 누를 때마다 글 → 그림 → 글+그림(아래에 그림 판 — 작은 책 ② 갈래). 켜짐 = 코랄 테두리. 표지(첫 장)는 글 장만 */}
+        {/* 🖼 = 누를 때마다 글 → 그림 → 글+그림(아래에 그림 판 — 작은 책 ② 갈래). 켜짐 = 회색 채움(2026-11-07 K1). 표지(첫 장)는 글 장만 */}
         {i > 0 && (v => <button data-testid="slides-pic" data-pic={String(v)} aria-pressed={!!v} disabled={lock || dropped.has(i)} onClick={() => flip(i)}
           title={v === true ? '그림 장 — 장 전체가 설명 그림 한 장(누르면 글+그림)' : v === 'both' ? '글+그림 — 글 장 아래에 같은 내용의 그림 판(발표 때 둘 다, 프레임 판에서 하나 끌 수 있어요 · 누르면 글 장)' : '글 장 — 누르면 그림 장(설명 그림 한 장, 약 12크레딧)'}
-          style={{ ...(v ? css.pin : css.ghost), padding: '0 5px', flex: 'none', opacity: v ? 1 : 0.55, cursor: lock ? 'default' : 'pointer' }}>{v === 'both' ? '글+🖼' : '🖼'}</button>)(picOf(m, i))}
+          style={{ ...css.ghost, ...(v ? PICK : null), padding: '0 5px', flex: 'none', opacity: v ? 1 : 0.55, cursor: lock ? 'default' : 'pointer' }}>{v === 'both' ? '글+🖼' : '🖼'}</button>)(picOf(m, i))}
         {!lock && <button data-testid="slides-x" aria-label={dropped.has(i) ? `「${s.title}」 되살리기` : `「${s.title}」 빼기`} title={dropped.has(i) ? '되살리기' : '이 장 빼기'}
           disabled={!dropped.has(i) && left <= 2} onClick={() => drop(i)} style={{ ...css.ghost, padding: '0 6px', flex: 'none' }}>{dropped.has(i) ? '↺' : '×'}</button>}
       </div>)}
@@ -166,7 +200,7 @@ export function SlidesPlan({ m, flip, drop, build, show, busy, css, base = 1 }) 
         <button data-testid="slides-show" style={css.done} onClick={show}>✓ 프레임 {m.frames}장을 지었어요 — 보기</button>
         <span style={css.meta}>위 막대 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모(발표 화면엔 안 나옴)</span></div>
       : m.stale ? <span style={css.meta}>아래에 고친 계획이 있어요</span>
-      : <><button data-testid="slides-build" style={{ ...css.pin, alignSelf: 'flex-start', padding: '4px 12px' }} disabled={!!busy} onClick={build}>
+      : <><button data-testid="slides-build" style={GO} disabled={!!busy} onClick={build}>
           이대로 만들기{est ? ` · 약 ${rng(est.credits, '크레딧')}` : ''}</button>
         <span style={css.meta}>{est?.seconds ? `${rng(est.seconds, '초')} 걸려요(추정) · ` : ''}{left}장{pics || both ? `(${[pics && `그림 장 ${pics}`, both && `글+그림 ${both}`].filter(Boolean).join(' · ')})` : ''} · 🖼 = 글 → 그림 → 글+그림 · 고칠 점은 아래 칸에 말하면 계획을 다시 짜요</span></>}
   </div>

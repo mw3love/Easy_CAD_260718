@@ -30,7 +30,7 @@ def test_clean_drops_settings_audience_dupes_and_topic():
                          {"q": "언제 쓰나요", "options": ["c", "d"]}]}         # 같은 질문 두 번
     out = brief_ask.clean(raw)
     assert out["known"] == [{"label": "대상", "value": "신입"}]
-    assert out["questions"] == [{"q": "언제 쓰나요", "options": ["견학 전", "뒤"], "multi": True}]
+    assert out["questions"] == [{"q": "언제 쓰나요", "h": "언제 쓰나요", "options": ["견학 전", "뒤"], "multi": True}]
 
 
 def test_clean_no_questions_is_error():

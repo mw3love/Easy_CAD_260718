@@ -24,7 +24,7 @@ test('그림 장 — 🖼로 켜고 끄기(어림 크레딧) → 그림 장은 �
   await page.getByTestId('plus').click(); await page.getByRole('menuitemradio', { name: /Deep Mode/ }).click()
   const box = page.getByPlaceholder('어떤 주제로', { exact: false })
   await box.fill('전파가 집까지 오는 길'); await box.press('Enter')
-  await page.locator('[data-q="그림 장"] [data-v="조금"]').click()
+  await page.locator('[data-tab="set"]').click(); await page.locator('[data-q="그림 장"] [data-v="조금"]').click()
   await page.getByTestId('deep-plan-go').click()
   expect(seen[0].slides.brief['그림 장']).toBe('조금')                                           // 질문지 답 = 서버 계획 지시로
   const pics = page.getByTestId('slides-pic')
@@ -158,7 +158,7 @@ test('작은 책 ⑤ 이야기 — 질문지 「내용 › 이야기」가 요�
   await openBoard(page, name, { chat: true }); await setCam(page)
   await page.getByTestId('plus').click(); await page.getByRole('menuitemradio', { name: /Deep Mode/ }).click()
   const box = page.getByPlaceholder('어떤 주제로', { exact: false }); await box.fill('토끼 동화'); await box.press('Enter')
-  const q = page.locator('[data-q="내용"]')
+  await page.locator('[data-tab="set"]').click(); const q = page.locator('[data-q="내용"]')
   await expect(q.locator('[data-v="설명"]')).toBeVisible()
   await q.locator('[data-v="이야기"]').click()
   await page.getByTestId('deep-plan-go').click()
@@ -198,7 +198,8 @@ test('입구 합치기 — 「+ › Deep Mode」 질문지 맨 위에서 한 판
   await expect(shape.locator('[data-v="deep"]')).toHaveAttribute('aria-pressed', 'true')            // 처음 = 한 판
   await expect(ask.locator('[data-q="누구에게"]')).toBeVisible()
   await shape.locator('[data-v="slides"]').click()
-  await expect(ask.locator('[data-q="그림 장"]')).toBeVisible(); await expect(ask.locator('[data-q="누구에게"]')).toHaveCount(0)   // 여러 장 질문지
+  await ask.locator('[data-tab="set"]').click()
+  await expect(ask.locator('[data-q="그림 장"]')).toBeVisible(); await expect(ask.locator('[data-tab="누구에게"]')).toHaveCount(0)   // 여러 장 질문지
   await expect(ask).toContainText('칠판에서 고른 것 1개를 재료로')                                      // 고른 것은 붙잡아 둠
   await shape.locator('[data-v="deep"]').click()
   await expect(ask.locator('[data-q="누구에게"]')).toBeVisible()

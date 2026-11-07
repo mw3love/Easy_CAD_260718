@@ -24,20 +24,22 @@ async function start(page, name, onAsk) {
 test('맞춤 질문 — 알아들은 것은 칩으로(다시 안 물음) · 맞춤 질문 + 「설정」 · 보낸 답에 알아들은 것·누구에게가 실림', async ({ page }) => {
   const seen = await start(page, 'briefask', r => r.fulfill({ json: ASK }))
   const ask = page.getByTestId('deep-ask')
-  await expect(page.getByTestId('deep-known')).toContainText('대상 · 신입사원')
-  await expect(ask.locator('[data-q="언제 쓰는 자료인가요"]')).toBeVisible()
-  await expect(ask.locator('[data-q="누구에게"]')).toHaveCount(0)                                   // 대상을 말했으니 안 물음
+  await expect(ask.locator('[data-q="언제 쓰는 자료인가요"]')).toBeVisible()                    // 첫 탭 = 첫 맞춤 질문
+  await expect(ask).not.toContainText('알아들은')                                                  // 설명 문구 없음(2026-11-07) — 서버엔 그대로 보냄
+  await expect(ask.locator('[data-tab="누구에게"]')).toHaveCount(0)                                // 대상을 말했으니 안 물음
   expect(seen[0].deep || seen[0].slides).toMatchObject({ step: 'ask', topic: TOPIC })
   await ask.getByTestId('deep-shape').locator('button[data-v="slides"]').click()                      // 여러 장으로 바꿔도 맞춤 질문은 그대로, 설정만 바뀜
   await expect(ask.locator('[data-q="언제 쓰는 자료인가요"]')).toBeVisible()
-  await expect(ask.locator('[data-q="장 수"]')).toBeVisible(); await expect(ask.locator('[data-q="듣는 사람"]')).toHaveCount(0)
-  await ask.locator('[data-q="언제 쓰는 자료인가요"] button[data-v="견학 전"]').click()
+  await expect(ask.locator('[data-tab="듣는 사람"]')).toHaveCount(0)
+  await ask.locator('[data-q="언제 쓰는 자료인가요"] button[data-v="견학 전"]').click()            // 하나 고르기 = 다음 탭으로
   await ask.locator('[data-q="어떤 내용을 중심으로"] button[data-v="설비"]').click()
-  await ask.locator('[data-q="장 수"] button[data-v="5장"]').click()
+  await ask.getByTestId('ask-own').fill('운영 인력')                                               // 직접 적기 = 고른 것 + 글
+  await ask.locator('[data-tab="set"]').click(); await ask.locator('[data-q="장 수"] button[data-v="5장"]').click()
+  await ask.locator('[data-tab="review"]').click(); await expect(ask.getByTestId('ask-review')).toContainText('설비, 운영 인력')
   await page.getByTestId('deep-plan-go').click()
   await expect(page.getByTestId('slides-plan')).toBeVisible()
   const brief = seen.at(-1).slides.brief
-  expect(brief).toMatchObject({ '언제 쓰는 자료인가요': '견학 전', '어떤 내용을 중심으로': ['설비'], '장 수': '5장', '그림 장': '알아서', 누구에게: '신입사원', '주제에서 알아들은 것': '대상: 신입사원' })
+  expect(brief).toMatchObject({ '언제 쓰는 자료인가요': '견학 전', '어떤 내용을 중심으로': ['설비', '운영 인력'], '장 수': '5장', '그림 장': '알아서', 누구에게: '신입사원', '주제에서 알아들은 것': '대상: 신입사원' })
 })
 
 test('맞춤 질문 — 못 만들면 고정 질문 · 정리하는 동안은 설정만 보이고 Enter·계획 단추는 기다림', async ({ page }) => {
@@ -50,7 +52,7 @@ test('맞춤 질문 — 못 만들면 고정 질문 · 정리하는 동안은 �
   const box = page.getByPlaceholder('꼭 넣을 것', { exact: false }); await box.fill('숫자 많이'); await box.press('Enter')
   await expect(box).toHaveValue('숫자 많이')                                                          // Enter = 기다림(글은 그대로)
   release()
-  await expect(page.getByTestId('deep-ask-fallback')).toBeVisible()
+  await expect(page.getByTestId('deep-ask-fallback')).toBeAttached()
   await expect(ask.locator('[data-q="누구에게"]')).toBeVisible()                                      // 고정 질문으로
   await expect(page.getByTestId('deep-plan-go')).toBeEnabled()
 })

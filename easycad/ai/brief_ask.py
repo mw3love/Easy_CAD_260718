@@ -23,9 +23,9 @@ SYSTEM = """너는 자료를 만들기 전에 사용자에게 짧게 되묻는 �
    - known에 있는 것은 절대 다시 묻지 않는다(대상을 말했으면 대상을 묻지 않는다).
    - 「누구에게?」 같은 두루뭉술한 질문보다 이 주제에 맞춘 구체적인 질문(예: 「견학 전에 볼 자료인가요, 다녀온 뒤 정리인가요?」).
    - audience가 null이면 첫 질문은 q = "누구에게"로, 이 주제에 맞는 대상 보기를 준다.
-   - q는 짧게(20자 안팎), options는 2~4개(각 14자 안팎, 서로 겹치지 않게), 여럿 고를 만하면 multi = true.
+   - q는 짧게(20자 안팎), h는 탭에 쓸 이름(2~5자 — 예: 용도·수준·넣을 것), options는 2~4개(각 14자 안팎, 서로 겹치지 않게), 여럿 고를 만하면 multi = true.
    - 다음은 화면이 따로 묻는 설정이라 묻지 않는다: {settings}.
-JSON 하나만: {{"known": [{{"label": "", "value": ""}}], "audience": null, "questions": [{{"q": "", "options": [""], "multi": false}}]}}"""
+JSON 하나만: {{"known": [{{"label": "", "value": ""}}], "audience": null, "questions": [{{"q": "", "h": "", "options": [""], "multi": false}}]}}"""
 
 
 def _s(v, n: int) -> str:
@@ -48,7 +48,7 @@ def clean(raw) -> dict:
         if not name or name in SETTINGS or name in seen or len(opts) < 2 or (aud and name == AUDIENCE):
             continue
         seen.add(name)
-        qs.append({"q": name, "options": opts, "multi": bool(q.get("multi"))})
+        qs.append({"q": name, "h": _s(q.get("h"), 8) or name[:6], "options": opts, "multi": bool(q.get("multi"))})   # h = 질문 탭 이름(2026-11-07)
     if not qs:
         raise ValueError("맞춤 질문이 없어요")
     return {"known": known, "audience": aud, "questions": qs[:MAX_Q]}
