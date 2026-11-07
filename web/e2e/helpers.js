@@ -11,8 +11,8 @@ let n = 0
 export const boardName = tag => `e2e_${tag}_${Date.now().toString(36)}${n++}`
 
 /** 칠판을 열고 서버 답(「서버 「이름」」 상태 글)까지 기다림. 대화창은 기본 닫음(칠판 넓게) */
-export async function openBoard(page, name, { chat = false, who = '시험', guide = false } = {}) {   // guide = 빈 칠판 첫 안내(가운데를 덮어 다른 시험의 누르기를 막으니 기본은 끔 — flow37만 켬)
-  await page.addInitScript(([c, w, g]) => { try { localStorage.setItem('mb-chat-open', c ? '1' : '0'); localStorage.setItem('mb.name', w); localStorage.setItem('mb-guide-off', g ? '0' : '1') } catch {} }, [chat, who, guide])
+export async function openBoard(page, name, { chat = false, who = '시험', guide = false, briefAsk = false } = {}) {   // briefAsk = 딥모드 맞춤 질문(서버 한 번 더 — 기본은 끔, flow62만 켬)   // guide = 빈 칠판 첫 안내(가운데를 덮어 다른 시험의 누르기를 막으니 기본은 끔 — flow37만 켬)
+  await page.addInitScript(([c, w, g, a]) => { try { localStorage.setItem('mb-chat-open', c ? '1' : '0'); localStorage.setItem('mb.name', w); localStorage.setItem('mb-guide-off', g ? '0' : '1'); localStorage.setItem('mb-brief-ask', a ? 'on' : 'off') } catch {} }, [chat, who, guide, briefAsk])
   await page.goto(`/?board=${name}`)
   await expect.poll(async () => { const t = (await page.getByTestId('status-toast').textContent().catch(() => '')) || ''; return t.includes(`서버 「${name}」`) || t === '새 칠판' || /^「.*」 · \d+개$/.test(t) }).toBe(true)   // 여는 알림 = 이름 없는 칠판은 「서버 「이름」」, 칠판 코드 새 칠판은 「새 칠판」, 제목 있으면 「「제목」 · N개」(2026-11-03)
   return page.getByTestId('board')

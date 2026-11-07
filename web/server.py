@@ -43,7 +43,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXAMPLES, EXAMPLE = os.path.join(HERE, "examples"), "intro"   # 예시 칠판 원본(2026-10-28) — `examples/intro/intro.ecad`·`.chat.json`·`.img/`
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_bubble, board_chat, board_diagram, slides, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, model_pick, route, see, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_bubble, board_chat, brief_ask, board_diagram, slides, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, model_pick, route, see, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
@@ -314,6 +314,8 @@ class Handler(SimpleHTTPRequestHandler):
         brief = d.get("brief") if isinstance(d.get("brief"), dict) else {}
         base = self._base()
         b0 = self._balance(key, base)   # 쓴 크레딧 = 잔액 차이(대화 모델 답엔 credits_charged가 없음) — 같은 키를 동시에 쓰면 섞임(대화창이 「약」)
+        if step == "ask":   # 맞춤 질문(2026-11-06) — 주제 글을 읽고 알아들은 것 + 질문 2~4개
+            return self._brief_ask("deep", topic, "", key, base, b0)
         try:
             if step == "plan":
                 prev = d.get("prev") if isinstance(d.get("prev"), dict) else None
@@ -383,6 +385,19 @@ class Handler(SimpleHTTPRequestHandler):
         b1 = self._balance(key, base)
         return round(b0 - b1, 1) if b1 is not None else None
 
+    def _brief_ask(self, kind: str, topic: str, material: str, key: str, base: str, b0):
+        """딥모드·발표 자료 질문지의 맞춤 질문 → {"kind", "step": "ask", "known", "audience", "questions", "model", "elapsed", "credits"}.
+        못 만들면 502 — 대화창이 고정 질문으로(질문지는 그대로 뜸)."""
+        if not topic.strip():
+            return self._json(400, {"error": "주제가 없어요"})
+        try:
+            out = self._with("brief_ask", brief_ask.ASK_MODEL, lambda m: brief_ask.ask(gw._client(key, base, timeout=60), topic, material=material, model=m))
+        except Exception as e:
+            sys.stderr.write("[맞춤 질문 못 함] %s\n" % str(e)[:200])
+            return self._json(502, {"error": gw.friendly_error(e) if not isinstance(e, ValueError) else str(e)})
+        sys.stderr.write("[맞춤 질문] %s %.1f초 알아들음 %d 질문 %d\n" % (out["model"], out["elapsed"], len(out["known"]), len(out["questions"])))
+        return self._json(200, {"kind": kind, "step": "ask", **out, "credits": self._spent(key, base, b0)})
+
     def _slides(self, req: dict, key: str):
         """📽 발표 자료 → step plan: {"kind": "slides", "plan", "estimate", "model", "elapsed", "credits"} · step build: {"kind": "slides", "deck", "model", "elapsed", "missing", "credits"}.
         재료 = 칠판에서 고른 것의 글(`slides.material` — 대화창이 보냄, 질문지 「재료」가 웹 검색이면 안 씀). 프레임은 칠판이 짓는다(`ed.slidesBoard`)."""
@@ -394,6 +409,8 @@ class Handler(SimpleHTTPRequestHandler):
         pics = see.from_doc(self._board_doc(self._name(str(req.get("board") or ""))), uids) if uids else []   # 고른 그림 = 칠판 파일에서(대화 기록엔 이름표만, 2026-10-28)
         base = self._base()
         b0 = self._balance(key, base)
+        if step == "ask":   # 맞춤 질문(2026-11-06) — 한 판·여러 장 같은 질문(모양마다 다른 건 설정 칸)
+            return self._brief_ask("slides", topic, material, key, base, b0)
         try:
             if step == "plan":
                 prev = d.get("prev") if isinstance(d.get("prev"), dict) else None

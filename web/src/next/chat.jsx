@@ -18,7 +18,7 @@ import { siteOf } from './webcard.js'
 import { getKairosKey, KEY_RE, keyHeaders, setKairosKey } from './kairosKey.js'
 import { startMic } from './mic.js'
 import { svgPreview } from './svgin.js'
-import { DeepAsk, DeepConfirm, DeepFlip, DeepPlan, REDO_RE, SLIDES_QS, SlidesPlan, briefOf, keptPlan, keptSlides, nextPic, picOf } from './deepchat.jsx'
+import { DeepAsk, DeepConfirm, DeepFlip, DeepPlan, REDO_RE, SlidesPlan, askBrief, keptPlan, keptSlides, nextPic, picOf } from './deepchat.jsx'
 import { LIVE_CSP, LIVE_H, LIVE_W, bigPage, liveSrc } from './livecard.js'
 import { ChatSkeleton } from './skeleton.jsx'
 const LINK_CHAT = '#4f8fe8'
@@ -350,7 +350,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   // 서버 길 = /api/chat `kind: 'deep'` + `deep: { step: 'plan' | 'build', topic, brief, prev?, fix?, plan?, style? }`(3-3에서 서버가 맡음). 입력 칸에서 보낼 때 먼저 봄 — 맡았으면 true
   function deepSend(kind) {
     const li = msgs.findLastIndex(m => m.role !== 'error'), last = msgs[li], t = draft.trim()
-    if (last?.kind === 'deep' && last.step === 'ask' && !last.done) { deepGo(li, t); return true }
+    if (last?.kind === 'deep' && last.step === 'ask' && !last.done) { if (!last.asking) deepGo(li, t); return true }   // 맞춤 질문 정리 중 = Enter 기다림(쓴 글은 칸에 그대로)
     if (last?.kind === 'deep' && last.step === 'plan' && !last.built && !last.stale && t && (!kind || kind === 'deep')) { deepReplan(li, t); return true }
     if (kind !== 'deep' || !t) return false
     // 모양은 질문지에서(한 판 ↔ 여러 장) — 여러 장으로 바꿀 때 쓰게 고른 것도 붙잡아 둠(발표 자료와 같게)
@@ -358,7 +358,23 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     update([...msgs.filter(m => m.role !== 'error'), { role: 'user', content: t, at, deep: true }, { role: 'assistant', kind: k, step: 'ask', topic: t, brief: {}, shapes: true,
       ...(material || imgIds.length ? { material, ctxCount: sel.length + imgIds.length } : {}), ...(imgIds.length ? { imgIds } : {}), at: at + 1 }])
     setDraft(''); setPickTool(''); if (mic !== 'off') micStop.current?.()
+    briefAsk(at + 1, t, material, k)
     return true
+  }
+  // 맞춤 질문(2026-11-06) — 질문지를 띄우자마자 서버가 주제 글을 읽고 질문을 정리(몇 초 — 그동안 질문지에 「정리하는 중」, 설정은 바로 고를 수 있음).
+  // 못 하면 고정 질문(`askFail`). 「생각 중」(busy)·멈춤 단추는 안 씀 — 질문지를 보며 기다리는 짧은 일이라. 화면 시험은 기본 끔(localStorage `mb-brief-ask` = off, helpers `openBoard`)
+  async function briefAsk(at, topic, material, kind) {
+    const patch = (p, keep = true) => setMsgs(cur => { const next = cur.map(x => (x.at === at && x.step === 'ask' ? { ...x, ...p } : x)); if (keep) save(next); return next })
+    let off = false; try { off = localStorage.getItem('mb-brief-ask') === 'off' } catch { /* 못 읽으면 켬 */ }
+    if (off) return
+    patch({ asking: true }, false)   // 「정리하는 중」은 기록에 안 남김(새로고침하면 고정 질문)
+    try {
+      const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() },
+        body: JSON.stringify({ board: DOC_NAME, kind, [kind]: { step: 'ask', topic, material: material || '' }, messages: [{ role: 'user', content: topic }] }) })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok || d.error || !d.questions?.length) throw new Error(d.error || `서버 응답 ${r.status}`)
+      patch({ asking: false, ai: { known: d.known || [], audience: d.audience || null, questions: d.questions } })
+    } catch { patch({ asking: false, askFail: true }) }
   }
   const setMsg = (i, patch) => setMsgs(cur => { const next = cur.map((x, j) => (j === i ? { ...x, ...patch } : x)); save(next); return next })
   async function deepCall(body, job) {
@@ -372,7 +388,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   }
   const planMsg = (m, d) => ({ role: 'assistant', kind: 'deep', step: 'plan', topic: m.topic, brief: m.brief, plan: d.plan, estimate: d.estimate, drop: [], model: d.model, elapsed: d.elapsed, credits: d.credits, at: Date.now() })
   async function deepGo(i, more) {
-    const m = msgs[i], brief = briefOf(m.brief, more)
+    const m = msgs[i], brief = askBrief(m, more, false)
     if (more) setDraft('')
     const d = await deepCall({ step: 'plan', topic: m.topic, brief }, 'deep-plan'); if (!d) return
     setMsgs(cur => { const next = [...cur.map((x, j) => (j === i ? { ...x, done: true, ...(more ? { more } : {}) } : x)), planMsg({ ...m, brief }, d)]; save(next); return next })
@@ -395,12 +411,13 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   // 📽 발표 자료(§8 항목69, 2026-10-28) — 딥모드와 같은 걸음: 「+ › 발표 자료」 + 주제 = 질문지 카드(그때 고른 것의 글을 재료로 붙잡아 둠) → 장 계획 → 「이대로 만들기」 = 칠판에 프레임 N장(`ed.slidesBoard`)
   function slidesSend(kind, text = null) {   // text = 칠판 우클릭 「발표 자료 만들기」가 시킨 주제(3단계)
     const li = msgs.findLastIndex(m => m.role !== 'error'), last = msgs[li], t = (text ?? draft).trim()
-    if (text == null && last?.kind === 'slides' && last.step === 'ask' && !last.done) { slidesGo(li, t); return true }
+    if (text == null && last?.kind === 'slides' && last.step === 'ask' && !last.done) { if (!last.asking) slidesGo(li, t); return true }
     if (text == null && last?.kind === 'slides' && last.step === 'plan' && !last.built && !last.stale && t && (!kind || kind === 'slides')) { slidesReplan(li, t); return true }
     if (kind !== 'slides' || !t) return false
     const at = Date.now(), material = contextText(sel), imgIds = selImgs.length ? ed.current?.selImageIds?.() || [] : []   // 고른 그림 = 이름표만 기억(서버가 칠판 파일에서 꺼내 보임 — 대화 기록이 그림으로 불지 않게, 2026-10-28)
     update([...msgs.filter(m => m.role !== 'error'), { role: 'user', content: t, at, slides: true }, { role: 'assistant', kind: 'slides', step: 'ask', topic: t, brief: {}, ...(material || imgIds.length ? { material, ctxCount: sel.length + imgIds.length } : {}), ...(imgIds.length ? { imgIds } : {}), at: at + 1 }])
     if (text == null) setDraft(''); setPickTool(''); if (mic !== 'off') micStop.current?.()
+    briefAsk(at + 1, t, material, 'slides')
     return true
   }
   async function slidesCall(body, job) {
@@ -414,7 +431,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   }
   const slidesPlanMsg = (m, d) => ({ role: 'assistant', kind: 'slides', step: 'plan', topic: m.topic, brief: m.brief, material: m.material, ...(m.imgIds ? { imgIds: m.imgIds } : {}), plan: d.plan, estimate: d.estimate, drop: [], model: d.model, elapsed: d.elapsed, credits: d.credits, at: Date.now() })
   async function slidesGo(i, more) {
-    const m = msgs[i], brief = briefOf(m.brief, more, SLIDES_QS)
+    const m = msgs[i], brief = askBrief(m, more, true)
     if (more) setDraft('')
     const d = await slidesCall({ step: 'plan', topic: m.topic, brief, material: m.material || '', imgIds: m.imgIds }, 'slides-plan'); if (!d) return
     setMsgs(cur => { const next = [...cur.map((x, j) => (j === i ? { ...x, done: true, ...(more ? { more } : {}) } : x)), slidesPlanMsg({ ...m, brief }, d)]; save(next); return next })
@@ -680,7 +697,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
                 : <DeepPlan m={m} busy={busy} css={css} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
                   build={() => deepBuild(i)} show={() => ed.current?.showIds([m.built]) || setGone(g => ({ ...g, [m.at + ':deep']: true }))} />)
                 : m.kind === 'slides' ? (m.step === 'ask'
-                  ? <DeepAsk m={m} busy={busy} css={css} qs={SLIDES_QS} slides shape={m.shapes && !m.done && models?.jobs?.deep && models?.jobs?.slides ? k => setMsg(i, { kind: k, brief: {} }) : null} set={(q, v) => setMsg(i, { brief: { ...m.brief, [q]: v } })} go={() => slidesGo(i, draft.trim())} />
+                  ? <DeepAsk m={m} busy={busy} css={css} slides shape={m.shapes && !m.done && models?.jobs?.deep && models?.jobs?.slides ? k => setMsg(i, { kind: k, brief: {} }) : null} set={(q, v) => setMsg(i, { brief: { ...m.brief, [q]: v } })} go={() => slidesGo(i, draft.trim())} />
                   : <SlidesPlan m={m} busy={busy} css={css} base={(ed.current?.frameIds?.().length || 0) + 1} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
                     flip={k => setMsg(i, { pics: { ...(m.pics || {}), [k]: nextPic(picOf(m, k)) } })}
                     build={() => slidesBuild(i)} show={() => ed.current?.showIds([m.built]) || setGone(g => ({ ...g, [m.at + ':slides']: true }))} />)

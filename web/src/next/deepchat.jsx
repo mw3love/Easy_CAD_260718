@@ -1,5 +1,5 @@
 // 딥모드 대화창 카드(§8 항목66 3-2, 2026-10-25) — ① 질문지 한 장 ② 지면 계획 카드. 상태는 대화 기록의 답 하나(`kind: 'deep'`)에 — 다시 열어도 그대로.
-// 질문지는 서버를 안 부름(왕복 없이 한 번 — 항목64가 버린 「여러 번 묻기」의 예외: 몇 분짜리 비싼 일이라 묻는 값이 쌈). 보기에 없는 말은 기존 입력 칸.
+// 질문지는 한 번에 한 장(항목64가 버린 「여러 번 묻기」의 예외: 몇 분짜리 비싼 일이라 묻는 값이 쌈) — 2026-11-06부터 질문은 서버가 주제 글을 읽고 맞춤(`brief_ask`, 몇 초), 못 하면 고정 질문. 보기에 없는 말은 기존 입력 칸.
 // 계획 카드 = 꼭지(× 빼기) · 예상 크레딧(톤은 만든 뒤 속성 카드 — 2026-10-25 처음 고르기 없앰) → 「이대로 만들기」 전엔 비싼 생성 없음. 말로 고치기 = 입력 칸(chat.jsx가 계획을 다시 짜게 보냄)
 import { useState } from 'react'
 
@@ -25,13 +25,22 @@ export const SLIDES_QS = [
 ]
 // 보낼 답 — 안 고른 것은 「알아서」, 여럿 고르기는 목록(없으면 「알아서」), 입력 칸 글 = 「더」
 export const briefOf = (b = {}, more = '', qs = DEEP_QS) => ({ ...Object.fromEntries(qs.map(([q, , multi]) => [q, multi ? (b[q]?.length ? b[q] : AUTO) : b[q] || AUTO])), ...(more ? { 더: more } : {}) })
+// 맞춤 질문(2026-11-06 사용자 「프롬프트를 읽고 맞춤으로 — 대상을 썼는데 또 물음」) — 서버 `brief_ask`가 주제 글을 읽고 { known, audience, questions }.
+// 화면 = 알아들은 것(회색 칩) + 맞춤 질문 + 아래 설정(코드가 값으로 쓰는 것 — 장 수·그림 장·재료·내용·깊이). 못 만들면 옛 고정 질문(`DEEP_QS`·`SLIDES_QS`)
+export const DEEP_SET = DEEP_QS.filter(([q]) => ['깊이', '재료'].includes(q))
+export const SLIDES_SET = SLIDES_QS.filter(([q]) => ['내용', '장 수', '재료', '그림 장'].includes(q))
+export const askQs = (m, slides) => (m.ai?.questions?.length ? [...m.ai.questions.map(x => [x.q, x.options, !!x.multi]), ...(slides ? SLIDES_SET : DEEP_SET)] : m.asking ? (slides ? SLIDES_SET : DEEP_SET) : slides ? SLIDES_QS : DEEP_QS)   // 정리하는 동안 = 설정만(고정 질문이 떴다 바뀌지 않게)
+// 서버에 보낼 답 = 질문 답 + 알아들은 것(「누구에게」 = 딥모드 본문이 독자로 읽음 — 질문으로 물었으면 그 답이 이김)
+export const askBrief = (m, more, slides) => { const b = briefOf(m.brief, more, askQs(m, slides)), ai = m.ai
+  if (!ai) return b
+  return { ...(ai.known?.length ? { '주제에서 알아들은 것': ai.known.map(k => `${k.label}: ${k.value}`).join(' · ') } : {}), ...(ai.audience ? { 누구에게: ai.audience } : {}), ...b } }
 const SOURCE = { ai: 'AI 설명', web: '웹 검색', kr: '공공 데이터', image: '그림', board: '이 칠판' }
 export const keptPlan = m => ({ ...m.plan, sections: (m.plan.sections || []).filter((_, i) => !(m.drop || []).includes(i)) })   // × 뺀 꼭지 빼고
 
 // 질문지 — m = { topic, brief, done }. set(질문, 값) · go() = 「지면 계획 짜기」(입력 칸 글을 「더」로 같이)
 // shape = 모양 바꾸기(한 판 ↔ 여러 장 — 2026-11-04 입구 합치기, 대화창 「+ › Deep Mode」에서 온 질문지만) — 누르면 그 모양의 질문지로
-export function DeepAsk({ m, set, go, busy, css, qs = DEEP_QS, slides = false, shape = null }) {
-  const b = m.brief || {}, lock = !!m.done || !!busy
+export function DeepAsk({ m, set, go, busy, css, slides = false, shape = null }) {
+  const b = m.brief || {}, lock = !!m.done || !!busy, qs = askQs(m, slides), nAi = m.ai?.questions?.length || 0
   return <div data-testid="deep-ask" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
     {shape && <div data-testid="deep-shape" style={{ display: 'flex', gap: 6 }}>
       {SHAPES.map(([k, name, tip]) => { const on = (slides ? 'slides' : 'deep') === k
@@ -41,9 +50,15 @@ export function DeepAsk({ m, set, go, busy, css, qs = DEEP_QS, slides = false, s
     </div>}
     <div style={{ fontWeight: 700 }}>「{m.topic}」 — {slides ? '발표 자료를 짜기 전에 몇 가지만' : '한 판을 짜기 전에 몇 가지만'}</div>
     {slides && m.ctxCount > 0 && <span style={css.meta}>칠판에서 고른 것 {m.ctxCount}개를 재료로 같이 보내요</span>}
-    {qs.map(([q, opts, multi]) => { const cur = b[q], on = v => (multi ? (cur || []).includes(v) : (cur || AUTO) === v)
+    {m.asking && <div data-testid="deep-asking" style={{ ...css.meta, display: 'flex', gap: 6, alignItems: 'center' }}><style>{'@keyframes mb-spin{to{transform:rotate(360deg)}}'}</style><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', border: '2px solid currentColor', borderTopColor: 'transparent', animation: 'mb-spin .8s linear infinite' }} />주제를 읽고 맞춤 질문을 정리하는 중…</div>}
+    {m.ai?.known?.length > 0 && <div data-testid="deep-known" style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <span style={css.meta}>주제에서 알아들은 것 — 다시 묻지 않아요</span>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>{m.ai.known.map(k => <span key={k.label} style={{ ...css.kind, whiteSpace: 'normal' }}>{k.label} · {k.value}</span>)}</div></div>}
+    {m.askFail && <span data-testid="deep-ask-fallback" style={css.meta}>맞춤 질문을 못 만들어 기본 질문으로 물어요</span>}
+    {qs.map(([q, opts, multi], k) => { const cur = b[q], on = v => (multi ? (cur || []).includes(v) : (cur || AUTO) === v)
+      const head = nAi && k === nAi ? <span key="set" style={{ ...css.meta, marginTop: 4, fontWeight: 700 }}>설정</span> : null
       const pick = v => set(q, multi ? (on(v) ? (cur || []).filter(x => x !== v) : [...(cur || []), v]) : v)
-      return <div key={q} data-q={q} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      return <div key={q} data-q={q} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>{head}
         <span style={css.meta}>{q}{multi ? ' (여럿 · 안 고르면 알아서)' : ''}</span>
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
           {(multi ? opts : [AUTO, ...opts]).map(v => <button key={v} data-v={v} aria-pressed={on(v)} disabled={lock} onClick={() => pick(v)}
@@ -51,7 +66,7 @@ export function DeepAsk({ m, set, go, busy, css, qs = DEEP_QS, slides = false, s
         </div></div> })}
     {m.done ? <span style={css.meta}>{m.more ? `덧붙인 말: ${m.more} · ` : ''}이 답으로 {slides ? '장 계획' : '지면 계획'}을 짰어요</span>
       : <><span style={css.meta}>보기에 없는 말(꼭 넣을 것·빼 줄 것)은 아래 칸에 적고 Enter — 계획만 짜요({slides ? '약 10크레딧·15초' : '약 40크레딧·20초'}, 만들기는 계획을 보고 나서)</span>
-        <button data-testid="deep-plan-go" style={{ ...css.pin, alignSelf: 'flex-start', padding: '4px 12px' }} disabled={!!busy} onClick={go}>{slides ? '장 계획 짜기' : '지면 계획 짜기'}</button></>}
+        <button data-testid="deep-plan-go" style={{ ...css.pin, alignSelf: 'flex-start', padding: '4px 12px' }} disabled={!!busy || !!m.asking} onClick={go}>{slides ? '장 계획 짜기' : '지면 계획 짜기'}</button></>}
   </div>
 }
 

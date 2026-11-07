@@ -48,7 +48,7 @@ EDITOR = """너는 「웹 칠판」의 편집장이다. 사용자의 주제 하�
 - **숫자·날짜·최신 사실이 들어가는 꼭지(타임라인 포함)는 source가 web 또는 kr**(ai 금지). query는 앞 대화 없이 혼자 통하는 한국어 검색 문장(최신이면 연도·달 포함).
   kr이면 query에 「통계」「법령」 같은 낱말을 넣는다.
 - 계획에는 숫자·사실을 쓰지 않는다(제목은 「기억할 숫자 3개」처럼). 숫자는 재료에서 온다.
-- 질문지 답(누구에게·무엇에·깊이·꼭 넣을 것·재료)을 따른다. 「알아서」는 네가 정한다."""
+- 질문지 답(주제에서 알아들은 것·맞춤 질문·깊이·재료)을 따른다. 「알아서」는 네가 정한다."""
 
 SCHEMA = {
     "주인공 글": '{"text": ["문단", "문단"]} — 2~3문단, 핵심은 **굵게**',
@@ -89,6 +89,9 @@ def brief_text(brief: dict) -> str:
     """질문지 답 → 지시문 줄(대화창 `deepchat.jsx` `briefOf` 꼴 — 안 고른 것은 「알아서」, 「더」 = 입력 칸 글)."""
     b = brief if isinstance(brief, dict) else {}
     keys = ("누구에게", "무엇에", "깊이", "꼭 넣을 것", "재료")
+    extra = [k for k in b if k not in keys and k != "더"]   # 맞춤 질문(2026-11-06 `brief_ask`) = 질문 이름이 그때그때 — 있으면 온 것 그대로(없는 고정 이름은 「알아서」로 채우지 않음)
+    if extra:
+        keys = tuple(k for k in b if k != "더")
     out = [f"- {k}: {', '.join(map(str, b[k])) if isinstance(b.get(k), list) else b.get(k) or AUTO}" for k in keys]
     if str(b.get("더") or "").strip():
         out.append(f"- 더(사용자가 직접 쓴 말 — 꼭 따름): {str(b['더']).strip()[:500]}")
