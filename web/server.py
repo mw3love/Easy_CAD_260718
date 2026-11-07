@@ -231,7 +231,7 @@ class Handler(SimpleHTTPRequestHandler):
                 sys.stderr.write("[길] %s (%s)%s\n" % (kind, how, " — 되묻기 " + "|".join(choices) if choices else ""))
                 if choices:   # 애매하고 비싼 갈림길 — 만들기 전에 버튼으로 물음(§8 항목64). 누르면 대화창이 그 길 이름표로 다시 보냄
                     return self._json(200, {"kind": "ask", "choices": choices, "default": kind, "key": "|".join(sorted(choices)),
-                                            "content": "어느 쪽으로 만들까요?", "model": route.ROUTE_MODEL if how == "ai" else "낱말 규칙", "elapsed": 0})
+                                            "content": "어느 쪽으로 만들까요?", "model": route.JUDGE_MODEL if how == "ai" else "낱말 규칙", "elapsed": 0})
                 if board_chat.maybe_icon(text) and prefs.get("icon|image") == kind:   # 기억으로 고른 길 — 대화창이 답에 「다른 쪽으로」 버튼을 붙임
                     self._extra = {"remembered": {"key": "icon|image", "choices": ["image", "icon"]}}
                 if kind == "icon":   # 되묻기에서 두 번 고른 길(`ask_pref`)

@@ -46,7 +46,7 @@ def test_route_uses_model_choice_and_sends_criteria():
         assert route.route("k", "우리 송신소 점검 결과 어땠지?", http=http, base_url="https://g") == ("board", "ai")
     finally:
         os.environ["EASYCAD_ROUTE"] = old or "rules"
-    url, body = http.calls[0]
+    url, body = next(c for c in http.calls if c[0].endswith("/decisions/"))   # 판정 대화 모델과 동시에 물음(2026-11-07)
     assert url == "https://g/decisions/" and body["model"] == route.ROUTE_MODEL
     assert set(body["questions"]["q"]["criteria"]) == {"search", "board", "chat", "image", "report"}
 
@@ -78,3 +78,47 @@ def test_route_explicit_draw_beats_search():
     probs = {"search": 0.6, "image": 0.38, "chat": 0.02}
     assert _route("내일의 전주 날씨를 고흐 느낌으로 그려줘.", ("search", 0.56, probs))[0] == "image"
     assert _route("송출 흐름도 그려 줘", ("search", 0.56, probs))[0] != "image"   # 흐름도는 그림 아님
+
+
+class _Http2(_Http):
+    """가짜 /decisions/ + /chat/completions/(판정 대화 모델 — judge = 답 글 또는 예외)."""
+    def __init__(self, answers, judge):
+        super().__init__(answers); self.judge = judge
+
+    def post(self, url, headers=None, json=None, timeout=None):
+        if url.endswith("/chat/completions/"):
+            self.calls.append((url, json))
+            if isinstance(self.judge, Exception):
+                raise self.judge
+            return _Resp(200, {"choices": [{"message": {"content": self.judge}}]})
+        return super().post(url, headers=headers, json=json, timeout=timeout)
+
+
+def _decide2(text, jev, judge):
+    import os
+    old = os.environ.pop("EASYCAD_ROUTE", None)
+    try:
+        http = _Http2(jev, judge)
+        return route.decide("k", text, http=http, base_url="https://g"), http
+    finally:
+        if old is not None:
+            os.environ["EASYCAD_ROUTE"] = old
+
+
+def test_judge_model_wins_when_it_answers():   # 2026-11-07 — Flash-Lite 30/31 vs JEV 28/31: 「회의 내용 정리해 줘」 JEV chat → 판정 모델 report
+    (kind, how, asks), http = _decide2("오늘 회의 내용 정리해 줘", ("chat", 0.7, {"chat": 0.7, "report": 0.3}), "report")
+    assert (kind, how, asks) == ("report", "ai", [])                     # 다르면 묻지 않고 판정 모델
+    body = next(j for u, j in http.calls if u.endswith("/chat/completions/"))
+    assert body["model"] == route.JUDGE_MODEL and "report" in body["messages"][0]["content"]
+
+
+def test_judge_failure_falls_back_to_jev():
+    (kind, how, _), _h = _decide2("우리 송신소 점검 결과 어땠지?", ("board", 0.84, {"board": 0.84, "chat": 0.1}), RuntimeError("시간 초과"))
+    assert (kind, how) == ("board", "ai")
+    (kind, how, _), _h = _decide2("우리 송신소 점검 결과 어땠지?", ("board", 0.84, {"board": 0.84}), "몰라요")   # 길 이름이 없는 답 = 실패
+    assert (kind, how) == ("board", "ai")
+
+
+def test_agree_keeps_jev_ask_when_close():   # 둘이 같은 답이면 JEV 확률로 지금처럼 되묻기(1·2등 차 < 0.3이고 비싼 길)
+    (kind, how, asks), _h = _decide2("발표 자료 만들어 줘", ("chat", 0.49, {"chat": 0.49, "report": 0.45}), "chat")
+    assert kind == "chat" and asks == ["chat", "report"]

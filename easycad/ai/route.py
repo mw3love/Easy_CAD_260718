@@ -1,6 +1,6 @@
 """웹 칠판 대화창 길 고르기(2026-10-20, Qt 비의존, `web/server.py`가 부름) — 질문 → 대화·웹 검색·칠판에서·그림·정리 문서.
 
-판단은 KAIROS 판단 모델 `jev-latest`(POST /decisions/, choice + 확신도)에 맡기고, 낱말 규칙(`board_chat.guess_kind`)을 바닥으로 깐다:
+판단은 2026-11-07부터 판정 대화 모델 `gemini-3.5-flash-lite`(+ 같이 묻는 JEV 확률 — 되묻기·받침, 아래 `JUDGE_MODEL`)에, 그 전엔 KAIROS 판단 모델 `jev-latest`(POST /decisions/, choice + 확신도)에 맡기고, 낱말 규칙(`board_chat.guess_kind`)을 바닥으로 깐다:
 바깥 모델이 없어지거나·오류·`TIMEOUT`을 넘기거나·주간 자가 시험에서 규칙보다 못하면 규칙으로(앱은 안 멈춤).
 2026-10-20 실측(아래 `CASES` 24문항 × 2번, docs/history): 규칙 16/24 · jev 22/24(오류 0·두 번 같은 답·1.4초) · gemini-3.5-flash-lite 21~22(오류 4) ·
 gpt-6-luna-decisions 21(오류 4). jev가 틀린 둘은 아래 두 손질로 잡음 — 흐름도·도면은 그림이 아님(규칙과 같은 말), 확신이 낮고 검색이 후보면 검색(출처가 붙어 안전).
@@ -62,6 +62,58 @@ def ask_model(api_key: str, text: str, has_context: bool, *, base_url: str = gw.
     return a["choice"], float(a.get("confidence") or 0), dict(a.get("probabilities") or {})
 
 
+# 2026-11-07 판정 모델 비교(정답 문항 31 × 2, 같은 선택지 7개): Gemini 3.5 Flash-Lite 30/31 1.28초 · JEV 1.14 28/31 0.65초 · luna 28/31 ·
+# Haiku 5.5 25/31 — 길은 Flash-Lite(대화 모델에 「하나만, 이름만」)가 고르고 JEV는 같이 물어 확률(되묻기)·받침으로. 둘은 동시에 물음(기다림 = 더 느린 쪽)
+JUDGE_MODEL = "gemini-3.5-flash-lite"
+JUDGE_TIMEOUT = 2.5
+JUDGE_KINDS = {**CRITERIA, "diagram": "상자와 화살표로 된 흐름도·계통도·구성도를 칠판에서 고칠 수 있는 도형으로 그리기",
+               "icon": "선으로 된 아이콘·심볼을 SVG(고칠 수 있는 선)로 만들기"}
+
+
+def ask_judge(api_key: str, text: str, has_context: bool, *, base_url: str = gw.BASE_URL, http=None, timeout: float = JUDGE_TIMEOUT) -> str:
+    """판정 대화 모델 한 번 → 고른 길(`JUDGE_KINDS` 이름). 실패·모르는 답이면 예외(→ JEV)."""
+    import httpx
+    from easycad.ai import model_pick
+    http = http or httpx
+    system = INSTRUCTIONS + " 아래 길 이름 중 하나만, 이름만 답한다.\n" + "\n".join(f"- {k}: {v}" for k, v in JUDGE_KINDS.items())
+    r = http.post(base_url + "/chat/completions/", headers={"Authorization": f"Bearer {api_key}"}, timeout=timeout,
+                  json={"model": model_pick.pick(JUDGE_MODEL), "max_tokens": 10, "temperature": 0,
+                        "messages": [{"role": "system", "content": system}, {"role": "user", "content": _state_text(text, has_context)}]})
+    if r.status_code >= 400:
+        raise RuntimeError(f"HTTP {r.status_code}")
+    t = str(r.json()["choices"][0]["message"]["content"] or "").strip().lower()
+    hit = [k for k in JUDGE_KINDS if k in t]
+    if len(hit) != 1:
+        raise RuntimeError(f"모르는 길 {t[:20]!r}")
+    return hit[0]
+
+
+def ask_both(api_key: str, text: str, has_context: bool, *, base_url: str = gw.BASE_URL, http=None, timeout: float | None = None) -> tuple:
+    """판정 대화 모델과 JEV를 동시에 → (판정 길 또는 None, (JEV 길, 확신도, 확률) 또는 None)."""
+    from concurrent.futures import ThreadPoolExecutor
+    def safe(fn, **kw):
+        try:
+            return fn(api_key, text, has_context, base_url=base_url, http=http, **kw)
+        except Exception:
+            return None
+    with ThreadPoolExecutor(2) as ex:
+        j = ex.submit(safe, ask_judge, **({"timeout": timeout} if timeout else {}))
+        d = ex.submit(safe, ask_model, **({"timeout": timeout} if timeout else {}))
+        return j.result(), d.result()
+
+
+def judged(text: str, judge, jev) -> tuple:
+    """두 답 → (길, 되묻기 목록). 판정 대화 모델이 답했으면 그 길(JEV와 같으면 JEV 확률로 손질·되묻기, 다르면 묻지 않고 판정 모델 — 실측이 더 정확),
+    못 했으면 지금까지처럼 JEV. 둘 다 없으면 (None, [])."""
+    if jev and (not judge or judge == jev[0]):
+        choice, conf, probs = jev
+        kind = adjust(text, choice, conf, probs)
+        return kind, ask_choices(choice, kind, probs)
+    if judge:
+        return adjust(text, judge, 1.0, {judge: 1.0}), []
+    return None, []
+
+
 def adjust(text: str, choice: str, conf: float, probs: dict) -> str:
     """판단 모델 답 손질 — 아이콘 말이면 아이콘(판단 모델엔 이 길이 없음 — 낱말로 분명, §8 항목63), 흐름도·도면은 그림이 아님,
     「그려 줘」가 분명하면 그림(최신 정보가 필요하면 서버가 검색 → 그리기로 이음), 확신이 낮고 검색이 1·2등이면 검색."""
@@ -104,12 +156,10 @@ def decide(api_key: str, text: str, has_context: bool = False, *, prefs: dict | 
     rules = board_chat.guess_kind(text, has_context)
     if os.environ.get("EASYCAD_ROUTE") == "rules" or not state["ai"] or not api_key:
         return rules, "rules", []
-    try:
-        choice, conf, probs = ask_model(api_key, text, has_context, base_url=base_url, http=http)
-    except Exception:
+    kind, asks = judged(text, *ask_both(api_key, text, has_context, base_url=base_url, http=http))
+    if not kind:
         return rules, "rules", []
-    kind = adjust(text, choice, conf, probs)
-    return kind, "ai", ask_choices(choice, kind, probs)
+    return kind, "ai", asks
 
 
 # 되묻기 버튼 대신 입력 칸에 친 말(「선으로 해 줘」·「그림인데 수채화로」) → 버튼 중 하나. 앞이 먼저(「선 그림」은 그림보다 아이콘)
@@ -145,11 +195,11 @@ def self_check(api_key: str, *, base_url: str = gw.BASE_URL, http=None) -> dict:
     t0 = time.time()
     for q, c, want in CASES:
         ok_rules += board_chat.guess_kind(q, bool(c)) == want
-        try:
-            choice, conf, probs = ask_model(api_key, q, bool(c), base_url=base_url, http=http, timeout=10.0)
-            ok_ai += adjust(q, choice, conf, probs) == want
-        except Exception:
-            err += 1
+        judge, jev = ask_both(api_key, q, bool(c), base_url=base_url, http=http, timeout=10.0)
+        kind, _ = judged(q, judge, jev)
+        err += kind is None
+        ok_ai += kind == want
+        time.sleep(0.5)   # 분당 요청 한도(120건, 공개 칠판과 같은 키 — 2026-11-07 시험에서 429)를 남겨 둠
     state["ai"] = ok_ai >= ok_rules
-    return {"model": ROUTE_MODEL, "ai": ok_ai, "rules": ok_rules, "errors": err, "of": len(CASES), "use_ai": state["ai"],
+    return {"model": f"{JUDGE_MODEL}+{ROUTE_MODEL}", "ai": ok_ai, "rules": ok_rules, "errors": err, "of": len(CASES), "use_ai": state["ai"],
             "at": int(time.time()), "sec": round(time.time() - t0, 1)}
