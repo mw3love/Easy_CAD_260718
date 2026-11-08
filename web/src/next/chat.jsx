@@ -687,11 +687,11 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
                 : m.step === 'confirm' ? <DeepConfirm m={m} busy={busy} css={css} yes={() => deepConfirm(i)} no={() => setMsg(i, { done: 'no' })} />
                 : m.step === 'ask'
                 ? <DeepAsk m={m} busy={busy} css={css} cost={m.pic ? featCost('infographic') : ''} shape={m.shapes && !m.done && models?.jobs?.deep && models?.jobs?.slides ? k => setMsg(i, { kind: k, brief: {} }) : null} set={(q, v) => setMsg(i, { brief: { ...m.brief, [q]: v } })} go={() => deepGo(i, draft.trim())} />
-                : <DeepPlan m={m} busy={busy} css={css} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
+                : <DeepPlan m={m} busy={busy} css={css} credits={credits} mine={myKey} setDrop={d => setMsg(i, { drop: d })} one={() => goTo('infographic', m.topic)} oneCost={featCost('infographic')} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
                   build={() => deepBuild(i)} show={() => ed.current?.showIds([m.built]) || setGone(g => ({ ...g, [m.at + ':deep']: true }))} />)
                 : m.kind === 'slides' ? (m.step === 'ask'
                   ? <DeepAsk m={m} busy={busy} css={css} slides shape={m.shapes && !m.done && models?.jobs?.deep && models?.jobs?.slides ? k => setMsg(i, { kind: k, brief: {} }) : null} set={(q, v) => setMsg(i, { brief: { ...m.brief, [q]: v } })} go={() => slidesGo(i, draft.trim())} />
-                  : <SlidesPlan m={m} busy={busy} css={css} base={(ed.current?.frameIds?.().length || 0) + 1} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
+                  : <SlidesPlan m={m} busy={busy} css={css} credits={credits} mine={myKey} setDrop={d => setMsg(i, { drop: d })} setPics={p => setMsg(i, { pics: { ...(m.pics || {}), ...p } })} one={() => goTo('infographic', m.topic)} oneCost={featCost('infographic')} base={(ed.current?.frameIds?.().length || 0) + 1} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
                     flip={k => setMsg(i, { pics: { ...(m.pics || {}), [k]: nextPic(picOf(m, k)) } })}
                     build={() => slidesBuild(i)} show={() => ed.current?.showIds([m.built]) || setGone(g => ({ ...g, [m.at + ':slides']: true }))} />)
                 : <Answer text={m.content} chart={m.kind === 'ask' ? null : chartAct(m)} />}

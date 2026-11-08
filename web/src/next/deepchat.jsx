@@ -104,9 +104,30 @@ export function DeepAsk({ m, set, go, busy, css, slides = false, shape = null, c
   </div>
 }
 
+// 만들기 전 크레딧 확인(계획 ④, 2026-11-08 사용자 「크레딧을 기반으로 거꾸로 — 여유 있으면 여러 장, 아니면 한 장으로 압축」).
+// need = 이 계획 어림의 높은 쪽, credits = /api/credits(이 요청의 키 — 「🔑 내 키」면 그 사람 것), fixes = [[이름, 줄인 뒤 어림, 함수]](맞는 것만), one = 한 장으로 압축(인포그래픽 질문지)
+// 어림은 「약」이라 넘쳐도 「이대로 만들기」는 막지 않음(KAIROS Estimate는 그림·영상만 — 대화 모델은 실측 어림)
+export function CreditFit({ need, credits, mine, fixes = [], one, oneCost = '', css }) {
+  if (!credits || need == null) return null
+  const left = Math.floor(credits.remaining), who = mine ? '내 키' : '서버 키'
+  if (need <= left) return <span data-testid="credit-ok" style={css.meta}>남은 크레딧 {left.toLocaleString('ko-KR')}({who}) — 충분해요</span>
+  return <div data-testid="credit-short" style={{ display: 'flex', flexDirection: 'column', gap: 5, padding: '7px 9px', borderRadius: 8, background: 'rgba(220,38,38,.07)', border: '1px solid rgba(220,38,38,.25)' }}>
+    <span style={{ fontSize: 12.5 }}>남은 크레딧 <b>{left.toLocaleString('ko-KR')}</b>({who})이 이 계획(약 {need})보다 적어요 — 줄이거나 한 장으로 압축해요</span>
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      {fixes.map(([label, after, fn]) => <button key={label} data-testid="credit-fix" style={css.ghost} onClick={fn}>{label} · 약 {after}</button>)}
+      {one && <button data-testid="credit-one" style={css.ghost} onClick={one}>한 장으로 압축 (인포그래픽{oneCost ? ` · ${oneCost}` : ''})</button>}
+    </div></div>
+}
+// 끝에서부터 빼서 room 안에 들게 — items = [{ i, c, fixed }](차례대로), keep = 남길 최소 수. 들게 되면 뺄 번호들, 안 되면 null
+export function fitDrop(items, room, keep) {
+  let sum = items.reduce((a, x) => a + x.c, 0), n = items.length; const out = []
+  for (let k = items.length - 1; k >= 0 && sum > room && n > keep; k--) { if (items[k].fixed) continue; sum -= items[k].c; n--; out.push(items[k].i) }
+  return sum <= room && out.length ? { out, sum } : null
+}
+
 // 지면 계획 — m = { plan, drop, estimate: { credits: [lo, hi], seconds: [lo, hi] }, built, pages, stale }
 // drop(i) · build() · show() = 지은 판으로
-export function DeepPlan({ m, drop, build, show, busy, css }) {
+export function DeepPlan({ m, drop, build, show, busy, css, credits = null, mine = false, setDrop = null, one = null, oneCost = '' }) {   // credits·setDrop·one = 만들기 전 크레딧 확인(④)
   const secs = m.plan?.sections || [], dropped = new Set(m.drop || []), left = secs.length - dropped.size, lock = !!m.built || !!m.stale || !!busy
   const est = m.estimate, rng = (a, u) => (Array.isArray(a) ? (a[0] === a[1] ? `${a[0]}${u}` : `${a[0]}~${a[1]}${u}`) : a != null ? `${a}${u}` : '')
   return <div data-testid="deep-plan" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -127,7 +148,11 @@ export function DeepPlan({ m, drop, build, show, busy, css }) {
       : m.stale ? <span style={css.meta}>아래에 고친 계획이 있어요</span>
       : <><button data-testid="deep-build" style={GO} disabled={!!busy} onClick={build}>
           이대로 만들기{est ? ` · 약 ${rng(est.credits, '크레딧')}` : ''}</button>
-        <span style={css.meta}>{est?.seconds ? `${rng(est.seconds, '초')} 걸려요(추정) · ` : ''}꼭지 {left}개 · 고칠 점은 아래 칸에 말하면 계획을 다시 짜요</span></>}
+        <span style={css.meta}>{est?.seconds ? `${rng(est.seconds, '초')} 걸려요(추정) · ` : ''}꼭지 {left}개 · 고칠 점은 아래 칸에 말하면 계획을 다시 짜요</span>
+        {(() => { const hi = Array.isArray(est?.credits) ? est.credits[1] : null; if (hi == null || !credits) return null
+          const per = hi / Math.max(1, left), f = fitDrop(secs.map((_, i) => ({ i, c: per })).filter(x => !dropped.has(x.i)), credits.remaining, 3)   // 꼭지마다 비슷하게 — 3개는 남김(× 빼기와 같은 하한)
+          return <CreditFit need={Math.round(hi)} credits={credits} mine={mine} css={css} one={one} oneCost={oneCost}
+            fixes={f && setDrop ? [[`끝에서 꼭지 ${f.out.length}개 빼기`, Math.round(f.sum), () => setDrop([...dropped, ...f.out])]] : []} /> })()}</>}
   </div>
 }
 
@@ -175,7 +200,7 @@ export const slideNos = (m, base = 1) => {
     const got = m.built ? m.nos[j++] : null; if (got) return got
     const k = picOf(m, i) === 'both' ? [n, n + 1] : [n]; n += k.length; return k })
 }
-export function SlidesPlan({ m, flip, drop, build, show, busy, css, base = 1 }) {
+export function SlidesPlan({ m, flip, drop, build, show, busy, css, base = 1, credits = null, mine = false, setPics = null, setDrop = null, one = null, oneCost = '' }) {   // credits·setPics·setDrop·one = 만들기 전 크레딧 확인(④)
   const sl = m.plan?.slides || [], dropped = new Set(m.drop || []), left = sl.length - dropped.size, lock = !!m.built || !!m.stale || !!busy, nos = slideNos(m, base)
   const per = PIC_CREDITS * (m.brief?.['내용'] === '이야기' ? 2 : 1)   // 이야기 책 = 참고 그림을 같이 보내 약 2배(서버 `slides.estimate`)
   const drawn = v => (v ? 1 : 0), extra = Object.keys(m.pics || {}).map(Number).filter(i => !dropped.has(i)).reduce((a, i) => a + (drawn(picOf(m, i)) - drawn(sl[i]?.pic)) * per, 0)   // 🖼 바꾼 만큼 어림을 고침
@@ -202,6 +227,14 @@ export function SlidesPlan({ m, flip, drop, build, show, busy, css, base = 1 }) 
       : m.stale ? <span style={css.meta}>아래에 고친 계획이 있어요</span>
       : <><button data-testid="slides-build" style={GO} disabled={!!busy} onClick={build}>
           이대로 만들기{est ? ` · 약 ${rng(est.credits, '크레딧')}` : ''}</button>
-        <span style={css.meta}>{est?.seconds ? `${rng(est.seconds, '초')} 걸려요(추정) · ` : ''}{left}장{pics || both ? `(${[pics && `그림 장 ${pics}`, both && `글+그림 ${both}`].filter(Boolean).join(' · ')})` : ''} · 🖼 = 글 → 그림 → 글+그림 · 고칠 점은 아래 칸에 말하면 계획을 다시 짜요</span></>}
+        <span style={css.meta}>{est?.seconds ? `${rng(est.seconds, '초')} 걸려요(추정) · ` : ''}{left}장{pics || both ? `(${[pics && `그림 장 ${pics}`, both && `글+그림 ${both}`].filter(Boolean).join(' · ')})` : ''} · 🖼 = 글 → 그림 → 글+그림 · 고칠 점은 아래 칸에 말하면 계획을 다시 짜요</span>
+        {(() => { const hi = Array.isArray(est?.credits) ? est.credits[1] : null; if (hi == null || !credits) return null
+          const room = credits.remaining, drawnN = live.filter(i => drawn(picOf(m, i))).length, perText = Math.max(0, hi - drawnN * per) / Math.max(1, live.length)
+          const cost = i => perText + (drawn(picOf(m, i)) ? per : 0), fixes = []
+          const offs = fitDrop(live.filter(i => drawn(picOf(m, i))).map(i => ({ i, c: per })), room - live.reduce((a, i) => a + perText, 0), 0)   // 그림 장을 끝에서부터 글 장으로
+          if (offs && setPics) fixes.push([`그림 장 ${offs.out.length}개를 글 장으로`, Math.round(offs.sum + live.length * perText), () => setPics(Object.fromEntries(offs.out.map(i => [i, false])))])
+          const cut = fitDrop(live.map(i => ({ i, c: cost(i), fixed: i === 0 })), room, 2)   // 장을 끝에서부터 빼기 — 표지는 남김
+          if (cut && setDrop) fixes.push([`끝에서 ${cut.out.length}장 빼기`, Math.round(cut.sum), () => setDrop([...dropped, ...cut.out])])
+          return <CreditFit need={Math.round(hi)} credits={credits} mine={mine} css={css} one={one} oneCost={oneCost} fixes={fixes} /> })()}</>}
   </div>
 }
