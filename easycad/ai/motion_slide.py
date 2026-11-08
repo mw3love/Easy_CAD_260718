@@ -26,6 +26,8 @@ SYSTEM = """너는 방송국 발표 화면을 만드는 모션그래픽 디자�
   window.mbPrev()는 한 단계 되돌리고 true, 첫 단계에서는 false. window.mbSteps = 전체 단계 수, window.mbStep = 지금 단계(0부터). → 키·스페이스·클릭 = mbNext, ← = mbPrev.
 - 각 단계엔 신호의 흐름(점이 선을 따라 이동, 전파 고리가 퍼짐 등) 같은 뜻 있는 움직임을 하나씩. 계속 도는 장식 움직임은 은은하게만.
 - 글은 [장 글]에 있는 것만, 크게(본문 28px 이상) 적게. HTML만 답한다(설명·코드펜스 없이)."""
+FIX_NOTE = ("\n\n[앞서 만든 HTML]\n{html}\n\n[화면에서 잰 문제]\n{problems}\n\n위 HTML에서 잰 문제만 고친 완결된 HTML 하나를 다시 낸다. 글·그림·움직임·단계 수는 그대로 두고, "
+            "글자가 잘리면 칸을 넓히거나 글 크기를 조금 줄이거나 줄을 나눈다.")
 REF_NOTE = ("\n\n[참고 그림] 함께 보낸 그림은 이 장을 미리 그려 본 설명 그림이다. 구성(무엇이 어디에·어떤 순서로)·사물 모양·색감을 이 그림에 가깝게 SVG로 다시 그리고, "
             "단계마다 움직임을 더한다. 그림 속 글은 [장 글]을 따른다.")
 
@@ -55,12 +57,17 @@ def clean(html: str) -> str:
     return h
 
 
-def make(client, slide: dict, *, w: int = 1600, h: int = 900, ref_image: str = "", model: str = MOTION_MODEL) -> dict:
-    """장(제목·글머리·발표자 메모) + 참고 그림(data: 주소, 그림 장이면) → {"html", "title", "steps", "model", "elapsed"}."""
+def make(client, slide: dict, *, w: int = 1600, h: int = 900, ref_image: str = "", model: str = MOTION_MODEL, fix_html: str = "", problems=()) -> dict:
+    """장(제목·글머리·발표자 메모) + 참고 그림(data: 주소, 그림 장이면) → {"html", "title", "steps", "model", "elapsed"}.
+    fix_html + problems = 앞서 만든 장에서 칠판이 잰 문제(글자 잘림·겹침, `cardcheck.js`)만 고치기 — 참고 그림은 안 보냄."""
     if not str(slide.get("title") or "").strip():
         raise ValueError("장 제목이 없어요")
     w, h = int(max(800, min(2400, w))), int(max(450, min(2400, h)))
+    if fix_html:
+        ref_image = ""
     text = prompt(slide, bool(ref_image))
+    if fix_html:
+        text += FIX_NOTE.replace("{html}", str(fix_html)[:200_000]).replace("{problems}", "\n".join(str(p)[:200] for p in list(problems or [])[:12]))
     user = [{"type": "text", "text": text}, {"type": "image_url", "image_url": {"url": ref_image}}] if ref_image else text
     t0 = time.time()
     r = client.chat.completions.create(model=model, max_tokens=MAX_TOKENS, messages=[

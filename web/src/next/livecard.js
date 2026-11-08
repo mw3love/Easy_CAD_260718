@@ -21,6 +21,7 @@ export const motionSrc = html => head(LIVE_CSP) + KICK + MOTION_BRIDGE + body(ht
 export const isLive = it => it?.type === 'doc' && !!it.live
 export const liveFits = it => isLive(it) && !!it.html && it.html.length <= LIVE_MAX
 export const liveSrc = html => head(LIVE_CSP) + KICK + body(html)
+export const probeSrc = (probe, html) => head(LIVE_CSP) + KICK + probe + body(html)   // 카드 검사(`cardcheck.js`) — 재는 스크립트가 카드보다 먼저
 export const staticSrc = html => head(STATIC_CSP) + body(html)
 // 「크게 보기」 새 탭에 둘 페이지 — 앱 주소의 blob이라 그 페이지 자체엔 스크립트가 없어야 함. 움직이는 카드는 그 안의 틀(iframe)에서만 돎
 export function bigPage(it) {

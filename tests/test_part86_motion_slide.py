@@ -80,3 +80,13 @@ def test_server_motion_route(server):
         out = json.loads(r.read())
     assert out["kind"] == "motion" and out["html"] == GOOD and "→" in out["content"]
     assert seen["slide"]["title"] == SLIDE["title"] and seen["h"] == 1067 and seen["ref_image"].startswith("data:image/")
+
+
+
+def test_fix_sends_old_html_and_problems_without_picture():
+    """칠판이 잰 문제만 고치기(2026-11-08 카드 검사) — 앞 HTML + 문제를 보내고 참고 그림은 안 보냄"""
+    c = _Client(GOOD)
+    out = motion_slide.make(c, SLIDE, ref_image="data:image/jpeg;base64,AAAA", fix_html="<html>OLD-CARD {not format}</html>", problems=["글자가 잘림: 「만든다」"])
+    user = c.calls[0]["messages"][1]["content"]
+    assert out["html"] == GOOD and isinstance(user, str)
+    assert "OLD-CARD {not format}" in user and "글자가 잘림: 「만든다」" in user and "단계는 3개" in user

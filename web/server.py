@@ -512,7 +512,7 @@ class Handler(SimpleHTTPRequestHandler):
         base = self._base()
         b0 = self._balance(key, base)
         try:
-            out = self._with("motion", motion_slide.MOTION_MODEL, lambda m: motion_slide.make(gw._client(key, base, timeout=600), slide, w=int(d.get("w") or 1600), h=int(d.get("h") or 900), ref_image=ref, model=m))
+            out = self._with("motion", motion_slide.MOTION_MODEL, lambda m: motion_slide.make(gw._client(key, base, timeout=600), slide, w=int(d.get("w") or 1600), h=int(d.get("h") or 900), ref_image=ref, model=m, fix_html=str(d.get("fix_html") or ""), problems=d.get("problems") if isinstance(d.get("problems"), list) else ()))
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         except Exception as e:
