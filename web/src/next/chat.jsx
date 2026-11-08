@@ -321,6 +321,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     const ri = replyTo == null ? -1 : msgs.findIndex(m => m.at === replyTo)
     const before = (ri >= 0 ? msgs.slice(0, ri + 1) : msgs).filter(m => m.role !== 'error' && m.kind !== 'ask' && m.kind !== 'deep' && !m.deep && m.kind !== 'slides' && !m.slides)   // 답 안 한 되묻기·딥모드·발표 자료 카드는 앞 대화에 안 실음
     // 바로 앞(또는 이어 묻는) 답이 그림 후보면 고칠 그림 — 「두 번째」라 하면 둘째, 아니면 칠판에 마지막으로 붙인 것, 없으면 첫째(서버가 원본 유지 고치기 — input_images, 2026-10-20 사용자)
+    const fresh = text != null && kind === 'report'   // 칠판 우클릭 「정리 › 문서로」 = 고른 재료로 늘 새 문서(대화 마지막 답이 옛 정리 문서여도 그걸 고쳐 쓰지 않음 — 2026-11-08 비교에서 겪음)
     const lastA = before.at(-1), ims = lastA?.role === 'assistant' ? lastA.images || [] : []
     const pick = /두\s*번째|둘째|2\s*번째?|오른쪽/.test(q) ? 1 : /첫\s*번째|첫째|1\s*번째?|왼쪽/.test(q) ? 0 : lastA?.picked?.at(-1) ?? 0
     const base = ims[Math.min(pick, ims.length - 1)]?.url
@@ -332,7 +333,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
       ...(ri >= 0 ? { reply_to: replyTo } : {}), ...(boardImgs.length ? { imgCount: boardImgs.length } : {}) }
     const next = [...msgs.filter(m => m.role !== 'error'), mine]
     update(next); setReplyTo(null); if (text == null) setDraft(''); setBusy(Date.now()); setBusyJob(kind || (/그려|그림|이미지|일러스트/.test(q) && !/흐름도|순서도|계통도|구성도|도면|조직도|아이콘|svg/i.test(q) ? 'image' : ''))   // 길은 서버가 고르지만 「그려 줘」면 기다리는 동안 그림 두 칸 자리(2026-11-08 「+」 이름표가 없어져 — 보이기만)
-    try { const ans = await ask([...before, mine], kind, (!kind || kind === 'report' || kind === 'live') && lastA?.role === 'assistant' && lastA.html && !lastA.docs && (kind !== 'live' || lastA.kind === 'live') ? lastA.html : '', { ...((!kind || kind === 'report') && lastA?.role === 'assistant' && lastA.docs ? { prev_docs: lastA.docs.map(({ style, html }) => ({ style, html })) } : {}), ...(boardImgs.length ? { board_images: boardImgs } : {}), ...(lastA?.kind === 'live' ? { prev_kind: 'live' } : {}), ...(fl?.spec ? { base_flow: fl.spec, flow_into: fl.id } : {}) })
+    try { const ans = await ask([...before, mine], kind, !fresh && (!kind || kind === 'report' || kind === 'live') && lastA?.role === 'assistant' && lastA.html && !lastA.docs && (kind !== 'live' || lastA.kind === 'live') ? lastA.html : '', { ...(!fresh && (!kind || kind === 'report') && lastA?.role === 'assistant' && lastA.docs ? { prev_docs: lastA.docs.map(({ style, html }) => ({ style, html })) } : {}), ...(boardImgs.length ? { board_images: boardImgs } : {}), ...(lastA?.kind === 'live' ? { prev_kind: 'live' } : {}), ...(fl?.spec ? { base_flow: fl.spec, flow_into: fl.id } : {}) })
       if (ans.kind === 'go') { setBusy(null); goTo(ans.to, q); return }   // 내 질문 = 질문지 카드의 주제(그 카드가 질문·카드를 다시 씀 — 이 질문은 대화 기록에서 바뀜)
       update([...next, await checkLive(ans, [...before, mine])]) } catch (e) {
       setMsgs([...next, { role: 'error', content: String(e.message || e) }])   // 오류는 기록에 안 남김
