@@ -14,7 +14,7 @@ import { DEEP_STYLES } from './deepstyle.js'
 
 const CLEAR = '#00ffffff', CALM = DEEP_STYLES.calm.look   // 색·카드 모양은 디자인 묶음(deepstyle.js `look`)에서
 const STEP_GAP = 30   // 단계 카드 사이(화살표 자리)
-const CHART_KIND = { 꺾은선: 'line', '세로 막대': 'col', '가로 막대': 'row', 원: 'pie', 막대: 'col' }
+const CHART_KIND = { 꺾은선: 'line', '세로 막대': 'col', '가로 막대': 'row', 원: 'pie', 막대: 'col', '누적 막대': 'stack', '막대+꺾은선': 'combo', 도넛: 'donut' }
 
 const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0], locked: false, group_id: null, layer_id: null, _id: newId(), ...extra })
 // 메모 — 폭 w(칠판)·배율 s, 높이는 줄에 맞춤(편집기 commit과 같은 규칙)
@@ -51,7 +51,7 @@ const card = (S, extra = {}) => ({ fill: S.card.fill, ...(S.card.pen ? { pen: S.
 
 /** 머리 — 머리말(흐림: 제목 · 꼭지 수) + 헤드라인(크게) — 제목은 프레임 이름표에도 있어 크게 두 번 쓰지 않음(시안 머리와 같게). 반환 아이템 목록 */
 export function deepHead(plan, x, y, w, k, page = 0, pages = 1, S = CALM) {
-  const eye = `${plan.title || 'Deep Mode'} · 꼭지 ${plan.sections?.length || 0}개${pages > 1 ? ` · ${page + 1}/${pages}장` : ''}`
+  const eye = `${plan.title || '취재 한 판'} · 꼭지 ${plan.sections?.length || 0}개${pages > 1 ? ` · ${page + 1}/${pages}장` : ''}`
   return [memo(x, y, w, k * S.head, [muted(eye, S), ...(plan.headline ? [{ k: 'h1', t: plan.headline }] : [])], { fill: CLEAR, pen: CLEAR })]
 }
 
@@ -77,7 +77,7 @@ export function deepSection(plan, sec, x, y, w, k, v = '', S = CALM) {
       break
     case '요약 그림':   // 판 전체를 한 장으로 요약한 인포그래픽(2026-10-25 사용자) — 칠판 그림 + 밑 설명 한 줄. data = 칠판이 받은 그림(대화창 `deepImgs`), 못 그렸으면 안내 메모
       if (b.data && b.w > 0 && b.h > 0) {
-        const im = base([x, y], { type: 'image', rect: [0, 0, w, w * b.h / b.w], data: b.data, alt: `${sec.title} — Deep Mode 요약 그림` })
+        const im = base([x, y], { type: 'image', rect: [0, 0, w, w * b.h / b.w], data: b.data, alt: `${sec.title} — 취재 한 판 요약 그림` })
         items = [im, memo(x, bottomOf([im]) + 4, w, k * 0.9, [muted('AI가 이 판 내용으로 그린 요약 그림 — 숫자의 출처는 각 꼭지에', S)], { fill: CLEAR, pen: CLEAR })]
       } else items = [memo(x, y, w, k, [{ k: S.title, t: sec.title }, muted(b.error ? `요약 그림을 못 그렸어요 — ${b.error}` : '요약 그림이 없어요', S), muted('이 꼭지를 고르고 대화창에 「다시 그려 줘」', S)], { fill: S.moving.fill, pen: S.moving.pen })]
       break

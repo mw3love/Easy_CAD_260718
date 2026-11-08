@@ -1226,7 +1226,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, zt = topZ(m.items) + 1, no0 = keep ? keep.no - 1 : orderedFrames(m.items).length, out = [], links = []
     const rootId = keep?.id || newId(), vs = {}
     lay.pages.forEach((pg, p) => {
-      const X = o.x + pg.x, Y = o.y, name = (plan.title || 'Deep Mode') + (n > 1 ? ` (${p + 1}/${n})` : '')
+      const X = o.x + pg.x, Y = o.y, name = (plan.title || '취재 한 판') + (n > 1 ? ` (${p + 1}/${n})` : '')
       out.push(p === 0 ? { ...base([X, Y], { type: 'frame', rect: [0, 0, pg.W, pg.H], name, no: no0 + 1, z: zb }), _id: rootId } : base([X, Y], { type: 'frame', rect: [0, 0, pg.W, pg.H], name, no: no0 + p + 1, z: zb, deep_of: rootId }))
       out.push(...deepHead(plan, X + pg.head.x, Y + pg.head.y, pg.head.w, pg.k, p, n, S.look).map(it => ({ ...it, z: zt, deep_of: rootId })))
       pg.cells.forEach(c => { vs[c.i] = c.v || ''
@@ -1255,10 +1255,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const deepInfo = r => ({ ids: r.out.map(it => it._id), pages: r.lay.pages.map(pg => ({ x: r.o.x + pg.x, y: r.o.y, w: pg.W, h: pg.H, waste: deepWaste(pg), rows: r.lay.rows.map(rr => rr.slots.map((sl, k) => `${sl.map(i => i + (rr.v[i] ? rr.v[i][0] : '')).join('+')}:${rr.spans[k]}`).join(' ')) })) })
   // at = 첫 장 왼쪽 위(없으면 지금 칠판의 오른쪽 빈자리)
   const deepSpot = () => { const m = R.current.model, right = m.items.length ? unionBox(m.items.map(it => sceneBox(it, textBox))) : null; return right ? { x: right.x + right.w + 200, y: right.y } : { x: 0, y: 0 } }   // 새 판 자리 = 칠판 오른쪽 끝
-  // Deep Mode 스켈레톤(2026-10-25) — 만드는 동안 판이 놓일 자리에 꼭지 칸 n개(폭 1600 = 판 폭, 높이는 어림) + 그리로 화면 이동. 돌려준 번호로 pendHide
+  // 취재 한 판 스켈레톤(2026-10-25) — 만드는 동안 판이 놓일 자리에 꼭지 칸 n개(폭 1600 = 판 폭, 높이는 어림) + 그리로 화면 이동. 돌려준 번호로 pendHide
   function deepPending(n) {
     const o = deepSpot(), id = newId(), w = 1600, h = 260 + Math.ceil(Math.max(3, n || 6) / 3) * 300
-    setPend(ps => [...ps, { id, kind: 'deep', label: 'Deep Mode 판 만드는 중', x: o.x, y: o.y, w, h, n }])
+    setPend(ps => [...ps, { id, kind: 'deep', label: '취재 한 판 만드는 중', x: o.x, y: o.y, w, h, n }])
     const L = 24, W = size.w - rightInset(svg.current) - L, z = Math.min(1, Math.max(ZMIN, Math.min(W / (w * 1.1), size.h / (h * 1.2))))
     setCam({ z, x: L + W / 2 - (o.x + w / 2) * z, y: size.h / 2 - (o.y + h / 2) * z })
     return id
@@ -1275,8 +1275,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function deepBoard(plan, at, style = 'calm', meta = {}) {
     const m = R.current.model, o = at || deepSpot()
     const r = deepBuild(plan, o, { style, meta })
-    commit([...m.items, ...r.out], [], 'Deep Mode 판')
-    setStatus(`Deep Mode 판 — ${r.n}장 · 꼭지 ${plan.sections?.length || 0}개 · ${styleOf(style).name}`)
+    commit([...m.items, ...r.out], [], '취재 한 판')
+    setStatus(`취재 한 판 — ${r.n}장 · 꼭지 ${plan.sections?.length || 0}개 · ${styleOf(style).name}`)
     return deepInfo(r)
   }
   // 딥모드 판의 첫 프레임(그 판 물건 하나 또는 프레임에서) — 없으면 null
@@ -2715,7 +2715,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         const m = R.current.model, ids = R.current.sel, has = ids.length > 0, selIt = m.items.filter(it => ids.includes(it._id)), act = f => () => { setMenu(null); f() }
         const out = []
         const tidyMenu = () => ['정리 (KAIROS)', '', null, [['문서로 — 정리 문서 한 장', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))],
-          ['한 판으로 — 신문 지면처럼', act(() => onAsk(selIt.find(it => it.type === 'doc')?.title || selIt.find(it => it.type === 'frame')?.name || selIt.map(it => it.type === 'memo' && it.lines?.find(l => /^h[123]$/.test(l.k) && l.t.trim())?.t.trim()).find(Boolean) || '고른 자료 정리', 'deep'))]]]
+          ['취재 한 판으로 — 찾아 보태 신문 지면처럼', act(() => onAsk(selIt.find(it => it.type === 'doc')?.title || selIt.find(it => it.type === 'frame')?.name || selIt.map(it => it.type === 'memo' && it.lines?.find(l => /^h[123]$/.test(l.k) && l.t.trim())?.t.trim()).find(Boolean) || '고른 자료 정리', 'deep'))]]]
         const lockedSel = selIt.filter(it => it.locked && !layerLocked(it))   // 고른 것 중 잠긴 것 — 한 번에 풀기(2026-10-25 사용자, 잠긴 레이어의 것은 레이어 카드에서)
         if (lockedSel.length) { const uids = new Set(lockedSel.map(it => it._id)); out.push([`잠금 해제 (${lockedSel.length}개)`, '', act(() => commit(m.items.map(it => (uids.has(it._id) ? { ...it, locked: false } : it)), ids, '잠금 해제'))], '-') }
         if (has && lockedSel.length === selIt.length) {   // 잠긴 것만 고름 = 안 바뀌는 일만(복사·내보내기·정리 문서)
@@ -2797,7 +2797,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
             : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={cardMode(it)} />))}
           {/* 화살표 라벨은 모든 선·도형 위에(다른 화살표가 지나가도 안 덮임 — 2026-10-18 사용자 지적) */}
           {visible.map(([it, i]) => (isArrow(it) && (it.labels?.length || it.label) && it._id !== editingId ? <Item key={'lb' + it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="only" /> : null))}
-          {pend.map(q => <BoardSkeleton key={'pend' + q.id} q={q} z={z} />)}   {/* 오래 걸리는 일 = 놓일 자리에 회색 틀(skeleton.jsx — 회의록·PDF·글 읽기·베끼기·Deep Mode) */}
+          {pend.map(q => <BoardSkeleton key={'pend' + q.id} q={q} z={z} />)}   {/* 오래 걸리는 일 = 놓일 자리에 회색 틀(skeleton.jsx — 회의록·PDF·글 읽기·베끼기·취재 한 판) */}
           {meet && (() => { const s = meet.s, w = MEET_W * s, h = MEET_H * s, sec = Math.max(0, Math.floor((Date.now() - meet.t0) / 1000)), two = n => String(n).padStart(2, '0')   // 「🎙 회의」 받아 적는 중 — 점선 틀 안에 말한 사람별 글(마지막 줄이 보이게)
             const clk = ms => { const t = Math.floor((ms || 0) / 1000); return `${two(Math.floor(t / 60))}:${two(t % 60)}` }, saved = meet.state === 'saved', who = new Set(meet.segs.map(g => g.speaker)).size
             const head = saved ? `🎙 받아 적던 회의 · ${meet.segs.length}구간` : meet.state === 'start' ? '🎙 마이크 켜는 중…' : meet.state === 'reconnect' ? '🎙 다시 붙는 중…(녹음은 계속하는 중)' : meet.state === 'stopping' ? '🎙 마지막 말 받는 중…' : `🎙 받아 적는 중 · ${two(Math.floor(sec / 60))}:${two(sec % 60)}${who ? ` · ${who}명` : ''}`

@@ -40,7 +40,7 @@ const KINDS = {
   diagram: ['🔷 도형', { color: '#2563eb', background: 'rgba(37,99,235,.10)' }],   // 상자 + 붙은 화살표(2026-11-03 — flowboard.js)
   live: ['▶ 인터랙티브 HTML', { color: '#b4532f', background: 'rgba(218,119,86,.14)' }],   // 원리를 직접 만져 보는 카드(§8 항목66 4단계)   // 선을 고칠 수 있는 도형(§8 항목63)
   ask: ['❓ 확인', { color: 'var(--mb-accent)', background: 'rgba(218,119,86,.12)' }],   // 되묻기(§8 항목64) — 만들기 전에 버튼으로
-  deep: ['📰 Deep Mode', { color: '#b4532f', background: 'rgba(180,83,47,.12)' }],
+  deep: ['📰 취재 한 판', { color: '#b4532f', background: 'rgba(180,83,47,.12)' }],
   slides: ['📽 발표 자료', { color: '#1d4ed8', background: 'rgba(29,78,216,.10)' }],   // 프레임 여러 장(§8 항목69) — 질문지·장 계획 카드   // 한 주제 한 판(§8 항목66) — 질문지·지면 계획 카드(deepchat.jsx)
 }
 // 되묻기 버튼 — [이름, 설명]. 서버가 애매하고 비싼 갈림길에서만 길 둘을 보냄(`easycad/ai/route.py` `decide`)
@@ -53,7 +53,7 @@ const askMemo = () => { try { return JSON.parse(localStorage.getItem(ASK_KEY) ||
 const askPrefs = () => Object.fromEntries(Object.entries(askMemo()).filter(([, v]) => Array.isArray(v) && v.length >= 2 && v.at(-1) === v.at(-2)).map(([k, v]) => [k, v.at(-1)]))
 const rememberAsk = (key, kind) => { try { const m = askMemo(); m[key] = [...(m[key] || []), kind].slice(-2); localStorage.setItem(ASK_KEY, JSON.stringify(m)) } catch { /* 기억 못 해도 그만 */ } }
 // 기다리는 동안 보일 말 — 일마다 실제로 일하는 모델(서버 /api/models `jobs`)을 같이(2026-10-20 사용자: 정돈인데 고른 gpt가 보여 헷갈림, 칠판엔 아무 표시가 없어 안 되는 줄 알았음)
-const JOB_LABEL = { motion: '▶ 장을 움직이게 만드는 중(3~4분)', 'motion-check': '▶ 만든 장을 확인하는 중', 'motion-fix': '▶ 장의 잘린 곳을 고치는 중(1~4분)', 'live-fix': '▶ 잘린 글자를 고치는 중', 'slides-plan': '📽 장 계획 짜는 중', 'slides-build': '📽 발표 자료 만드는 중', live: '▶ 인터랙티브 HTML 만드는 중', report: '📄 정리 문서 만드는 중', image: '🎨 이미지 그리는 중', icon: '✏️ 아이콘(SVG) 그리는 중', diagram: '🔷 도형 그리는 중', 'deep-plan': '📰 지면 계획 짜는 중', 'deep-build': '📰 Deep Mode 판 만드는 중', 'deep-section': '📰 꼭지 다시 쓰는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
+const JOB_LABEL = { motion: '▶ 장을 움직이게 만드는 중(3~4분)', 'motion-check': '▶ 만든 장을 확인하는 중', 'motion-fix': '▶ 장의 잘린 곳을 고치는 중(1~4분)', 'live-fix': '▶ 잘린 글자를 고치는 중', 'slides-plan': '📽 장 계획 짜는 중', 'slides-build': '📽 발표 자료 만드는 중', live: '▶ 인터랙티브 HTML 만드는 중', report: '📄 정리 문서 만드는 중', image: '🎨 이미지 그리는 중', icon: '✏️ 아이콘(SVG) 그리는 중', diagram: '🔷 도형 그리는 중', 'deep-plan': '📰 지면 계획 짜는 중', 'deep-build': '📰 취재 한 판 만드는 중', 'deep-section': '📰 꼭지 다시 쓰는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
 // 「+」 도구 창은 2026-11-08에 없앰(대화창 bakeoff 3라운드 사용자 — 「모두 채팅창으로 녹여 버리자」). 길은 말로만: 서버 길 고르기가 KAIROS 기능 표(`easycad/ai/features.py`)에서
 // 고르고, 발표 자료·인포그래픽처럼 질문지가 먼저인 길은 서버가 `kind: 'go'`로 알려 대화창이 질문지를 띄움. 파일 올리기는 입력 칸 옆 📎
 const CUT_MORE = '끊긴 곳부터 이어서 계속 써 줘. 앞 내용은 되풀이하지 말고 끊긴 문장부터.'   // 끊긴 답 「이어서 쓰기」(2026-10-27)
@@ -91,7 +91,7 @@ const MODEL_KEY = 'magic-board-model'   // 고른 모델은 이 브라우저에�
 const PICKS_KEY = 'magic-board-models'  // 「모델 설정」 — 일마다 고른 모델 {일: id}(없으면 자동, 2026-10-26)
 // 「모델 설정」 칸 — 고를 의미가 있는 일만(2026-10-26 사용자 선택). 길 고르기·검색·받아쓰기·찾기·글 읽기는 늘 자동. [일, 이름, 종류(서버 choices), 서버 jobs 이름]
 // 2026-11-04 사용자(「항목이 너무 많음」) — 8칸 → 넷: 칸 하나 = 서버 일 여럿(`PICK_GROUPS`). 자동이면 일마다 지금처럼 따로, 고르면 묶음 전부 그 모델
-const PICK_ROWS = [['chat', '대화 · 회의 요약', 'llm'], ['image', '이미지', 'image'], ['make', '만들기 — 정리 문서 · Deep Mode · 발표 자료', 'llm'], ['draw', '그리기 — 아이콘 · 도형 · 인터랙티브 HTML', 'llm']]
+const PICK_ROWS = [['chat', '대화 · 회의 요약', 'llm'], ['image', '이미지', 'image'], ['make', '만들기 — 정리 문서 · 취재 한 판 · 발표 자료', 'llm'], ['draw', '그리기 — 아이콘 · 도형 · 인터랙티브 HTML', 'llm']]
 const PICK_GROUPS = { make: ['report', 'deep_plan', 'deep_write', 'slides'], draw: ['icon', 'diagram', 'live'] }   // 칸 → 서버 일(server `PICK_JOBS`)
 const pickOf = job => Object.keys(PICK_GROUPS).find(g => PICK_GROUPS[g].includes(job)) || job   // 서버 일 → 그 일의 칸
 const sendPicks = p => Object.fromEntries(Object.entries(p).flatMap(([k, v]) => (PICK_GROUPS[k] || [k]).map(j => [j, v])))   // 칸 → 서버가 아는 일 이름으로 펼침
@@ -500,7 +500,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   }
   // 꼭지 다시 쓰기(§8 항목66 5단계) — tg = ed.deepTarget(), ask = 고칠 말(비면 「더 자세히」). 손으로 고친 판이면 크레딧 쓰기 전에 먼저 물음(덮어쓰기 확인 카드)
   function deepSection(tg, ask) {
-    if (!tg) { setMsgs(cur => [...cur.filter(x => x.role !== 'error'), { role: 'error', content: 'Deep Mode 판에서 다시 쓸 꼭지를 골라 주세요(프레임째 고르면 안 돼요)' }]); return }
+    if (!tg) { setMsgs(cur => [...cur.filter(x => x.role !== 'error'), { role: 'error', content: '취재 한 판에서 다시 쓸 꼭지를 골라 주세요(프레임째 고르면 안 돼요)' }]); return }
     const at = Date.now(), mine = { role: 'user', content: `${tg.titles.map(t => `「${t}」`).join(' ')} — ${ask || '더 자세히'}`, at, deep: true }
     if (ask) setDraft('')
     if (tg.edited) { update([...msgs.filter(m => m.role !== 'error'), mine, { role: 'assistant', kind: 'deep', step: 'confirm', root: tg.root, idx: tg.idx, titles: tg.titles, ask, at: at + 1 }]); return }
