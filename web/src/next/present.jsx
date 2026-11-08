@@ -9,6 +9,7 @@ import { WEB_HEAD, pauseYoutubeOutside, playYoutube, toggleYoutube } from './web
 import { QrBig } from './qr.jsx'
 import { DOC_NAME, api } from './doc.js'
 import { boardLabel } from './myboards.js'
+import { keyHeaders } from './kairosKey.js'
 
 const THEMES = {
   light: { '--mb-ink': '#27272a', '--mb-muted': '#71717a', '--mb-board': '#ffffff', '--mb-line': '#e4e4e7', '--mb-card': '#ffffff' },
@@ -102,6 +103,20 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
   const [nearBottom, setNearBottom] = useState(false), [intro, setIntro] = useState(true)   // intro = 시작 3초는 마우스가 어디 있든 보여 줌
   useEffect(() => { const t = setTimeout(() => setIntro(false), 3000); return () => clearTimeout(t) }, [])
   const eraseKey = useRef({ t: 0, prev: null }), [toast, setToast] = useState(null), iNow = useRef(i); iNow.current = i
+  // 읽어 주기(계획 ⑥, 2026-11-08) — 켜면 장이 열릴 때 그 장 발표자 메모(`frames[].notes` = 장 프레임 `slide.notes`)를 KAIROS 목소리로(서버 `/api/tts` — 같은 글이면 만든 소리를 다시 씀).
+  // 다음 장 소리는 미리 받아 둠(만드는 데 몇 초). 장을 넘기면 멈춤. 메모 있는 장이 하나도 없으면 단추도 없음
+  const [voice, setVoice] = useState(false), voiceRef = useRef({ urls: new Map(), audio: null }), hasNotes = frames.some(f => f.notes?.trim())
+  const voiceUrl = id => { const f = frames.find(x => x.id === id), V = voiceRef.current; if (!f?.notes?.trim()) return Promise.resolve('')
+    if (!V.urls.has(id)) V.urls.set(id, fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() }, body: JSON.stringify({ board: DOC_NAME, text: f.notes }) })
+      .then(r => r.json()).then(d => { if (d.error || !d.url) throw new Error(d.error || '소리 주소 없음'); return d.url })
+      .catch(e => { V.urls.delete(id); flash(`읽어 주기를 못 했어요 — ${e.message}`); return '' }))
+    return V.urls.get(id) }
+  useEffect(() => { const V = voiceRef.current; V.audio?.pause(); V.audio = null; if (!voice) return
+    let gone = false; const id = frames[i]?.id
+    voiceUrl(id).then(u => { if (gone || !u) return; const a = new Audio(u); a.dataset.frame = id; V.audio = a; a.play().catch(() => {}) })
+    const nx = frames[i + 1]?.id; if (nx) voiceUrl(nx)
+    return () => { gone = true; V.audio?.pause() } }, [i, voice])   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => voiceRef.current.audio?.pause(), [])
   const toastT = useRef(0), flash = msg => { setToast(msg); clearTimeout(toastT.current); toastT.current = setTimeout(() => setToast(null), 2000) }
   const clearSlide = () => { const fr = frames[iNow.current]; if (!fr) return; onClearNotes(fr.box); flash('이 장 판서 지움 — Ctrl+Z로 되돌리기') }
   const pickColor = c => { if (toolRef.current === 'hl') setHlColor(c); else setPenColor(c) }   // 형광펜을 들고 있으면 형광펜 색, 아니면 펜 색
@@ -131,6 +146,7 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
       if (['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter'].includes(k)) { e.preventDefault(); go(1, k === 'ArrowDown' ? 'down' : k === 'ArrowRight' ? 'right' : '') }   // 갈림길에서 ↓ = 아래 판 · → = 옆 장
       else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(k)) { e.preventDefault(); go(-1) }
       else if (k === 'Home') setI(0); else if (k === 'End') setI(n - 1)
+      else if (code === 'KeyN' && hasNotes) { setVoice(v => !v) }   // 읽어 주기(계획 ⑥)
       else if (code === 'KeyM') setGlide(g => !g)
       else if (code === 'KeyD') setDark(v => !v)
       else if (code === 'Digit0' || code === 'KeyV') setTool(null)   // 도구 끄기
@@ -338,6 +354,8 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
       {sep}
       <button title="레이저 (` · L) — 켜 두면 커서가 빨간 점, 누른 채 끌면 빨간 자취 · 펜·네모 등을 켜면 그 도구 커서, 끄면 다시 레이저" onClick={() => setLaserOn(v => !v)} style={tbtn(laserOn)}>
         {I(<><circle cx="9" cy="9" r="2.6" fill="currentColor" /><circle cx="9" cy="9" r="6" opacity=".5" /></>)}<span style={{ fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' }}>레이저</span></button>
+      {hasNotes && <button data-testid="present-voice" aria-pressed={voice} title="읽어 주기 (N) — 장이 열리면 그 장 발표자 메모를 KAIROS 목소리로 읽어요(장마다 처음 한 번만 만들고 다음부턴 다시 씀)" onClick={() => setVoice(v => !v)} style={tbtn(voice)}>
+        {I(<><path d="M3 7h3l4-3v10l-4-3H3z" fill="currentColor" /><path d="M12.5 6.5a3.5 3.5 0 0 1 0 5M14.5 4.5a6.5 6.5 0 0 1 0 9" /></>)}<span style={{ fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' }}>읽어 주기</span></button>}
       {sep}
       {COLORS.map(([c, name, code]) => { const cur = tool === 'hl' ? hlColor : penColor
         return <button key={c} title={`${name} (${code.slice(3)})${tool === 'hl' ? ' — 형광펜' : ' — 펜·네모·화살표·글자'}`} onClick={() => pickColor(c)}

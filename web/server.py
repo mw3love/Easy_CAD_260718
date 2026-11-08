@@ -43,7 +43,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXAMPLES, EXAMPLE = os.path.join(HERE, "examples"), "intro"   # 예시 칠판 원본(2026-10-28) — `examples/intro/intro.ecad`·`.chat.json`·`.img/`
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_bubble, board_chat, brief_ask, board_diagram, slides, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, features, kr_tools, live_card, meeting, motion_slide, model_pick, route, see, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_bubble, board_chat, brief_ask, board_diagram, slides, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, features, kr_tools, live_card, meeting, motion_slide, slide_voice, model_pick, route, see, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
@@ -640,6 +640,9 @@ class Handler(SimpleHTTPRequestHandler):
     def _img_dir(self, name: str) -> str:
         return os.path.join(self.data_dir, name + ".img")
 
+    def _tts_dir(self, name: str) -> str:   # 발표 「읽어 주기」 소리(계획 ⑥) — 칠판 옆 `<이름>.tts/<글 지문>.wav`
+        return os.path.join(self.data_dir, name + ".tts")
+
     def _img_file(self, name: str, url: str) -> str:
         """대화창이 보낸 그림 주소(`/api/img/<이 칠판>/<파일>`) → 서버의 그 파일 경로, 이 칠판 그림이 아니거나 없으면 ""."""
         from urllib.parse import unquote
@@ -1148,6 +1151,14 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._send(404, b'{"error":"none"}')
             with open(p, "rb") as f:   # 새 이름이라 덮어쓸 일 없음 → 오래 기억(칠판 옮길 때마다 대화창 그림 몇 MB를 다시 받았음, 2026-11-05)
                 return self._send(200, f.read(), ctype={"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}[m.group(3)], headers=IMMUTABLE)
+        m = re.match(r"^/api/tts/([^/]+)/([0-9a-f]{16})\.wav$", path)
+        if m:   # 발표 「읽어 주기」 소리(이름 = 글 지문이라 안 바뀜 → 오래 기억)
+            name = self._name(m.group(1))   # 그림 주소와 같게(경로는 이미 풀린 이름)
+            p = os.path.join(self._tts_dir(name), m.group(2) + ".wav") if name else ""
+            if not p or not os.path.exists(p):
+                return self._send(404, b'{"error":"none"}')
+            with open(p, "rb") as f:
+                return self._send(200, f.read(), ctype="audio/wav", headers=IMMUTABLE)
         m = re.match(r"^/api/blob/([^/]+)$", path)
         if m:   # 칠판 속 그림(웹이 칠판을 열 때 따로 받음 — `docblobs.py`), 이름 = 내용 지문
             hit = docblobs.blob_path(self._blob_dir(), m.group(1))
@@ -1237,7 +1248,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self._set_key(collab.edit_key(self.password))
         if not self._authed():
             return self._send(401, b'{"error":"login"}')
-        self._ai, self._ai_board = {"/api/chat": "chat", "/api/ocr": "ocr", "/api/describe": "describe", "/api/stt-token": "stt"}.get(path, ""), ""
+        self._ai, self._ai_board = {"/api/chat": "chat", "/api/ocr": "ocr", "/api/describe": "describe", "/api/stt-token": "stt", "/api/tts": "tts"}.get(path, ""), ""
         if path == "/api/chat":
             return self._chat()
         if path == "/api/ocr":   # 「그림 속 글 읽기」 — 본문 = {data: PNG base64}(칠판 그림 그대로)
@@ -1265,6 +1276,30 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(502, {"error": f"그림 설명 실패: {gw.friendly_error(e)}"})
             sys.stderr.write("[그림 설명] %s %.1f초 %d자\n" % (out["model"], out["elapsed"], len(out["text"])))
             return self._json(200, out)
+        if path == "/api/tts":   # 발표 「읽어 주기」(계획 ⑥, 2026-11-08) — 본문 = {board, text: 발표자 메모} → {url: WAV 주소, cached}. 같은 글이면 만든 파일을 다시 씀(크레딧 0)
+            req = self._body(1024 * 1024) or {}
+            name, text = self._name(str(req.get("board") or "")), str(req.get("text") or "")
+            if not name or not slide_voice.clean(text):
+                return self._json(400, {"error": "읽을 발표자 메모가 없어요"})
+            from urllib.parse import quote
+            fn = slide_voice.cache_name(text) + ".wav"
+            p, url = os.path.join(self._tts_dir(name), fn), f"/api/tts/{quote(name)}/{fn}"
+            if os.path.exists(p):
+                return self._json(200, {"url": url, "cached": True})
+            key = self._key()
+            if not key:
+                return self._no_key()
+            try:
+                out = slide_voice.speak(key, text, base_url=self._base())
+            except ValueError as e:
+                return self._json(400, {"error": str(e)})
+            except Exception as e:
+                return self._json(502, {"error": f"읽어 주기 실패: {gw.friendly_error(e)}"})
+            os.makedirs(self._tts_dir(name), exist_ok=True)
+            with open(p, "wb") as f:
+                f.write(out["wav"])
+            sys.stderr.write("[읽어 주기] %s %.1f초 → 소리 %.1f초 · 토큰 %s\n" % (out["model"], out["elapsed"], out["seconds"], out["tokens"]))
+            return self._json(200, {"url": url, "cached": False, "seconds": out["seconds"], "elapsed": out["elapsed"]})
         if path == "/api/stt-token":   # 대화창 🎤 — 실시간 받아쓰기 일회용 표(키는 서버에만, 2026-10-20)
             key = self._key()
             if not key:
