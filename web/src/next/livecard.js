@@ -13,6 +13,11 @@ const head = csp => `<!doctype html><meta http-equiv="Content-Security-Policy" c
 const body = html => String(html || '').replace(/^\s*(?:<!--[\s\S]*?-->\s*)*<!doctype[^>]*>/i, '')   // 카드의 doctype은 뗌(우리 것이 먼저)
 const attr = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 
+// 움직이는 장(계획 ⑤, 2026-11-08) — 발표 자료 장 프레임을 덮는 움직이는 카드(`motion: true`). 발표가 → 를 누르면 먼저 장 안 단계:
+// 바깥(발표)이 postMessage {mb: 'step', dir: 1|-1, id} → 카드가 window.mbNext()/mbPrev() → {mb: 'stepped', id, more}(false = 그 방향 끝, 발표가 장을 넘김)
+const MOTION_BRIDGE = "<script>addEventListener('message',function(e){var d=e.data||{};if(d.mb!=='step')return;var r=false;try{r=d.dir<0?(window.mbPrev?window.mbPrev():false):(window.mbNext?window.mbNext():false)}catch(_){}parent.postMessage({mb:'stepped',id:d.id,more:r!==false&&r!==undefined&&r!==null},'*')})</script>"
+export const isMotion = it => it?.type === 'doc' && !!it.live && !!it.motion
+export const motionSrc = html => head(LIVE_CSP) + KICK + MOTION_BRIDGE + body(html)
 export const isLive = it => it?.type === 'doc' && !!it.live
 export const liveFits = it => isLive(it) && !!it.html && it.html.length <= LIVE_MAX
 export const liveSrc = html => head(LIVE_CSP) + KICK + body(html)

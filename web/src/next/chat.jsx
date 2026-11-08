@@ -28,6 +28,7 @@ const openHtml = (html, live = false) => { const u = URL.createObjectURL(new Blo
 // 답 종류 — [표시, 표시 꾸밈] — 서버가 고른 길(판단 모델 jev + 규칙, `easycad/ai/route.py`)을 답 위에 보이기만.
 // 옛 「다시 ▾」(다른 종류로 다시 묻기)는 2026-10-20 없앰(사용자: 대화창 하나로 다 — 길은 앱이 고르고, 틀리면 말로 다시)
 const KINDS = {
+  motion: ['▶ 움직이는 장', { color: 'var(--mb-accent)' }],   // 계획 ⑤
   chat: ['💬 대화', null],
   search: ['🔎 웹 검색', { color: '#2f80ed', background: 'rgba(47,128,237,.12)' }],
   board: ['📌 칠판에서', { color: '#d97706', background: 'rgba(245,158,11,.14)' }],
@@ -51,12 +52,12 @@ const askMemo = () => { try { return JSON.parse(localStorage.getItem(ASK_KEY) ||
 const askPrefs = () => Object.fromEntries(Object.entries(askMemo()).filter(([, v]) => Array.isArray(v) && v.length >= 2 && v.at(-1) === v.at(-2)).map(([k, v]) => [k, v.at(-1)]))
 const rememberAsk = (key, kind) => { try { const m = askMemo(); m[key] = [...(m[key] || []), kind].slice(-2); localStorage.setItem(ASK_KEY, JSON.stringify(m)) } catch { /* 기억 못 해도 그만 */ } }
 // 기다리는 동안 보일 말 — 일마다 실제로 일하는 모델(서버 /api/models `jobs`)을 같이(2026-10-20 사용자: 정돈인데 고른 gpt가 보여 헷갈림, 칠판엔 아무 표시가 없어 안 되는 줄 알았음)
-const JOB_LABEL = { 'slides-plan': '📽 장 계획 짜는 중', 'slides-build': '📽 발표 자료 만드는 중', live: '▶ 인터랙티브 HTML 만드는 중', report: '📄 정리 문서 만드는 중', image: '🎨 이미지 그리는 중', icon: '✏️ 아이콘(SVG) 그리는 중', diagram: '🔷 도형 그리는 중', 'deep-plan': '📰 지면 계획 짜는 중', 'deep-build': '📰 Deep Mode 판 만드는 중', 'deep-section': '📰 꼭지 다시 쓰는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
+const JOB_LABEL = { motion: '▶ 장을 움직이게 만드는 중(3~4분)', 'slides-plan': '📽 장 계획 짜는 중', 'slides-build': '📽 발표 자료 만드는 중', live: '▶ 인터랙티브 HTML 만드는 중', report: '📄 정리 문서 만드는 중', image: '🎨 이미지 그리는 중', icon: '✏️ 아이콘(SVG) 그리는 중', diagram: '🔷 도형 그리는 중', 'deep-plan': '📰 지면 계획 짜는 중', 'deep-build': '📰 Deep Mode 판 만드는 중', 'deep-section': '📰 꼭지 다시 쓰는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
 // 「+」 도구 창은 2026-11-08에 없앰(대화창 bakeoff 3라운드 사용자 — 「모두 채팅창으로 녹여 버리자」). 길은 말로만: 서버 길 고르기가 KAIROS 기능 표(`easycad/ai/features.py`)에서
 // 고르고, 발표 자료·인포그래픽처럼 질문지가 먼저인 길은 서버가 `kind: 'go'`로 알려 대화창이 질문지를 띄움. 파일 올리기는 입력 칸 옆 📎
 const CUT_MORE = '끊긴 곳부터 이어서 계속 써 줘. 앞 내용은 되풀이하지 말고 끊긴 문장부터.'   // 끊긴 답 「이어서 쓰기」(2026-10-27)
 const EMPTY_ASK = { report: '정리해 줘' }   // 이름표만 두고 빈 칸으로 보내면
-const BOARD_JOBS = new Set(['report', 'deep-build', 'deep-section', 'slides-build'])   // 칠판을 바꾸거나 칠판 자료로 만드는 일 — 칠판 위에도 알약(main `aiBusy`)
+const BOARD_JOBS = new Set(['motion', 'report', 'deep-build', 'deep-section', 'slides-build'])   // 칠판을 바꾸거나 칠판 자료로 만드는 일 — 칠판 위에도 알약(main `aiBusy`)
 // 도는 동그라미(칠판 알약·대화창 「생각 중」 공용)
 export const Spinner = () => <><style>{'@keyframes mb-spin{to{transform:rotate(360deg)}}'}</style>
   <span style={{ display: 'inline-block', flex: 'none', width: 11, height: 11, borderRadius: '50%', border: '2px solid #da7756', borderTopColor: 'transparent', animation: 'mb-spin .8s linear infinite' }} /></>
@@ -250,7 +251,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   const topOnce = useRef(fromTop)
   useEffect(() => { if (!box.current) return; if (topOnce.current && msgs.length) { topOnce.current = false; box.current.scrollTop = 0; return } box.current.scrollTop = box.current.scrollHeight }, [msgs.length, busy])
   const asked = useRef(null)
-  useEffect(() => { if (!request || !loaded || asked.current === request.id) return; asked.current = request.id; send(request.text, request.kind) }, [request, loaded])   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!request || !loaded || asked.current === request.id) return; asked.current = request.id; send(request.text, request.kind, null, request.extra || {}) }, [request, loaded])   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!busy) return; const t = setInterval(() => tick(n => n + 1), 1000); return () => clearInterval(t) }, [busy])
 
   const useModel = model || models?.default || 'gpt-6.1-sol'
@@ -302,12 +303,13 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   }
   useEffect(() => () => micStop.current?.(), [])
 
-  async function send(text = null, kind = '', from = null) {   // text·kind = 밖에서 시킨 질문(칠판 우클릭 「정리 문서 만들기」 — 입구는 대화창 하나), from = 「그림으로도」(정리 문서와 같은 자료)
+  async function send(text = null, kind = '', from = null, opts = {}) {   // opts = 밖에서 시킨 일의 덧붙임(「이 장 움직이게」 = { frame })   // text·kind = 밖에서 시킨 질문(칠판 우클릭 「정리 문서 만들기」 — 입구는 대화창 하나), from = 「그림으로도」(정리 문서와 같은 자료)
     const tg = !busy && !from && (kind === 'deep-section' || (text == null && !kind)) ? ed.current?.deepTarget?.() : null   // 판 꼭지를 고른 채 고치는 말 = 그 꼭지만 다시(5단계) — 질문은 보통 대화
     if (kind === 'deep-section' && busy) return
     if (kind === 'deep-section' || (tg && REDO_RE.test(draft.trim()))) { deepSection(tg, kind === 'deep-section' ? '' : draft.trim()); return }
     if (text != null && kind === 'slides') { if (!busy) slidesSend(kind, text); return }   // 칠판 우클릭 「발표 자료 만들기」 = 그 자료로 질문지부터
-    if (text != null && kind === 'deep') { if (!busy) deepSend('deep', text, { brief: { 재료: '이 칠판' } }); return }   // 칠판 우클릭 「정리 › 한 판으로」 = 칠판 자료로 딥모드 질문지(2026-11-08)
+    if (text != null && kind === 'deep') { if (!busy) deepSend('deep', text, { brief: { 재료: '이 칠판' } }); return }
+    if (text != null && kind === 'motion') { if (!busy) motionSend(text, opts.frame); return }   // 칠판 우클릭 「이 장 움직이게」(계획 ⑤)   // 칠판 우클릭 「정리 › 한 판으로」 = 칠판 자료로 딥모드 질문지(2026-11-08)
     if (text == null && !busy && (deepSend(kind) || slidesSend(kind))) return
     const pend = text == null && !from && replyTo == null ? msgs.findLastIndex(m => m.role !== 'error') : -1
     if (pend >= 0 && msgs[pend].kind === 'ask' && draft.trim() && !busy) return choose(pend, kind, draft.trim())   // 되묻기에 글로 답함(§8 항목64)
@@ -376,6 +378,20 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     } catch (e) { setMsgs(cur => [...cur.filter(x => x.role !== 'error'), { role: 'error', content: String(e.message || e) }]); return null } finally { setBusy(null) }
   }
   const planMsg = (m, d) => ({ role: 'assistant', kind: 'deep', step: 'plan', topic: m.topic, brief: m.brief, plan: d.plan, estimate: d.estimate, drop: [], model: d.model, elapsed: d.elapsed, credits: d.credits, at: Date.now() })
+  // 「이 장 움직이게」(계획 ⑤, 2026-11-08) — 장 글·크기·그 장 그림(참고) → 서버 Opus(3~4분) → 그 프레임을 덮는 카드(`ed.motionPlace`). 대화엔 질문·결과 한 줄만
+  async function motionSend(t, frameId) {
+    const info = ed.current?.motionInfo?.(frameId); if (!info) return
+    const image = info.image ? await shrinkImage(info.image).catch(() => '') : ''
+    const mine = { role: 'user', content: t, at: Date.now() }, next = [...msgs.filter(m => m.role !== 'error'), mine]
+    update(next); setBusy(Date.now()); setBusyJob('motion')
+    try {
+      const r = await chatPost({ model: useModel, board: DOC_NAME, ...(Object.keys(picks).length ? { models: sendPicks(picks) } : {}), kind: 'motion', motion: { slide: info.slide, w: info.w, h: info.h, image }, messages: [{ role: 'user', content: t }] })
+      const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
+      if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
+      const cid = ed.current?.motionPlace?.(frameId, d)
+      update([...next, { role: 'assistant', kind: 'motion', content: d.content, model: d.model, at: Date.now(), elapsed: d.elapsed, ...(d.credits != null ? { credits: d.credits } : {}), ...(cid ? { motionId: cid } : {}) }])
+    } catch (e) { setMsgs([...next, { role: 'error', content: String(e.message || e) }]) } finally { setBusy(null) }
+  }
   // 길 고르기가 「질문지 먼저」라고 한 길(서버 `kind: 'go'`) — 발표 자료 = 작은 책 질문지, 인포그래픽 = 딥모드 질문지(그림 한 장으로 — 대화창에선 「한 판」 대신, 2026-11-08 사용자)
   function goTo(to, q) { if (to === 'slides') slidesSend('slides', q); else if (to === 'infographic') deepSend('deep', q, { pic: true }) }
   async function deepGo(i, more) {

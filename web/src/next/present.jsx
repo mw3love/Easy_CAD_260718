@@ -73,7 +73,17 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
   // 다음 = 화살표 길(작은 책 ③, 2026-11-04): 이 장에서 나가는 화살표가 있으면 그 장으로 — 갈림길(둘 이상)은 기본 = 앞 차례(같은 장의 판부터 = 다 보기), ↓ = 아래 판, → = 옆 장.
   // 화살표가 없으면 차례대로(전과 같음). 이전 = 지나온 길을 거슬러(갈림길을 건너뛰었으면 건너뛴 대로), 마지막 장에서 멈춤(2026-10-18 사용자: 휠로 넘기다 꺼지지 않게)
   const hist = useRef([])
-  const go = (d, way = '') => { const k = iRef.current
+  // 움직이는 장(계획 ⑤, 2026-11-08) — 지금 장(프레임)을 덮은 움직이는 장 카드(`motion_of`)에 먼저 한 단계(→ = 다음 단계, ← = 이전 단계). 답 = 그 방향에 단계가 더 있었나.
+  // 카드가 없거나·끝이거나·0.4초 안에 답이 없으면 false = 장 넘기기(livecard.js MOTION_BRIDGE). 화면 자리로 찾지 않음 — SVG foreignObject 속 iframe은 크롬이 자리를 엉뚱하게 줌(실측 x 1704 / 화면 1600)
+  const motionStep = dir => new Promise(res => {
+    const cur = frames[iRef.current]?.id, fr = cur ? root.current?.querySelector(`iframe[data-motion-of="${CSS.escape(String(cur))}"]`) : null
+    if (!fr?.contentWindow) { res(false); return }
+    const id = `m${Date.now()}${Math.random()}`, done = v => { clearTimeout(t); removeEventListener('message', on); res(v) }
+    const on = e => { if (e.data?.mb === 'stepped' && e.data.id === id) done(!!e.data.more) }, t = setTimeout(() => done(false), 400)
+    addEventListener('message', on); fr.contentWindow.postMessage({ mb: 'step', dir, id }, '*')
+  })
+  const go = async (d, way = '') => { if (await motionStep(d < 0 ? -1 : 1)) return; goFrame(d, way) }
+  const goFrame = (d, way = '') => { const k = iRef.current
     if (d < 0) { if (hist.current.length) { setI(hist.current.pop()); return } if (k - 1 < 0) { flash('첫 장이에요'); return } setI(k - 1); return }
     const outs = links[k] || [], t = way === 'down' ? outs.find(o => o.dir === 'down') : way === 'right' ? outs.find(o => o.dir !== 'down') : outs[0]
     const j = t ? t.j : k + 1; if (j >= n) { flash('마지막 장이에요 — 끝내려면 Esc'); return }

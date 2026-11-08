@@ -164,7 +164,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, liveModel: () => R.current.model, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, skipFrames, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, selImageIds, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, setImage, slidesBoard, slideBranch, flowBoard, flowTarget, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, liveModel: () => R.current.model, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, skipFrames, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, selImageIds, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, setImage, slidesBoard, slideBranch, motionInfo, motionPlace, flowBoard, flowTarget, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -968,6 +968,18 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // 📽 발표 자료(§8 항목69, 2026-10-28) — deck = { title, slides: [{ title, bullets, notes }], sources } → 16:9 프레임 N장(한 줄에 3장, 발표 순서 = 장 순서) + 장마다 아래 발표자 메모(프레임 밖 = 발표 화면엔 안 나옴)
   // + 출처가 있으면 끝에 「출처」 장. 한 번의 commit = Ctrl+Z 한 번. { ids: 프레임 _id들, frames: 장 수 }
+  // 「이 장 움직이게」(계획 ⑤, 2026-11-08) — 장 프레임 → 서버에 보낼 것(장 글·프레임 크기·그림 장이면 그 그림) / 받은 모션 HTML을 그 프레임을 꼭 덮는 카드로(같은 장에 또 만들면 바꿔 끼움, Ctrl+Z 한 번)
+  function motionInfo(id) {
+    const m = R.current.model, fr = m.items.find(it => it._id === id); if (!fr?.slide) return null
+    const pic = m.items.find(it => it.slide_of === id && it.type === 'image' && it.slide_role === 'pic' && it.data)
+    return { slide: fr.slide, w: Math.round(fr.rect[2]), h: Math.round(fr.rect[3]), image: pic ? imgSrc(pic.data) : '', name: fr.name || fr.slide.title }
+  }
+  function motionPlace(id, d) {
+    const m = R.current.model, fr = m.items.find(it => it._id === id); if (!fr || !d?.html) return ''
+    const card = base([fr.pos[0], fr.pos[1]], { type: 'doc', live: true, motion: true, motion_of: id, rect: [fr.rect[0], fr.rect[1], fr.rect[2], fr.rect[3]], scale: fr.scale || 1,
+      title: d.title || fr.name || '', html: d.html, model: d.model || '', z: topZ(m.items) + 1 })
+    commit([...m.items.filter(it => it.motion_of !== id), card], [], '움직이는 장'); return card._id
+  }
   function slidesBoard(deck) {
     const sl = (deck?.slides || []).filter(s => s?.title)
     if (readOnly || !sl.length) return null
@@ -2850,6 +2862,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
           if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame') && !wrapDup(m.items, ids)) out.push('-', ['프레임으로 감싸기', 'Alt+G', act(() => wrapFrame())])
           if (frs.length) { const off = frs.every(f => f.skip); out.push([off ? '발표에 넣기' : '발표에서 빼기', '', act(() => skipFrames(frs.map(f => f._id), !off))]) }   // 칠판엔 그대로(2026-10-28)
+          if (onAsk && frs.length === 1 && selIt.length === 1 && frs[0].slide && !frs[0].slide.small) out.push(['이 장 움직이게 (KAIROS · 약 270~520크레딧)', '', act(() => onAsk(`「${frs[0].name || frs[0].slide.title}」 장 움직이게`, 'motion', { frame: frs[0]._id }))])   // 계획 ⑤ — 발표에서 → = 장 안 단계
           if (frs.length === 1 && selIt.length === 1 && frs[0].slide && !frs[0].slide.small) { const pic = frs[0].slide.layout === '그림'   // 작은 책 ② — 같은 장의 다른 판을 아래에(2026-11-04)
             out.push(['다른 판 더하기', '', null, [['그림으로 (KAIROS · 약 12크레딧)', act(() => slideBranch(frs[0]._id, 'pic'))], [pic ? '글로' : '글로 (같은 글 판 하나 더)', act(() => slideBranch(frs[0]._id, 'text'))]]]) }
           if (onAddSymbol && !card && selIt.every(it => !NOT_SYMBOL.has(it.type))) out.push(['내 심볼에 추가…', '', act(() => addToMySymbols())])   // 2026-10-27 사용자 — KAIROS 아이콘 등을 심볼 칸에(이 브라우저). 메모·표는 그림 조각이 아니라 뺌(전수조사)

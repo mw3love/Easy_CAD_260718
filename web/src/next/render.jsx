@@ -13,7 +13,7 @@ import { LISTY, MEMO, MEMO_KIND, MUTED, olNumbers } from './memo.js'
 import { LEGEND, descOf, rowName } from './legend.js'
 import { PdfPages, pdfPageAt } from './pdfcard.jsx'
 import { chartScene, isChart } from './chart.js'
-import { LIVE_CSP, LIVE_W, isLive, liveFits, liveSrc } from './livecard.js'
+import { LIVE_CSP, LIVE_W, isLive, isMotion, liveFits, liveSrc, motionSrc } from './livecard.js'
 
 // ── 글자 재기(캔버스) ──
 let _ctx = null
@@ -360,6 +360,8 @@ function chartPrim(p, k) {
 }
 // 카드 속 페이지(iframe) — 칠판 안(foreignObject)과 휴대폰 위층(Editor `phoneCards`, 아이폰 Safari는 SVG 안 iframe에 칠판 배율을 안 먹임 — 2026-10-27)이 같이 씀
 export function docFrame(it, bh, web) { const lv = isLive(it), k = it.rect[2] / (lv ? LIVE_W : 794)
+  if (isMotion(it)) return <iframe data-docid={it._id} data-liveid={it._id} data-motion={it._id} data-motion-of={it.motion_of || ''} srcDoc={motionSrc(it.html)} title={it.title || '움직이는 장'} sandbox="allow-scripts" csp={LIVE_CSP} scrolling="no"
+    style={{ border: 0, width: it.rect[2], height: it.rect[3], display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} />   // 움직이는 장 = 프레임 크기 그대로(머리 띠 없음, 배율 1)
   return lv
     ? <iframe data-docid={it._id} data-liveid={it._id} srcDoc={liveSrc(it.html)} title={it.title || '인터랙티브 HTML'} sandbox="allow-scripts" csp={LIVE_CSP} scrolling="no"
         style={{ border: 0, width: LIVE_W, height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} />
@@ -499,6 +501,14 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
     case 'doc': {   // 정리 문서 카드(「정리해 줘」 ①, 2026-10-19) — 위 띠(📄 제목·↗ 크게 보기) + 칸 안에 AI가 쓴 HTML(A4 폭 794px를 카드 폭에 맞춰 줄임, 스크립트 없는 iframe).
       // 'sleep'(많이 줄여 봄)·내보내기·HTML 공유는 문서 대신 제목 자리만(iframe은 그림으로 안 찍힘)
       // 움직이는 카드(`live`, §8 항목66 4단계) = 같은 카드에 스크립트만 켠 틀(livecard.js) — 기준 폭 720, 'on'(두 번 누름)일 때만 칸 안을 누를 수 있음. 내보내기엔 틀 글(data-live-src)을 남겨 HTML 공유가 띄움
+      if (isMotion(it)) { const [x, y, w, h] = it.rect   // 움직이는 장(계획 ⑤) — 그 장 프레임을 꼭 덮음. 내보내기(PDF·그림·HTML 공유)·멀리서 = 안 그림(아래 원래 장이 보임/찍힘) + 고를 수 있게 점선 테두리만
+        const on = (web === 'on' || web === 'view') && liveFits(it)
+        return <g transform={T} data-doc-box={`${x},${y},${w},${h}`}>
+          {on ? <foreignObject x={x} y={y} width={w} height={h}>{docFrame(it, h, web)}</foreignObject>
+            : web ? <><rect x={x} y={y} width={w} height={h} fill="none" stroke="#da7756" strokeWidth={2} strokeDasharray="10 8" />
+              <text x={x + 12} y={y + 22} dominantBaseline="central" fontSize={18} fontFamily={APP_FONT} fill="#da7756">▶ 움직이는 장</text></> : null}
+          {web === 'on' && <rect x={x} y={y} width={w} height={h} fill="none" stroke="#da7756" strokeWidth={3} />}
+        </g> }
       const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'dc-' + (it._id || idx), ob = openBtnRect(it), tw = w - ob.w - 26
       const lv = isLive(it), fits = liveFits(it), k = w / (lv ? LIVE_W : 794)
       const live = (web === 'on' || web === 'view') && bh > 4 && it.html && (!lv || fits)

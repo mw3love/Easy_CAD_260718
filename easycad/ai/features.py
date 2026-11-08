@@ -14,7 +14,7 @@
 """
 from __future__ import annotations
 
-from easycad.ai import board_chat, board_diagram, board_icon, board_image, board_report, live_card, slides
+from easycad.ai import board_chat, board_diagram, board_icon, board_image, board_report, live_card, motion_slide, slides
 
 FEATURES = [
     {"kind": "chat", "judge": "AI가 아는 일반 지식·방법·설명, 또는 고른 글을 번역·요약·다듬기",
@@ -37,6 +37,9 @@ FEATURES = [
      "ask": True, "api": "/chat/completions/ + /images/generations/", "type": "chat", "model": slides.WRITER_MODEL, "board": "16:9 프레임 여러 장(바로 발표)", "credits": (40, 160)},
     {"kind": "live", "judge": "원리를 직접 눌러 보고 값을 바꿔 보는 인터랙티브 HTML·시뮬레이션 카드 만들기",
      "ask": False, "api": "/chat/completions/", "type": "chat", "model": live_card.LIVE_MODEL, "board": "움직이는 카드(HTML)", "credits": (30, 60)},
+    # 말로는 안 감(judge 비움) — 발표 자료 장 프레임 우클릭 「이 장 움직이게」만. 실측: 그림 참고 366(11-07)·266(11-08)·없이 510
+    {"kind": "motion", "judge": "", "ask": False, "api": "/chat/completions/", "type": "chat", "model": motion_slide.MOTION_MODEL,
+     "board": "그 장 프레임을 덮는 움직이는 카드(→ 로 단계)", "credits": (270, 520)},
 ]
 BY_KIND = {f["kind"]: f for f in FEATURES}
 ASK_FIRST = {f["kind"] for f in FEATURES if f["ask"]}   # 서버는 만들지 않고 대화창에 질문지부터 띄우라고 답함(`/api/chat` `kind: 'go'`)
@@ -44,7 +47,7 @@ ASK_FIRST = {f["kind"] for f in FEATURES if f["ask"]}   # 서버는 만들지 �
 
 def judge_kinds() -> dict:
     """판정 모델 선택지 {길: 설명} — 표 차례 그대로."""
-    return {f["kind"]: f["judge"] for f in FEATURES}
+    return {f["kind"]: f["judge"] for f in FEATURES if f["judge"]}   # judge가 빈 줄 = 말로는 안 가는 기능(우클릭 등)
 
 
 def public() -> list:

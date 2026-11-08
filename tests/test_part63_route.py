@@ -134,5 +134,5 @@ def test_special_routes_without_plus():
     assert kind == "slides" and how == "ai" and asks == []                       # 판정 대화 모델만 아는 길이 이김(JEV 선택지엔 없음)
     assert {"slides", "infographic", "live"} <= set(route.JUDGE_KINDS)            # 선택지 = KAIROS 기능 표
     from easycad.ai import features
-    assert set(route.JUDGE_KINDS) == {f["kind"] for f in features.FEATURES} and features.ASK_FIRST == {"slides", "infographic"}
+    assert set(route.JUDGE_KINDS) == {f["kind"] for f in features.FEATURES if f["judge"]} and "motion" not in route.JUDGE_KINDS and features.ASK_FIRST == {"slides", "infographic"}
     assert features.credit_text("live") == "약 30~60크레딧" and features.credit_text("report") == ""

@@ -43,7 +43,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXAMPLES, EXAMPLE = os.path.join(HERE, "examples"), "intro"   # 예시 칠판 원본(2026-10-28) — `examples/intro/intro.ecad`·`.chat.json`·`.img/`
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_bubble, board_chat, brief_ask, board_diagram, slides, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, features, kr_tools, live_card, meeting, model_pick, route, see, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_bubble, board_chat, brief_ask, board_diagram, slides, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, features, kr_tools, live_card, meeting, motion_slide, model_pick, route, see, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
@@ -55,7 +55,7 @@ import docblobs  # noqa: E402  (칠판 그림 따로 보내기 — web/docblobs.
 NAME_RE = re.compile(r"^[\w\-가-힣]{1,64}$")
 MAX_BYTES = 200 * 1024 * 1024   # 그림이 든 칠판도 넉넉히, 하지만 끝없이는 아니게
 _MODELS = {}                    # 키 지문 → (받은 시각, 모델 목록) — `/api/models`
-PICK_JOBS = ("image", "icon", "diagram", "report", "live", "deep_plan", "deep_write", "slides")   # 「모델 설정」으로 고를 수 있는 일(대화·회의 요약은 원래 `model`) — 2026-10-26 사용자: 고를 의미 있는 일만 · slides = 2026-11-04(칸이 빠져 있었음)
+PICK_JOBS = ("image", "icon", "diagram", "report", "live", "deep_plan", "deep_write", "slides", "motion")   # 「모델 설정」으로 고를 수 있는 일(대화·회의 요약은 원래 `model`) — 2026-10-26 사용자: 고를 의미 있는 일만 · slides = 2026-11-04(칸이 빠져 있었음)
 # 그림 요청에 날짜 말이 있을 때만 오늘 날짜를 알려 줌(없는데 알려 주면 그림에 오늘 날짜를 써 넣음 — 2026-10-20 실측)
 DATE_WORDS = re.compile(r"오늘|내일|모레|어제|그제|날짜|요일|주말|이번\s*주|다음\s*주|지난\s*주|이번\s*달|다음\s*달|\d+\s*월\s*\d+\s*일")
 
@@ -150,7 +150,7 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:   # 목록을 못 받아도 대화는 기본 모델로 된다
                 return self._json(200, {"default": gw.FALLBACK_DEFAULT_MODEL, "featured": {}, "error": str(e)})
         # 일마다 정해 둔 모델 — 대화창 「생각 중」 줄이 고른 모델이 아니라 실제로 일하는 모델을 보이게(2026-10-20 사용자: 정돈인데 gpt로 보였음)
-        jobs = {"report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "diagram": board_diagram.DIAGRAM_MODEL, "deep": deep_mode.EDITOR_MODEL, "slides": slides.WRITER_MODEL, "live": live_card.LIVE_MODEL, "trace": board_trace.TRACE_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3), live = 「+ › 움직이는 카드」(4단계)
+        jobs = {"report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "diagram": board_diagram.DIAGRAM_MODEL, "deep": deep_mode.EDITOR_MODEL, "slides": slides.WRITER_MODEL, "live": live_card.LIVE_MODEL, "trace": board_trace.TRACE_MODEL, "motion": motion_slide.MOTION_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3), live = 「+ › 움직이는 카드」(4단계)
         jobs.update(deep_plan=deep_mode.EDITOR_MODEL, deep_write=deep_mode.WRITER_MODEL)   # 「모델 설정」 칸(2026-10-26)
         jobs = {k: model_pick.pick(v) for k, v in jobs.items()}   # 은퇴·없어져 갈아탄 것은 지금 부르는 이름으로
         return self._json(200, {**hit[1], "jobs": jobs, "choices": model_pick.choices(), "features": features.public()})   # features = KAIROS 기능 표(비용 안내, 2026-11-08)
@@ -193,6 +193,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._deep(req, key)
             if kind == "slides":   # 📽 발표 자료(§8 항목69) — 질문지·장 계획 카드가 단계(`slides.step`)를 정해 보냄, 길 고르기 없음
                 return self._slides(req, key)
+            if kind == "motion":   # 「이 장 움직이게」(계획 ⑤, 2026-11-08) — 칠판 우클릭이 장 글·크기·그 장 그림을 보냄, 길 고르기 없음
+                return self._motion(req, key)
             if kind == "bubble":   # 💬 AI 말풍선(2026-10-28) — 물건 하나의 글·그림 + 그 말풍선 앞 대화만, 길 고르기 없음
                 return self._bubble(req, key)
             if kind == "live":   # 「+ › 움직이는 카드」(§8 항목66 4단계) — 하나만 따로, 재료 = 고른 것의 글. 앞 답이 카드이고 고칠 말이면 그 카드 고치기
@@ -501,6 +503,23 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(502, {"error": gw.friendly_error(e)})
         sys.stderr.write("[말풍선] %s %.1f초%s\n" % (out["model"], out["elapsed"], " (고침)" if out.get("edit") else ""))
         return self._json(200, {"kind": "bubble", **out, "credits": self._spent(key, base, b0)})
+
+    def _motion(self, req: dict, key: str):
+        """움직이는 장 → {"kind": "motion", "content", "title", "html", "steps", "model", "elapsed", "credits"} — 칠판이 그 장 프레임을 덮는 카드로."""
+        d = req.get("motion") if isinstance(req.get("motion"), dict) else {}
+        slide = d.get("slide") if isinstance(d.get("slide"), dict) else {}
+        ref = next(iter(see.clean([d.get("image")] if d.get("image") else [])), "")   # 그림 장이면 그 그림 = 참고 그림(실측: 구성이 그대로·더 싸고 빠름)
+        base = self._base()
+        b0 = self._balance(key, base)
+        try:
+            out = self._with("motion", motion_slide.MOTION_MODEL, lambda m: motion_slide.make(gw._client(key, base, timeout=600), slide, w=int(d.get("w") or 1600), h=int(d.get("h") or 900), ref_image=ref, model=m))
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        except Exception as e:
+            return self._json(502, {"error": f"움직이는 장 실패: {gw.friendly_error(e)}"})
+        sys.stderr.write("[움직이는 장] %s %.1f초 %d자 단계 %d%s\n" % (out["model"], out["elapsed"], len(out["html"]), out["steps"], " 참고 그림" if ref else ""))
+        return self._json(200, {"kind": "motion", "content": f"장 「{out['title']}」을 움직이게 만들어 그 프레임에 덮었어요 — 발표에서 → 를 누르면 단계마다 움직여요(PDF엔 원래 장이 찍혀요)",
+                                **out, "credits": self._spent(key, base, b0)})
 
     def _live(self, ask: str, material: str, key: str, prev_html: str = "", images=None):
         """움직이는 카드 하나 → {"kind": "live", "content", "title", "html", "model", "elapsed"} — 칠판에 붙이면 문서 카드 `live`(스크립트만 켠 칸).
