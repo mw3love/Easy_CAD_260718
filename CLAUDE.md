@@ -333,6 +333,7 @@ symbol_library/
   진짜 칠판(`5191`)과 안 섞임. 진짜 칠판을 건드리면 안 되는 시험에만.) 칠판 끌어 넣기·옮기기·Ctrl+Z는 ego lite 마우스로 됨(11-02 첫 시험 — 칠판 배율 31%라 좌표는 스크린샷 보고).
   ⚠ ego lite 창이 최소화돼 있으면 스크린샷이 안 됨(「Cannot capture a screenshot while the window is minimized」) — 사용자 화면에 창을 띄우지 말고 화면 확인만이면 Playwright 헤드리스로 찍음.
   ego 선택자는 `:has-text()`가 맨 끝에만 됨(Playwright와 다름).
+- **소스 없는 웹의 디자인·작동 참고 도구**(2026-11-08 실측, 우리 칠판 정답 15개): 첫 훑어보기 = Craft Anything Clean room(12/15, 9초, 코드 없이 모서리·그림자·간격까지 — 테두리 색·틀 높이는 놓침), 정확한 값 = Playwright 계산된 스타일(15/15), 작동 원리 = REA(색·크기는 안 줌, 1/15). 캔버스 앱은 Craft도 스크린샷뿐. Craft는 초기 알파라 분석 명령만(`--clean-room`, AI 만들기·Deep 안 씀). 경위 `docs/history/2026-11.md`.
 - 각 기능은 검증가능 목표로 닫고, 새 스모크는 `tests/`에 추가(임시폴더 금지).
 - 비자명 커밋엔 트레일러(Rejected/Constraint/Confidence/Not-tested) + `Co-Authored-By: Claude Opus 4.8`.
 - 계획/검토 요청이면 코드 손대지 말 것(승인 게이트). "고쳐줘/만들어줘"면 실행.
