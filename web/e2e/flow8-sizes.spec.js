@@ -2,7 +2,7 @@
 import { test, expect } from '@playwright/test'
 import { boardName, openBoard, setCam, clickScene, waitSaved } from './helpers.js'
 
-for (const [w, h] of [[960, 800], [1366, 768], [1600, 900]]) {
+for (const [w, h] of [[960, 800], [1040, 800], [1366, 768], [1600, 900]]) {
   test(`${w}px — 위 막대 한 줄·버튼 다 보임·대화창 자리`, async ({ page }) => {
     await page.setViewportSize({ width: w, height: h })
     await openBoard(page, boardName('size' + w), { chat: true })

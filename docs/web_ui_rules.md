@@ -8,7 +8,7 @@
 
 - **색**: 코랄은 CSS 변수 `--mb-accent`(`web/index.html`) 하나다. 화면 코드에서는 `var(--mb-accent)`로 쓴다.
   예외는 SVG 그리기 속성(`fill=`·`stroke=`)이다 — 거기엔 CSS 변수가 안 먹으니 `#da7756` 그대로 둔다(`render.jsx`·`skeleton.jsx`·레이어 연필 아이콘). 칠판에 저장되는 물건의 색(번호표 등)도 값 그대로다.
-- **아이콘 포인트 파랑**(2026-11-08): 위 막대 아이콘의 채운 부분만 `--mb-icon-acc`(`web/index.html` `.mb-btn-icon`). 코랄과 달리 상태를 뜻하지 않는다 — 켜짐 표시는 그대로 코랄 바탕.
+- **아이콘 포인트 파랑**(2026-11-08): 위 막대·왼쪽 판 아이콘의 채운 부분만 `--mb-icon-acc`(`web/index.html` `.mb-btn-icon`). 코랄과 달리 상태를 뜻하지 않는다 — 켜짐 표시는 그대로 코랄 바탕.
 - **메뉴**: `ctxmenu.jsx`의 `ContextMenu`(칠판 위)·`FloatMenu`(판 위) 하나뿐이다. 바깥 누르기·Esc로 닫힌다.
   ⋯ 단추로 열 때는 `ui.jsx`의 `menuBelow(e)`로 자리를 잡는다 — 그 단추를 `anchor`로 기억해서, 같은 ⋯를 다시 누르면 닫힌다.
 - **확인 창·단추·마우스 올림**: `ui.jsx`의 `Confirm`·`btnPrimary`·`btnSecondary`·`btnHead`·`moreBtn`·`hoverBg`.

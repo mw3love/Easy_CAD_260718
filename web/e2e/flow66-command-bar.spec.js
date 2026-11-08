@@ -73,3 +73,20 @@ test('닫은 뒤 칠판 글쇠 그대로 — 찾는 칸에 친 글이 도형으�
   await page.keyboard.type('A'); await clickScene(page, 700, 500)
   r = (await liveDoc(page)).items.find(it => it.type === 'rect'); expect(r.label?.text).toBe('A')
 })
+
+test('입구 — 위 막대 「명령 검색」을 누르면 열리고 다시 누르면 닫힘', async ({ page }) => {
+  await openBoard(page, boardName('cmdbtn')); await setCam(page)
+  const open = page.getByTestId('cmd-open')
+  await open.click(); await expect(bar(page)).toBeVisible(); await expect(bar(page).locator('input')).toBeFocused()
+  await open.click(); await expect(bar(page)).toHaveCount(0)
+})
+
+test('칠판 — 「새 칠판」은 바로 새 주소로, 내 칠판은 이름으로 찾아 옮겨 감', async ({ page }) => {
+  const first = boardName('cmdfirst'), second = boardName('cmdsecond')
+  await openBoard(page, first); await openBoard(page, second)
+  await page.keyboard.press('Control+k'); await bar(page).locator('input').fill(first); await expect(rows(page).first()).toContainText('칠판 열기')
+  await page.keyboard.press('Enter'); await expect(page).toHaveURL(new RegExp(`board=${first}$`))
+  await expect.poll(() => page.evaluate(() => !!window.__mb)).toBe(true)
+  await page.keyboard.press('Control+k'); await bar(page).locator('input').fill('새 칠판'); await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(/board=[a-z2-9]{8}$/)
+})

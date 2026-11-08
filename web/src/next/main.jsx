@@ -383,8 +383,8 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
 // 카드마다 접기는 없앰(자리가 고정이라 접어도 칠판이 안 넓어짐 — 사용자). ⚠ 10-07 「레일 = 번거로움」·10-11 「도형·레이어 카드 합치지 않기」를 이번에 바꿈(사용자 선택 — 대칭·접으면 칠판이 가장 넓음)
 export const RAIL_W = 40, DOCK_W = 192, DOCK_MAX = 400   // 레일 40(이름 유지)·판 192 = 미니맵 기준 최소, 경계를 끌면 400까지(2026-10-23 사용자 — 프레임 이름이 잘려 보임)
 const svgI = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`
-const DOCK_ICONS = { shape: svgI('<rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1"/><circle cx="17" cy="7.3" r="3.8"/><path d="M7.3 13.5l4 7h-8z"/><path d="M17 13.5l3.8 3.5-3.8 3.5-3.8-3.5z"/>'),
-  layer: svgI('<path d="M12 3.5l8.5 4.5-8.5 4.5-8.5-4.5z"/><path d="M3.5 12l8.5 4.5 8.5-4.5"/><path d="M3.5 16l8.5 4.5 8.5-4.5"/>') }
+const DOCK_ICONS = { shape: svgI('<rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1"/><circle cx="17" cy="7.3" r="3.8" fill="currentColor"/><path d="M7.3 13.5l4 7h-8z"/><path d="M17 13.5l3.8 3.5-3.8 3.5-3.8-3.5z"/>'),
+  layer: svgI('<path d="M12 3.5l8.5 4.5-8.5 4.5-8.5-4.5z" fill="currentColor"/><path d="M3.5 12l8.5 4.5 8.5-4.5"/><path d="M3.5 16l8.5 4.5 8.5-4.5"/>') }
 const DOCK_TABS = [['board', '칠판', '칠판 — 새 칠판·최근 칠판·열기·내려받기'], ['shape', '도형', '도형·심볼 — 칠판으로 끌거나 눌러서 그리기'], ['frame', '프레임', '프레임 — 순서 = 출력·발표 순서'], ['layer', '레이어', '레이어 — 보이기·잠그기·그리는 중']]
 function Dock({ tab, setTab, panes, mini, width, setWidth, help, onHelp }) {   // mini(w) = 그 판 폭의 미니맵, help = 도움말 카드가 열렸나
   return <div data-testid="dock" style={{ display: 'flex', flex: 'none', minHeight: 0, background: C.bar, borderRight: `1px solid ${C.line}` }}>
@@ -394,7 +394,7 @@ function Dock({ tab, setTab, panes, mini, width, setWidth, help, onHelp }) {   /
           style={{ all: 'unset', cursor: 'pointer', width: 36, padding: '6px 0 4px', borderRadius: 8, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, font: "500 10px 'Pretendard', sans-serif",
             color: on ? C.accent : C.ink, background: on ? 'rgba(218,119,86,.18)' : 'transparent' }}
           onMouseEnter={e => { if (!on) e.currentTarget.style.background = HOVER }} onMouseLeave={e => { e.currentTarget.style.background = on ? 'rgba(218,119,86,.18)' : 'transparent' }}>
-          <span aria-hidden style={{ width: 20, height: 20, display: 'block', color: on ? C.accent : 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ic.replace('<svg ', '<svg width="20" height="20" ') }} />{label}</button> })}
+          <span aria-hidden className={on ? undefined : 'mb-btn-icon'} style={{ width: 20, height: 20, display: 'block', color: on ? C.accent : 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ic.replace('<svg ', '<svg width="20" height="20" ') }} />{label}</button> })}
       {/* 도움말 = 레일 맨 아래 「?」(2026-10-25 사용자 — 옛 빈 곳 우클릭 「글쇠 도움말」 대신. 나중에 사용설명서 페이지가 생기면 카드 안에 길) */}
       <button data-testid="help-btn" data-help-btn aria-label="도움말" aria-pressed={help} title="도움말 — 글쇠 모음(F1)" onClick={onHelp}
         style={{ all: 'unset', cursor: 'pointer', marginTop: 'auto', marginBottom: 8, width: 28, height: 28, borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -775,9 +775,10 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
     window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on)
   }, [])
 
+  const toggleCmd = () => { setExportOpen(false); setTableOpen(false); setWebOpen(false); setShareOpen(false); setHelpOpen(false); setFindOpen(0); setCmdOpen(n => (n ? 0 : Date.now())) }
   useEffect(() => {   // Ctrl+K = 명령 찾기(한 번 더 = 닫기) — 잡기 단계에서: 글쇠를 자기만 받는 입력 칸(도형 검색 등) 안에서도 열리게
     const on = e => { if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.code !== 'KeyK' || document.querySelector('[data-testid=presenter]')) return
-      e.preventDefault(); e.stopPropagation(); setExportOpen(false); setTableOpen(false); setWebOpen(false); setShareOpen(false); setHelpOpen(false); setFindOpen(0); setCmdOpen(n => (n ? 0 : Date.now())) }
+      e.preventDefault(); e.stopPropagation(); toggleCmd() }
     window.addEventListener('keydown', on, true); return () => window.removeEventListener('keydown', on, true)
   }, [])
   // 명령 찾기(Ctrl+K) 목록 — 이름은 위 막대 단추·왼쪽 판과 같은 말, 고른 물건 명령은 우클릭 메뉴 그대로(cmdk.jsx)
@@ -794,6 +795,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
       { name: '웹 카드…', group: '넣기', words: ['유튜브', '주소', '링크'], run: () => { setWebAt(null); setWebOpen(true) } },
       ...(server && !meetSt ? [{ name: '회의', group: '넣기', words: ['받아 적기', '녹음', '회의록'], run: () => ed.current?.meetStart() }] : []),
       { name: '저장', group: '칠판', keys: 'Ctrl+S', run: () => keyAct.current.save() },
+      ...(server ? [{ name: '새 칠판', group: '칠판', words: ['만들기'], run: async () => { if (openServer) location.href = `${location.pathname}?board=${encodeURIComponent(await freshBoardName())}`; else setDockTab('board') } }] : []),
       { name: '내보내기…', group: '칠판', keys: 'Ctrl+P', words: ['pdf', 'png', 'svg', 'html', '인쇄'], run: () => setExportOpen(true) },
       { name: '되돌리기', group: '칠판', keys: 'Ctrl+Z', run: () => ed.current?.undo() },
       { name: '다시', group: '칠판', keys: 'Ctrl+Y', run: () => ed.current?.redo() },
@@ -809,6 +811,8 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
       { name: dark ? '밝게' : '어둡게', group: '보기', keys: 'D', words: ['다크', '테마', '화면 색'], run: toggleDark },
       ...dock,
       { name: '글쇠 도움말', group: '보기', keys: 'F1', words: ['단축키'], run: () => setHelpOpen(true) },
+      ...(server ? myBoards().filter(b => b.name !== DOC_NAME && b.ok !== false).map(b => { const t = boardTitle(b.name, b.title), code = boardLabel(b.name).code   // 내 칠판으로 옮겨 가기 — 찾을 때만 눈에 띄게 맨 끝에
+        return { id: b.name, name: `칠판 열기 › ${t === UNTITLED && code ? `${t} (${code})` : t}`, group: '칠판', words: [t, code].filter(Boolean), run: () => { location.href = `${location.pathname}?board=${encodeURIComponent(b.name)}` } } }) : []),
     ]
   }
 
@@ -887,7 +891,9 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
           <Btn small icon="theme" label={dark ? '밝게' : '어둡게'} onClick={toggleDark} title="밝은 화면 / 어두운 화면 (D)" />   {/* 보기 묶음으로(2026-10-23 사용자 — 오른쪽 구석은 KAIROS 몫) */}
         </Group>
         {!narrow && !server && <SampleSelect onPick={openSample} />}
-        <div style={{ marginLeft: 'auto' }} />   {/* 오른쪽 이름·배율 뺌(2026-10-27 사용자 — 이름은 왼쪽 끝, 배율은 미니맵 %와 겹침) */}
+        <div style={{ marginLeft: 'auto' }} />
+        <button data-testid="cmd-open" data-cmd-btn aria-label="명령 검색" title="명령 검색 (Ctrl+K) — 모든 기능을 이름·초성으로" onClick={toggleCmd} {...hoverBg} style={{ all: 'unset', cursor: 'pointer', flexShrink: 0, boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 6, height: 28, padding: '0 8px', border: `1px solid ${C.line}`, borderRadius: 7, color: C.muted, font: "400 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap' }}>
+          <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5 L21 21" /></svg>{!narrow && <>명령 검색<span style={{ marginLeft: 14, fontSize: 11 }}>Ctrl+K</span></>}</button>   {/* 오른쪽 이름·배율 뺌(2026-10-27 사용자 — 이름은 왼쪽 끝, 배율은 미니맵 %와 겹침) */}
         <div data-pop="share" style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, opacity: live ? 1 : 0.4 }}>   {/* 서버가 없으면 숨기지 않고 흐리게 — 안 보이면 왜 없는지 몰랐음(2026-10-20 사용자) */}
           {live && <Faces list={crowd.map(p => ({ ...p, color: personColor(p.id) }))} onClick={() => setShareOpen(o => !o)} />}
           <Btn icon="share" label="공유" on={shareOpen} onClick={() => (server ? setShareOpen(o => !o) : setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 공유·KAIROS를 쓸 수 있어요'))} title={server ? '게시 — 로그인 없이 보기·발표만 되는 링크(큰 TV 발표용)' : '서버에 연결 안 됨 — python web/server.py를 켜면 공유할 수 있어요'} />

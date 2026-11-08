@@ -29,7 +29,7 @@ export function CommandBar({ getCommands, onClose }) {
   const [all] = useState(getCommands), [q, setQ] = useState(''), [at, setAt] = useState(0)   // 목록은 열 때 한 번(그때 고른 것 기준)
   const box = useRef(null), inp = useRef(null), on = useRef(null)
   useEffect(() => { inp.current?.focus() }, [])
-  useEffect(() => { const down = e => { if (box.current && !box.current.contains(e.target)) onClose() }; window.addEventListener('pointerdown', down, true); return () => window.removeEventListener('pointerdown', down, true) }, [onClose])
+  useEffect(() => { const down = e => { if (box.current && !box.current.contains(e.target) && !e.target.closest?.('[data-cmd-btn]')) onClose() }; window.addEventListener('pointerdown', down, true); return () => window.removeEventListener('pointerdown', down, true) }, [onClose])
   const rows = rankCommands(all, q)
   const cur = Math.min(at, Math.max(0, rows.length - 1))
   useEffect(() => { on.current?.scrollIntoView({ block: 'nearest' }) }, [cur, q])
@@ -48,7 +48,7 @@ export function CommandBar({ getCommands, onClose }) {
         style={{ width: '100%', boxSizing: 'border-box', border: 'none', outline: 'none', background: 'transparent', color: C.ink, font: "400 13.5px 'Pretendard', sans-serif" }} />
     </div>
     {rows.length > 0 ? <div style={{ maxHeight: 340, overflowY: 'auto', padding: 4 }}>
-      {rows.map((c, i) => <button key={`${c.group}/${c.name}`} ref={i === cur ? on : null} data-testid="cmd-row" aria-selected={i === cur} onClick={() => run(c)} onMouseMove={() => { if (i !== cur) setAt(i) }}
+      {rows.map((c, i) => <button key={c.id || `${c.group}/${c.name}`} ref={i === cur ? on : null} data-testid="cmd-row" aria-selected={i === cur} onClick={() => run(c)} onMouseMove={() => { if (i !== cur) setAt(i) }}
         style={{ all: 'unset', boxSizing: 'border-box', width: '100%', display: 'flex', gap: 10, alignItems: 'baseline', padding: '5px 8px', borderRadius: 6, cursor: 'pointer', background: i === cur ? C.group : 'transparent' }}>
         <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</span>
         {c.keys && <span style={{ flex: 'none', fontSize: 11, color: C.muted }}>{c.keys}</span>}
