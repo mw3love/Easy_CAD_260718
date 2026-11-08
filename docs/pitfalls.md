@@ -1674,7 +1674,7 @@
 - 웹 칠판 「고른 채 바로 치기」 대기 편집기는 한 도형에 하나만 — 메모에 MemoEditor 대기를 붙였더니 도형용 TextEditor 대기도 같이 떠서 한글 첫 글자(insertText)를 가로챘다(2026-10-20). 새 종류에 대기를 붙이면 다른 대기 자리에서 그 종류를 빼라.
 - 웹 개발 서버 Vite 프록시를 `localhost`로 두면 Node 17+는 IPv6(::1)부터 가서, `--host 127.0.0.1`로 켠 Python 서버에 못 닿고 502(서버 없음처럼 보임). 프록시 주소는 `127.0.0.1`.
 - `npx playwright test`만 돌리면 마지막 빌드(`dist`)로 시험한다 — 고친 뒤엔 `npm run e2e`(빌드 포함)로.
-- 웹 버튼에 `all: unset`을 주면 크롬 UA 규칙 `[draggable=true] { -webkit-user-drag: element }`까지 지워져 `draggable`이어도 끌기가 시작되지 않는다(2026-10-20 그림 후보). 합성 `DragEvent('drop')` 시험은 이걸 못 잡으니 진짜 마우스 끌기(`dragTo`·`mouse.down/move/up`)로 시험할 것.
+- 웹 버튼에 `all: unset`을 주면 크롬 UA 규칙 `[draggable=true] { -webkit-user-drag: element }`까지 지워져 `draggable`이어도 끌기가 시작되지 않는다(2026-10-20 그림 후보). 합성 `DragEvent('drop')` 시험은 이걸 못 잡으니 진짜 마우스 끌기(`dragTo`·`mouse.down/move/up`)로 시험할 것. 인라인 `all: unset`은 grid-row·height까지 인라인으로 초기화해, 스타일시트 규칙이 조용히 무시된다(2026-11-08 위 막대 시안 — 시안 CSS는 `!important`, 원본은 인라인 값으로).
 - KAIROS MCP 날씨 도구(`kr-weather`)는 10개 도시만 알고, 모르는 도시는 오류 없이 서울 날씨를 돌려준다(2026-10-20 「전주」). 돌아온 `city`를 물은 도시와 꼭 비교할 것. MCP 호출은 `Accept: application/json, text/event-stream` 둘 다 없으면 406(httpx 기본 `*/*`도 406).
 - KAIROS 받아쓰기는 본문 25MB·120분까지, webm(브라우저 녹음 기본 형식)은 길이를 못 읽어 400 — 올리기 전에 바꿀 것(`meeting.prepare`). 실시간 받아쓰기 소켓의 끝 신호는 빈 글 `""`(빈 바이너리면 408).
 - KAIROS MCP `kr-macro`(KOSIS)는 표 구조(`get_statistics_meta`)의 분류 목록을 잘라서 줘(260개 중 앞부분), 모델이 지역 코드를 못 찾고 `objL: ["ALL"]`로 받으면 전국·서울 행만 온다 — 시도 코드(전북 52·강원 51, 옛 45·42는 오류)를 지시문에 줄 것. 표만 찾고 숫자 없이 멈추는 일도 있어 「찾기만 했으면 한 번 재촉」(2026-10-21).
@@ -1739,7 +1739,7 @@
 - ⚠ 웹 그림 칸(`image`)은 그림을 칠판 파일 안에 base64로 담는다 — KAIROS 그림 PNG 한 장이 3~4MB. 저장소에 넣을 칠판(예시 등)은 JPG로 줄일 것(`data:image/png`로 읽어도 크롬은 내용으로 알아봄).
 - ⚠ 화면 시험 서버(`web/e2e`, 5291)도 **이 PC의 진짜 KAIROS 키**로 뜬다 — 사람이 누르지 않아도 저절로 KAIROS를 부르는 기능(예: 그림 넣으면 설명 `/api/describe`, 2026-10-28)은 끄는 스위치를 두고 `playwright.config.js` `env`에서 끌 것(`EASYCAD_ROUTE=rules`·`EASYCAD_DESCRIBE=off`) — 안 그러면 시험 200개가 크레딧을 씀
 - ⚠ 늦게 도착하는 AI 결과로 도형 칸을 고칠 때 `commit`을 쓰면 Ctrl+Z가 「안 보이는 고침」을 먼저 되돌린다 — 보이지 않는 칸(그림 `alt` 등)은 `Editor.quietSet`(되돌리기 칸 없음)으로(2026-10-28)
-- ⚠ 웹 판 뿌리의 `onPointerDown={e => e.stopPropagation()}`은 window **거품 단계** 리스너(자체 메뉴의 「바깥 누르면 닫기」)를 막는다 — 판 안을 눌러도 메뉴가 안 닫혔음(2026-11-02 도형 판). 메뉴는 잡기 단계로 듣는 공용 `ctxmenu.jsx`를 쓴다.
+- ⚠ 웹 판 뿌리의 `onPointerDown={e => e.stopPropagation()}`은 window **거품 단계** 리스너(자체 메뉴의 「바깥 누르면 닫기」)를 막는다 — 판 안을 눌러도 메뉴가 안 닫혔음(2026-11-02 도형 판). 메뉴는 잡기 단계로 듣는 공용 `ctxmenu.jsx`를 쓴다. 글쇠도 같음(2026-11-08 Ctrl+K): 입력 칸이 `onKeyDown`에서 `stopPropagation`하면 window 거품 리스너에 안 와서, 어디서든 열려야 하는 글쇠는 잡기 단계(`addEventListener(..., true)`)로 받는다.
 - ⚠ SVG 그리기 속성(`fill=`·`stroke=`)엔 CSS 변수(`var(--mb-accent)`)가 안 먹는다 — 코랄을 변수로 바꿀 때 style 안 값만 바꾸고, SVG 속성·저장되는 물건 색은 `#da7756` 그대로(2026-11-02).
 - ⚠ 화면 시험이 `page.evaluate`로 되돌리기·다시 하기를 부른 직후 칠판을 읽으면 옛 모델이 올 수 있다 — React가 화면 상태를 조금 뒤에 바꿔서. `__mb.toEcad()`는 편집기 속 최신 모델(`ed.liveModel()`)을 읽게 고침(2026-11-02, flow35 가끔 실패의 원인).
 - ⚠ 편집기 「바깥 누르면 끝」 감시를 `setTimeout(0)`으로 늦게 붙이지 말 것 — 화면이 바쁘면 64ms 넘게 밀려 그사이 누르기를 아무도 안 받음(편집기는 아직 감시 전, 칠판은 「고치는 중이니 편집기 몫」) → 고치는 중에 멈춤. 바로 붙이고 닫을 때 뗌(2026-11-02, `memoedit.jsx`·`text.jsx`)
