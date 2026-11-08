@@ -23,6 +23,7 @@ import { ChatPanel, CHAT_W, chatClamp, Spinner } from './chat.jsx'
 import { HelpCard } from './help.jsx'
 import { EmptyGuide } from './guide.jsx'
 import { FindBar } from './find.jsx'
+import { CommandBar, menuToCommands } from './cmdk.jsx'
 import { Bubble, BubbleBadge } from './bubble.jsx'
 
 const ZMIN = 0.02, ZMAX = 40, LEFT_CARDS = 24   // LEFT_CARDS = 맞출 때 왼쪽 여백 — 카드가 칠판 위에 떠 있던 때는 220(2026-10-23 왼쪽 판으로 붙이며 칠판 밖으로 나감)
@@ -742,7 +743,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
     if (!(await api.example())) { setStatus('처음 모습으로 못 되돌렸어요 — 서버 연결을 확인해 주세요'); return }
     myApi.reseed(); location.reload() }   // 칠판·대화·예시 심볼 모두 — 대화창은 다시 열어야 새 기록을 읽음
   const [aiBusy, setAiBusy] = useState('')   // 칠판 위 「📄 정리 문서 만드는 중…」 알약(대화창이 알려 줌)
-  const [helpOpen, setHelpOpen] = useState(false), [findOpen, setFindOpen] = useState(0), [marks, setMarks] = useState([])   // findOpen = 열 때마다 새 번호(다시 Ctrl+F = 칸에 다시 포커스)
+  const [helpOpen, setHelpOpen] = useState(false), [findOpen, setFindOpen] = useState(0), [cmdOpen, setCmdOpen] = useState(0), [marks, setMarks] = useState([])   // findOpen = 열 때마다 새 번호(다시 Ctrl+F = 칸에 다시 포커스)
   const keyAct = useRef(null)
   keyAct.current = { fit: () => fit(modelRef.current.items), save: () => (server ? saveServer() : saveFile()),
     zoom100: () => setCam(c => { const cx = (size.w - rightInset(box.current)) / 2, cy = size.h / 2; return { z: 1, x: cx - (cx - c.x) / c.z, y: cy - (cy - c.y) / c.z } }) }
@@ -769,6 +770,43 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
     }
     window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on)
   }, [])
+
+  useEffect(() => {   // Ctrl+K = 명령 찾기(한 번 더 = 닫기) — 잡기 단계에서: 글쇠를 자기만 받는 입력 칸(도형 검색 등) 안에서도 열리게
+    const on = e => { if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.code !== 'KeyK' || document.querySelector('[data-testid=presenter]')) return
+      e.preventDefault(); e.stopPropagation(); setExportOpen(false); setTableOpen(false); setWebOpen(false); setShareOpen(false); setHelpOpen(false); setFindOpen(0); setCmdOpen(n => (n ? 0 : Date.now())) }
+    window.addEventListener('keydown', on, true); return () => window.removeEventListener('keydown', on, true)
+  }, [])
+  // 명령 찾기(Ctrl+K) 목록 — 이름은 위 막대 단추·왼쪽 판과 같은 말, 고른 물건 명령은 우클릭 메뉴 그대로(cmdk.jsx)
+  const commandList = () => {
+    const tools = TOOLS.map(([k, , name, keys]) => ({ name, group: '도구', keys, words: [`${name} 도구`, '그리기'], run: () => setTool(k) }))
+    const dock = DOCK_TABS.map(([k, name]) => ({ name: `${name} 판 열기`, group: '보기', run: () => setDockTab(k) }))
+    return [
+      ...menuToCommands(ed.current?.selCommands() || [], '고른 것'),
+      ...tools,
+      { name: '도구 유지', group: '도구', keys: 'Q', run: toggleKeep },
+      { name: '프레임', group: '넣기', words: ['슬라이드', '장'], run: () => setTool('frame') },
+      { name: '메모', group: '넣기', run: () => ed.current?.insertMemo() },
+      { name: '표…', group: '넣기', words: ['범례'], run: () => setTableOpen(true) },
+      { name: '웹 카드…', group: '넣기', words: ['유튜브', '주소', '링크'], run: () => { setWebAt(null); setWebOpen(true) } },
+      ...(server && !meetSt ? [{ name: '회의', group: '넣기', words: ['받아 적기', '녹음', '회의록'], run: () => ed.current?.meetStart() }] : []),
+      { name: '저장', group: '칠판', keys: 'Ctrl+S', run: () => keyAct.current.save() },
+      { name: '내보내기…', group: '칠판', keys: 'Ctrl+P', words: ['pdf', 'png', 'svg', 'html', '인쇄'], run: () => setExportOpen(true) },
+      { name: '되돌리기', group: '칠판', keys: 'Ctrl+Z', run: () => ed.current?.undo() },
+      { name: '다시', group: '칠판', keys: 'Ctrl+Y', run: () => ed.current?.redo() },
+      { name: '칠판에서 찾기', group: '칠판', keys: 'Ctrl+F', run: () => setFindOpen(Date.now()) },
+      { name: '발표', group: '칠판', words: ['프레젠테이션', '슬라이드쇼'], run: () => ed.current?.startPresent() },
+      ...(server ? [{ name: '공유…', group: '칠판', words: ['링크', 'qr', '보내기'], run: () => setShareOpen(true) }] : []),
+      ...(server ? [{ name: 'KAIROS에게 묻기', group: 'AI', words: ['대화', '질문', '채팅'], run: () => { setChatOpen(true); setChatFocus({ id: Date.now() }) } },
+        { name: '발표 자료 만들기', group: 'AI', words: ['슬라이드', 'ppt'], run: () => { setChatOpen(true); setChatFocus({ id: Date.now(), draft: '발표 자료 만들어 줘 — 주제: ' }) } },
+        { name: '예시 칠판 열기', group: 'AI', words: ['샘플', '보기'], run: () => openExample() }] : []),
+      { name: '다 보기', group: '보기', keys: 'Z', words: ['맞춤', '전체 보기'], run: () => keyAct.current.fit() },
+      { name: '100%', group: '보기', keys: 'Ctrl+0', words: ['원래 크기', '배율'], run: () => keyAct.current.zoom100() },
+      { name: full ? '창으로' : '전체 화면', group: '보기', run: toggleFull },
+      { name: dark ? '밝게' : '어둡게', group: '보기', keys: 'D', words: ['다크', '테마', '화면 색'], run: toggleDark },
+      ...dock,
+      { name: '글쇠 도움말', group: '보기', keys: 'F1', words: ['단축키'], run: () => setHelpOpen(true) },
+    ]
+  }
 
   // 접속자 = 나 + 다른 창(id마다 — 이름으로 세면 이름이 같은 사람(로그인 없는 서버는 다 「이름 없음」)이 한 명으로 줄었음, 2026-10-27 사용자: 셋인데 1)
   const crowd = [{ id: sync.current.id, name: me || '나', me: true }, ...others]
@@ -907,6 +945,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
           background: 'rgba(24,24,27,.86)', color: '#fff', font: "500 13px 'Pretendard', sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', pointerEvents: 'none', opacity: toastOn ? 1 : 0, transition: 'opacity .3s' }}>{status}</div>}
         {aiBusy && <div data-testid="ai-busy" role="status" style={{ position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 6, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 99,
           background: 'var(--mb-card)', border: '1px solid var(--mb-line)', boxShadow: '0 2px 8px rgba(0,0,0,.12)', font: "600 13px 'Pretendard', sans-serif", color: 'var(--mb-ink)', pointerEvents: 'none', whiteSpace: 'nowrap' }}><Spinner />{aiBusy}</div>}   {/* 정돈·정리 문서 중 — 칠판만 보고 있어도 도는 게 보이게(2026-10-20 사용자) */}
+        {cmdOpen > 0 && !phone && <CommandBar key={cmdOpen} getCommands={commandList} onClose={() => setCmdOpen(0)} />}
         {findOpen > 0 && <FindBar key={findOpen} items={model.items} server={server} onMarks={setMarks} onGo={id => ed.current?.showItem(id)} onClose={() => setFindOpen(0)} />}
       </div>
       {chatOpen && srvKnown && <ChatPanel ed={ed} selKey={selKey} floating={narrow} full={phone} onClose={() => setChatOpen(false)} request={chatAsk} focus={chatFocus} onBusy={setAiBusy} width={chatW} setWidth={setChatW} fromTop={!!example} />}
