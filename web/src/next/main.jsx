@@ -56,7 +56,7 @@ const Btn = ({ icon, label, onClick, onDown, title, on, disabled, special, small
     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: narrow ? '4px 4px' : '4px 8px', borderRadius: 6, minWidth: narrow ? 24 : 40, ...slot,   // 좁은 창 옆 여백 6 → 4px: 「칠판」 버튼이 늘며 960px에서 상태 글이 0px로 눌렸음(2026-10-19)
     background: bg(on), font: special ? "700 11px 'Pretendard', sans-serif" : "500 11px 'Pretendard', sans-serif", color: special ? '#fff' : C.ink }}
     onMouseEnter={e => { if (!disabled && (special || !on)) e.currentTarget.style.background = special ? SPECIAL_BG(true) : HOVER }} onMouseLeave={e => { e.currentTarget.style.background = bg(on) }}>
-    {(ICONS[icon] || KEEP_ICONS[icon]) ? <span aria-hidden style={{ width: sz, height: sz, display: 'block', color: special ? '#fff' : 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: (ICONS[icon] || KEEP_ICONS[icon]).replace('<svg ', `<svg width="${sz}" height="${sz}" `) }} />
+    {(ICONS[icon] || KEEP_ICONS[icon]) ? <span aria-hidden className={special ? undefined : 'mb-btn-icon'} style={{ width: sz, height: sz, display: 'block', color: special ? '#fff' : 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: (ICONS[icon] || KEEP_ICONS[icon]).replace('<svg ', `<svg width="${sz}" height="${sz}" `) }} />
       : <span style={{ fontSize: 16, lineHeight: '18px' }}>{icon}</span>}{!narrow && <span style={{ whiteSpace: 'nowrap' }}>{label}</span>}   {/* 이름은 한 줄(「전체 화면」이 두 줄로 꺾여 위 막대가 높아졌음 — 2026-10-20) */}
   </button>
 ) }

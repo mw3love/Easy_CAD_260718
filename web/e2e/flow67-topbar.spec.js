@@ -20,6 +20,11 @@ test('넓은 창 — 칠판 높이 그대로, 저장·내보내기는 위아래�
     expect(a.x < b.x + b.width - 1 && b.x < a.x + a.width - 1 && a.y < b.y + b.height - 1 && b.y < a.y + a.height - 1, `${names[i]}/${names[j]}`).toBe(false)
   }
   await btn(page, '선').click(); await expect(btn(page, '선')).toHaveAttribute('aria-pressed', 'true')
+  // 아이콘 2색(시안 I1): 채운 부분만 파랑, KAIROS 흰색은 그대로
+  const fill = (name, sel) => btn(page, name).locator(sel).first().evaluate(el => getComputedStyle(el).fill)
+  expect(await fill('프레임', 'svg [fill="currentColor"]')).toBe('rgb(37, 99, 235)')
+  expect(await fill('프레임', 'svg > :first-child')).toBe('none')
+  expect(await btn(page, 'KAIROS').locator('span[aria-hidden]').evaluate(el => el.className)).toBe('')
 })
 
 test('좁은 창 — 2단 없이 아이콘 한 줄', async ({ page }) => {
