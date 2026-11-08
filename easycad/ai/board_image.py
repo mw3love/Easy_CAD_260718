@@ -23,6 +23,20 @@ def infographic_prompt(material: str) -> str:
             "자료에 없는 숫자·날짜·문구는 넣지 마.\n\n" + (material or "").strip()[:4000])
 
 
+def infographic_brief_prompt(topic: str, brief: str, facts: str = "", material: str = "") -> str:
+    """대화창 「○○ 인포그래픽 만들어 줘」(2026-11-08 — 「+」 없애며 딥모드 「한 판」 대신 대화창에선 그림 한 장, 사용자 결정)
+    = 주제 + 질문지 답 + 웹에서 찾은 사실·칠판 자료 → 인포그래픽 한 장 지시. 숫자·날짜는 받은 자료에 있는 것만."""
+    out = ["다음 주제를 한국어 인포그래픽 한 장으로 만들어 줘. 큰 제목, 핵심 숫자 카드, 막대나 단계 같은 한눈에 보이는 구성, 한글 글자는 정확하게, 깔끔한 업무용 디자인.",
+           "아래 [자료]에 없는 숫자·날짜·고유 이름은 지어내지 마 — 숫자가 없으면 숫자 대신 핵심 문장으로.", "", "[주제] " + (topic or "").strip()[:500]]
+    if (brief or "").strip():
+        out += ["", "[사용자가 고른 것]", brief.strip()[:800]]
+    if (facts or "").strip():
+        out += ["", "[자료 — 웹에서 찾은 사실]", re.sub(r"\[\d+\]", "", facts).strip()[:1800]]
+    if (material or "").strip():
+        out += ["", "[자료 — 칠판에 적힌 것]", material.strip()[:2500]]
+    return "\n".join(out)
+
+
 IMAGE_MARK = "그림 후보"   # 서버 그림 답 글에 늘 들어가는 말(`web/server.py` `_image`) — 앞 답이 그림이었나 알아보는 표시
 FACTS_HEAD = "웹에서 찾은 정보로 그렸어요"
 FACTS_HEADS = (FACTS_HEAD, "공공 데이터로 그렸어요", "기상청·천문연 자료로 그렸어요")   # 둘째 = `kr_tools.TOOL_HEAD`(공공 데이터로 그린 그림도 이어 고치기가 그 자료를 다시 씀), 셋째 = 10-20 낮까지의 옛 머리

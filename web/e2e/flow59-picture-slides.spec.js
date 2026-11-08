@@ -2,7 +2,7 @@
 // 장 계획 🖼 = 그 장을 그림 한 장으로(어림 크레딧이 따라 바뀜) → 만들기 = 그림 장은 프레임 비율이 그림 비율(3:2), 그림이 프레임을 꽉 채움 · 글 장은 16:9 그대로.
 // 내보내기 PDF 용지 「프레임」 = 쪽마다 그 프레임 크기·여백 0. 진짜 KAIROS는 안 부름(그림 = 3×2 PNG).
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, liveDoc } from './helpers.js'
+import { boardName, openBoard, setCam, liveDoc, routeCall, askChat } from './helpers.js'
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAEElEQVR4nGO4VR4GQQxwFgBmUAnrgvT2ZQAAAABJRU5ErkJggg==', 'base64')   // 3×2 코랄
 const PLAN = { title: '전파가 오는 길', slides: [{ title: '표지', point: '', source: 'ai', pic: false }, { title: '송신소', point: '', source: 'ai', pic: true },
@@ -17,13 +17,11 @@ test('그림 장 — 🖼로 켜고 끄기(어림 크레딧) → 그림 장은 �
   const name = boardName('picslides'), seen = []
   await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { slides: 'claude-sonnet-5-5' } } }))
   await page.route('**/e2e-pic/**', r => r.fulfill({ body: PNG, contentType: 'image/png' }))
-  await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); seen.push(b)
+  await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); if (routeCall(b)) return r.fulfill({ json: { kind: 'go', to: 'slides' } }); seen.push(b)
     return r.fulfill({ json: b.slides?.step === 'plan' ? { kind: 'slides', plan: PLAN, estimate: { credits: [40, 60], seconds: [30, 60] }, model: 'claude-sonnet-5-5', elapsed: 4 }
       : { kind: 'slides', deck: DECK, model: 'claude-sonnet-5-5', elapsed: 30 } }) })
   await openBoard(page, name, { chat: true }); await setCam(page)
-  await page.getByTestId('plus').click(); await page.getByRole('menuitemradio', { name: /Deep Mode/ }).click()
-  const box = page.getByPlaceholder('어떤 주제로', { exact: false })
-  await box.fill('전파가 집까지 오는 길'); await box.press('Enter')
+  await askChat(page, '전파가 집까지 오는 길 발표 자료 만들어 줘')
   await page.locator('[data-tab="set"]').click(); await page.locator('[data-q="그림 장"] [data-v="조금"]').click()
   await page.getByTestId('deep-plan-go').click()
   expect(seen[0].slides.brief['그림 장']).toBe('조금')                                           // 질문지 답 = 서버 계획 지시로
@@ -94,11 +92,10 @@ test('작은 책 ② — 🖼 세 번째 = 글+그림 → 갈래가 있으면 �
     { title: '중계소', layout: '글머리', bullets: ['넘긴다'], notes: '' }, { title: '끝', layout: '마무리', bullets: ['b'], notes: '' }] }
   await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { slides: 'm' } } }))
   await page.route('**/e2e-pic/**', r => r.fulfill({ body: PNG, contentType: 'image/png' }))
-  await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); seen.push(b)
+  await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); if (routeCall(b)) return r.fulfill({ json: { kind: 'go', to: 'slides' } }); seen.push(b)
     return r.fulfill({ json: b.slides?.step === 'plan' ? { kind: 'slides', plan: PLAN, estimate: { credits: [40, 60], seconds: [30, 60] }, model: 'm', elapsed: 4 } : { kind: 'slides', deck, model: 'm', elapsed: 30 } }) })
   await openBoard(page, name, { chat: true }); await setCam(page)
-  await page.getByTestId('plus').click(); await page.getByRole('menuitemradio', { name: /Deep Mode/ }).click()
-  const box = page.getByPlaceholder('어떤 주제로', { exact: false }); await box.fill('전파'); await box.press('Enter')
+  await askChat(page, '전파 발표 자료 만들어 줘')
   await page.getByTestId('deep-plan-go').click()
   const pics = page.getByTestId('slides-pic')
   await pics.nth(0).click()                                                                       // 송신소: 그림 → 글+그림
@@ -128,7 +125,7 @@ test('작은 책 ② — 만든 장 우클릭 「다른 판 더하기」 = 아�
   const name = boardName('picbranch2'), seen = []
   await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { slides: 'm' } } }))
   await page.route('**/e2e-pic/**', r => r.fulfill({ body: PNG, contentType: 'image/png' }))
-  await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); seen.push(b); return r.fulfill({ json: { kind: 'slides', pic: { img: '/e2e-pic/9.png', w: 1536, h: 1024, model: 'img-m' }, model: 'img-m', elapsed: 9 } }) })
+  await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); if (routeCall(b)) return r.fulfill({ json: { kind: 'go', to: 'slides' } }); seen.push(b); return r.fulfill({ json: { kind: 'slides', pic: { img: '/e2e-pic/9.png', w: 1536, h: 1024, model: 'img-m' }, model: 'img-m', elapsed: 9 } }) })
   await openBoard(page, name); await setCam(page)
   await page.evaluate(d => window.__mb.ed.slidesBoard(d), { title: '전파', sources: [], slides: [{ title: '표지', layout: '표지', bullets: ['a'] }, { title: '송신소', layout: '글머리', bullets: ['쏜다'], notes: '메모' }, { title: '끝', layout: '마무리', bullets: ['b'] }] })
   let fr = (await liveDoc(page)).items.filter(it => it.type === 'frame').sort((a, b) => a.no - b.no)
@@ -152,12 +149,11 @@ test('작은 책 ⑤ 이야기 — 질문지 「내용 › 이야기」가 요�
   const deck = { ...DECK, story: true }
   await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { slides: 'm' } } }))
   await page.route('**/e2e-pic/**', r => r.fulfill({ body: PNG, contentType: 'image/png' }))
-  await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); seen.push(b)
+  await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); if (routeCall(b)) return r.fulfill({ json: { kind: 'go', to: 'slides' } }); seen.push(b)
     return r.fulfill({ json: b.slides?.step === 'plan' ? { kind: 'slides', plan: PLAN, estimate: { credits: [40, 60], seconds: [30, 60] }, model: 'm', elapsed: 4 }
       : b.slides?.step === 'pic' ? { kind: 'slides', pic: { img: '/e2e-pic/9.png', w: 1536, h: 1024, model: 'img-m' }, model: 'img-m', elapsed: 9 } : { kind: 'slides', deck, model: 'm', elapsed: 30 } }) })
   await openBoard(page, name, { chat: true }); await setCam(page)
-  await page.getByTestId('plus').click(); await page.getByRole('menuitemradio', { name: /Deep Mode/ }).click()
-  const box = page.getByPlaceholder('어떤 주제로', { exact: false }); await box.fill('토끼 동화'); await box.press('Enter')
+  await askChat(page, '토끼 동화 그림책 만들어 줘')
   await page.locator('[data-tab="set"]').click(); const q = page.locator('[data-q="내용"]')
   await expect(q.locator('[data-v="설명"]')).toBeVisible()
   await q.locator('[data-v="이야기"]').click()
@@ -175,34 +171,6 @@ test('작은 책 ⑤ 이야기 — 질문지 「내용 › 이야기」가 요�
   expect(pic).toMatchObject({ story: true, ref_uid: first.uid, slide: { title: '중계소' } })      // 참고 = 첫 그림 장(송신소) 그림
   its = (await liveDoc(page)).items
   expect(its.find(it => it.type === 'frame' && it.slide_branch === fr[2].uid).slide_story).toBe(true)
-})
-
-test('입구 합치기 — 「+ › Deep Mode」 질문지 맨 위에서 한 판 ↔ 여러 장 · 고른 것은 그대로 · 「+」 메뉴에 마우스를 올리면 큰 예시 그림', async ({ page }) => {
-  const name = boardName('deepshape')
-  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { deep: 'claude-opus-5-5', slides: 'm', live: 'gpt-6.1-sol', image: 'img' } } }))
-  await openBoard(page, name, { chat: true }); await setCam(page)
-  await page.evaluate(t => { const dt = new DataTransfer(); dt.setData('text/plain', t); window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })) }, '# 송신소 점검\n- 안테나 정상')
-  await expect(page.getByTestId('sel-chip')).toHaveText('1개 선택됨')
-  await page.getByTestId('plus').click()
-  const items = (await page.getByRole('menuitemradio').allInnerTexts()).map(t => t.split('\n')[0])
-  expect(items.filter(t => /Deep Mode|발표 자료/.test(t))).toEqual(['📰 Deep Mode'])                 // 딥모드·발표 자료 = 입구 하나
-  await page.getByRole('menuitemradio', { name: /Deep Mode/ }).hover()
-  const pv = page.getByTestId('plus-preview')
-  await expect(pv).toHaveAttribute('data-k', 'deep')
-  await expect.poll(() => pv.locator('img').evaluateAll(xs => xs.map(x => x.naturalWidth > 0))).toEqual([true, true])   // 한 판 + 여러 장 그림이 실제로 뜸
-  await page.getByRole('menuitemradio', { name: /인터랙티브 HTML/ }).hover()
-  await expect(pv).toHaveAttribute('data-k', 'live'); await expect.poll(() => pv.locator('img').evaluate(x => x.naturalWidth)).toBeGreaterThan(0)
-  await page.getByRole('menuitemradio', { name: /Deep Mode/ }).click()
-  const box = page.getByPlaceholder('어떤 주제로', { exact: false }); await box.fill('전파가 집까지 오는 길'); await box.press('Enter')
-  const ask = page.getByTestId('deep-ask'), shape = page.getByTestId('deep-shape')
-  await expect(shape.locator('[data-v="deep"]')).toHaveAttribute('aria-pressed', 'true')            // 처음 = 한 판
-  await expect(ask.locator('[data-q="누구에게"]')).toBeVisible()
-  await shape.locator('[data-v="slides"]').click()
-  await ask.locator('[data-tab="set"]').click()
-  await expect(ask.locator('[data-q="그림 장"]')).toBeVisible(); await expect(ask.locator('[data-tab="누구에게"]')).toHaveCount(0)   // 여러 장 질문지
-  await expect(ask).toContainText('칠판에서 고른 것 1개를 재료로')                                      // 고른 것은 붙잡아 둠
-  await shape.locator('[data-v="deep"]').click()
-  await expect(ask.locator('[data-q="누구에게"]')).toBeVisible()
 })
 
 test('작은 책 ③ — 갈래가 있는 책은 장끼리 →·장에서 판으로 ↓ 화살표(프레임에 붙음) · 발표가 화살표를 따라감(갈림길 ↓/→·이전 = 지나온 길)', async ({ page }) => {

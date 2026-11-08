@@ -900,7 +900,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
         {symAdd && <SymAddForm init={symAdd} folders={mySyms.folders} onClose={() => setSymAdd(null)} onOk={(name, folder) => {
           const ok = myApi.addSymbol(name, folder, symAdd.items); setSymAdd(null)
           if (ok) { setDockTab('shape'); setStatus(`「${name}」을 내 심볼 「${folder}」에 넣었어요 — 이 브라우저에 저장`) } else setStatus('이 브라우저 저장 공간이 모자라요 — 그림이 든 것은 클 수 있어요') }} />}
-        {!model.items.length && !meetSt && !aiBusy && <EmptyGuide phone={phone} onExample={() => openExample()} onAsk={() => { setChatOpen(true); setChatFocus({ id: Date.now() }) }} onDeep={() => { setChatOpen(true); setChatFocus({ id: Date.now(), tool: 'deep' }) }}
+        {!model.items.length && !meetSt && !aiBusy && <EmptyGuide phone={phone} onExample={() => openExample()} onAsk={() => { setChatOpen(true); setChatFocus({ id: Date.now() }) }} onDeep={() => { setChatOpen(true); setChatFocus({ id: Date.now(), draft: '발표 자료 만들어 줘 — 주제: ' }) }}
           onMeet={() => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : ed.current?.meetStart())} />}
         <span data-testid="save-note" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{saveNote}</span>
         {status && <div data-testid="status-toast" role="status" title={status} style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 6, maxWidth: 'min(640px, max(240px, calc(100% - 480px)))', padding: '6px 14px', borderRadius: 99,

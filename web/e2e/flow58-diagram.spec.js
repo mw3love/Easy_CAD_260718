@@ -76,13 +76,11 @@ test('「+ › 🔷 도형 그리기」 이름표 = kind diagram · 「이미지
   await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); seen.push(b)
     return r.fulfill({ json: b.kind === 'image' ? { kind: 'image', content: '그림 후보', model: 'img-m', elapsed: 1, images: [] } : answer(S) }) })
   await openBoard(page, boardName('diagramplus'), { chat: true }); await setCam(page, { x: 0, y: 0, z: 0.5 })
-  await page.getByTestId('plus').click(); await page.getByRole('menuitemradio', { name: /도형 그리기/ }).click()
-  await expect(page.getByTestId('tool-chip')).toContainText('도형 그리기')
-  await page.locator('textarea').last().click(); await page.keyboard.type('출근 준비 순서'); await page.keyboard.press('Enter')   // 이름표를 고르면 안내 글이 바뀜
+  await page.locator('textarea').last().click(); await page.keyboard.type('출근 준비 순서 흐름도 그려 줘'); await page.keyboard.press('Enter')   // 말로(2026-11-08 — 전엔 「+ › 도형 그리기」 이름표)
   await expect(page.getByTestId('answer-diagram')).toBeVisible()
-  expect(seen.at(-1).kind).toBe('diagram')
+  expect(seen.at(-1).kind).toBeUndefined()                                                    // 길은 서버가(`is_diagram`)
   await page.getByTestId('diagram-image').click()
   await expect.poll(() => seen.at(-1)?.kind).toBe('image')
-  expect(seen.at(-1).messages.at(-1).content).toBe('출근 준비 순서')
+  expect(seen.at(-1).messages.at(-1).content).toBe('출근 준비 순서 흐름도 그려 줘')
   expect(frames(await liveDoc(page)).length).toBe(1)                                            // 칠판의 도형은 그대로
 })

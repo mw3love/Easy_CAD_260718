@@ -1,5 +1,5 @@
 // 흐름 16 — 「정리해 줘」 ①(§8 항목61): 고른 메모 → 📄 정리 문서(대화창 미리보기) → 칠판에 붙이기 = 문서 카드(칸 안에 그 문서) → 「더 짧게」 = 앞 문서 고치기
-// → 우클릭 「정리 문서 만들기」도 같은 길 → 새로고침해도 그대로 → ↗ 크게 보기 = 새 탭. KAIROS는 가짜(/api/chat) — 서버는 tests/test_part61, 진짜는 손 확인.
+// → 우클릭 「정리 › 문서로」(2026-11-08 — 전엔 「정리 문서 만들기」)도 같은 길 → 새로고침해도 그대로 → ↗ 크게 보기 = 새 탭. KAIROS는 가짜(/api/chat) — 서버는 tests/test_part61, 진짜는 손 확인.
 import { test, expect } from '@playwright/test'
 import { boardName, openBoard, setCam, clickScene, liveDoc, waitSaved, toPage } from './helpers.js'
 
@@ -40,7 +40,7 @@ test('정리해 줘 → 📄 미리보기 → 문서 카드 → 더 짧게 = 고
   await clickScene(page, 1500, 900)
   const p = await toPage(page, memo.pos[0] + 60, memo.pos[1] + 15)
   await page.mouse.click(p.x, p.y); await page.mouse.click(p.x, p.y, { button: 'right' })
-  await page.getByRole('button', { name: '정리 문서 만들기 (KAIROS)' }).click()
+  await page.getByRole('button', { name: '정리 (KAIROS)' }).click(); await page.getByRole('button', { name: /문서로/ }).click()
   await expect.poll(() => seen.length).toBe(3)
   expect(seen[2].kind).toBe('report')
 

@@ -89,21 +89,19 @@ test('움직이는 카드 — 한 번 = 고르기 · 두 번 = 조작 · 바깥 
   await big2.close()
 })
 
-// 4-2·4-3 대화창 — 「+ › ▶ 움직이는 카드」(서버가 할 수 있을 때만) → 답 = 대화창 안에서 바로 만져 보는 카드 → 칠판에 붙이기 = 움직이는 문서 카드
+// 4-2·4-3 대화창 — 「직접 움직여 볼 수 있게 만들어 줘」(2026-11-08 말로 — 전엔 「+ › ▶ 움직이는 카드」) → 답 = 대화창 안에서 바로 만져 보는 카드 → 칠판에 붙이기 = 움직이는 문서 카드
 // → 고칠 말 = 앞 카드 HTML을 같이 보냄(prev_kind) · 딥모드 판의 원리 꼭지 = 진짜 카드(고정 계획 셋 — 겹침 0은 flow31). KAIROS·서버는 가짜
-test('대화창 「+ › 움직이는 카드」 → 대화창에서 만져 보기 → 칠판에 붙이기 → 말로 고치기', async ({ page }) => {
+test('대화창 「움직여 볼 수 있게」 → 대화창에서 만져 보기 → 칠판에 붙이기 → 말로 고치기', async ({ page }) => {
   const sent = []
   await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { live: 'gpt-6.1-sol' } } }))
   await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); sent.push(b)
     r.fulfill({ json: { kind: 'live', content: `${b.prev_html ? '말한 대로 고친 ' : ''}움직이는 카드 「시험 카드」`, title: '시험 카드', html: CARD, model: 'gpt-6.1-sol', elapsed: 50 } }) })
   const name = boardName('livechat')
   await openBoard(page, name, { chat: true }); await setCam(page)
-  await page.getByTestId('plus').click()
-  await page.getByRole('menuitemradio', { name: /인터랙티브 HTML/ }).click()
-  await page.getByPlaceholder('무엇을 움직여 볼까요', { exact: false }).click()
-  await page.keyboard.type('가격 × 물량 = 수출액'); await page.keyboard.press('Enter')
+  await page.getByPlaceholder('물어보세요', { exact: false }).click()
+  await page.keyboard.type('가격 × 물량 = 수출액을 직접 움직여 볼 수 있게 만들어 줘'); await page.keyboard.press('Enter')
   await expect(page.getByTestId('answer-kind').last()).toHaveText('▶ 인터랙티브 HTML')
-  expect(sent[0].kind).toBe('live')
+  expect(sent[0].kind).toBeUndefined()                                                // 길은 서버가 고름(`board_chat.special_kind`)
   const pv = page.getByTestId('answer-live').locator('iframe')
   await expect(pv).toHaveAttribute('sandbox', 'allow-scripts')
   const inner = page.frameLocator('[data-testid="answer-live"] iframe')
@@ -118,7 +116,7 @@ test('대화창 「+ › 움직이는 카드」 → 대화창에서 만져 보�
   expect(card.rect[3] - 40).toBe(Math.round(card.rect[2] * 480 / 720))           // 띠 + 기준 비율
   await expect(page.locator(`iframe[data-liveid="${card.uid}"]`)).toHaveCount(1)
 
-  await page.getByPlaceholder('무엇을 움직여 볼까요', { exact: false }).click()
+  await page.getByPlaceholder('물어보세요', { exact: false }).click()
   await page.keyboard.type('막대를 더 크게'); await page.keyboard.press('Enter')
   await expect(page.getByTestId('answer-kind')).toHaveCount(2)
   expect(sent[1].prev_html).toBe(CARD); expect(sent[1].prev_kind).toBe('live')

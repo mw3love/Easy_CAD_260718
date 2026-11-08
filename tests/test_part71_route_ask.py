@@ -24,10 +24,10 @@ def _decide(text, answer, **kw):
 
 
 def test_close_costly_scores_ask():
-    # 「발표 자료 만들어 줘」 — 실측 chat 0.52 / report 0.47(같은 질문이 3번 중 chat 2·report 1)
-    assert _decide("발표 자료 만들어 줘", ("chat", 0.42, {"chat": 0.52, "report": 0.47, "image": 0.01})) == ("chat", "ai", ["chat", "report"])
+    # 실측 문항은 「발표 자료 만들어 줘」(chat 0.52 / report 0.47 — 같은 질문이 3번 중 chat 2·report 1) — 2026-11-08부터 그 말은 발표 자료 길(낱말)이라 다른 애매한 말로
+    assert _decide("회의 내용 자료로 만들어 줘", ("chat", 0.42, {"chat": 0.52, "report": 0.47, "image": 0.01})) == ("chat", "ai", ["chat", "report"])
     # 고른 길(chat)과 점수 1등(report)이 어긋남 — 실측 2026-10-23(같은 질문 4번 중 1번)
-    assert _decide("발표 자료 만들어 줘", ("chat", 0.39, {"chat": 0.486, "report": 0.494, "image": 0.01})) == ("chat", "ai", ["chat", "report"])
+    assert _decide("회의 내용 자료로 만들어 줘", ("chat", 0.39, {"chat": 0.486, "report": 0.494, "image": 0.01})) == ("chat", "ai", ["chat", "report"])
     assert _decide("오늘 한 일 정리",("report", 0.3, {"report": 0.41, "chat": 0.26, "board": 0.19}))[2] == ["report", "chat"]
 
 
@@ -140,3 +140,19 @@ def test_link_and_site_words_need_web_meaning():
     """「마이크로웨이브 링크」·「송신 사이트」 = 장비·현장 말이라 검색 아님(2026-11-03 실검증 — 손그림 요청이 그리기 전 웹 검색을 거쳐 출처 5개가 붙었음)."""
     assert not board_chat._SEARCH_WORDS.search("스튜디오 → 마이크로웨이브 링크 → 송신기") and not board_chat._SEARCH_WORDS.search("송신 사이트 점검 순서")
     assert board_chat._SEARCH_WORDS.search("관련 링크 알려 줘") and board_chat._SEARCH_WORDS.search("KBS 웹사이트 주소 알려 줘")
+
+
+def test_server_go_routes_and_infographic(server, monkeypatch):
+    """2026-11-08 「+」 없애기 — 발표 자료·인포그래픽은 서버가 만들지 않고 `go`(대화창이 질문지), 인포그래픽 질문지 답 = 검색 + 그림 후보."""
+    import server as srv
+    base, made = server
+    for text, to in (("송신소 점검 결과로 발표 자료 만들어 줘", "slides"), ("OTT 이용률 인포그래픽 만들어 줘", "infographic")):
+        out = _post(base, messages=[{"role": "user", "content": text}])
+        assert out["kind"] == "go" and out["to"] == to
+    assert made == []                                                       # 크레딧 안 씀
+    seen = {}
+    monkeypatch.setattr(srv.board_chat, "chat", lambda key, msgs, **kw: seen.setdefault("search", kw.get("kind")) and {"content": "이용률 72% [1]", "model": "exa", "elapsed": 1, "sources": []})
+    monkeypatch.setattr(srv.Handler, "_image", lambda self, name, prompt, key, facts=None, note="", caption="", edit=None: (seen.update(prompt=prompt, caption=caption), self._json(200, {"kind": "image", "images": []}))[1])
+    out = _post(base, kind="deep", deep={"step": "pic", "topic": "OTT 이용률", "brief": {"깊이": "핵심만", "재료": "알아서"}}, messages=[{"role": "user", "content": "OTT 이용률"}])
+    assert out["kind"] == "image" and seen["search"] == "search" and seen["caption"] == "OTT 이용률"
+    assert "이용률 72%" in seen["prompt"] and "[1]" not in seen["prompt"] and "깊이: 핵심만" in seen["prompt"]

@@ -16,11 +16,10 @@ async function ask(page, q) {
 const boxOf = it => ({ x: it.pos[0] + it.rect[0], y: it.pos[1] + it.rect[1], w: it.rect[2] * (it.scale || 1), h: it.rect[3] * (it.scale || 1) })
 const overlap = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
 
-test('「+ › 파일 올리기…」 = 칠판 빈자리에 놓고 고른 채 → 질문에 글·그림이 실림', async ({ page }) => {
+test('입력 칸 옆 📎 = 칠판 빈자리에 놓고 고른 채 → 질문에 글·그림이 실림', async ({ page }) => {
   const name = boardName('attach'), seen = []
   await fakeKairos(page, seen)
   await openBoard(page, name, { chat: true }); await setCam(page)
-  await page.getByTestId('plus').click()
   const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByTestId('attach').click()])
   await chooser.setFiles([{ name: '점검.md', mimeType: 'text/markdown', buffer: Buffer.from('# 점검 메모\n- 송신기 2대 교체') }, { name: '현장.png', mimeType: 'image/png', buffer: PNG }])
   await expect(page.getByTestId('sel-chip')).toHaveText('2개 선택됨')

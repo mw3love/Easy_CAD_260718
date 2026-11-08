@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import time
 
-from easycad.ai import board_chat, gateway as gw
+from easycad.ai import board_chat, features, gateway as gw
 
 ROUTE_MODEL = "jev-latest"
 TIMEOUT = 2.0          # 넘기면 규칙 — 판단 때문에 답이 늦어지지 않게
@@ -38,6 +38,10 @@ CASES = [
     ("펭귄 아이콘 그려줘", 0, "image"),   # 「아이콘」은 뜻이 둘 — 안 물었으면 그림, 대화창은 되물음(`decide`, §8 항목64)
     ("송신소 구성도 만들어 줘", 0, "diagram"),   # 2026-10-23 측정 — 구성도가 그림으로 갔음 → 11-03부터 🔷 도형
     ("손으로 그린 듯한 송신소 계통도 연필 스케치로 그려 줘", 0, "image"), ("흐름도 그리는 법 알려줘", 0, "chat"),   # 그림 느낌 말 = 그림, 묻는 말 = 대화
+    # 2026-11-08 「+」 없애기 — 「+」로만 가던 길(KAIROS 기능 표 `features.py`)이 말로 가야 함
+    ("송신소 점검 결과로 발표 자료 만들어 줘", 0, "slides"), ("신입 교육용 슬라이드 8장 준비해 줘", 0, "slides"), ("전파가 집까지 오는 길을 그림책으로 만들어 줘", 0, "slides"),
+    ("발표 자료 잘 만드는 법 알려줘", 0, "chat"), ("올해 국내 OTT 이용률 인포그래픽 만들어 줘", 0, "infographic"), ("인포그래픽이 뭐야?", 0, "chat"),
+    ("가격 × 물량 = 수출액을 직접 움직여 볼 수 있게 만들어 줘", 0, "live"), ("안테나 이득 시뮬레이션 만들어 줘", 0, "live"),
 ]
 # 주간 자가 시험 결과 — False면 규칙만(서버가 `self_check`로 바꿈). 환경 변수 EASYCAD_ROUTE=rules면 늘 규칙(시험·네트워크 없는 곳)
 state = {"ai": True}
@@ -66,8 +70,7 @@ def ask_model(api_key: str, text: str, has_context: bool, *, base_url: str = gw.
 # Haiku 5.5 25/31 — 길은 Flash-Lite(대화 모델에 「하나만, 이름만」)가 고르고 JEV는 같이 물어 확률(되묻기)·받침으로. 둘은 동시에 물음(기다림 = 더 느린 쪽)
 JUDGE_MODEL = "gemini-3.5-flash-lite"
 JUDGE_TIMEOUT = 2.5
-JUDGE_KINDS = {**CRITERIA, "diagram": "상자와 화살표로 된 흐름도·계통도·구성도를 칠판에서 고칠 수 있는 도형으로 그리기",
-               "icon": "선으로 된 아이콘·심볼을 SVG(고칠 수 있는 선)로 만들기"}
+JUDGE_KINDS = features.judge_kinds()   # 선택지 = KAIROS 기능 표(2026-11-08 — 「+」 없애며 slides·infographic·live가 더해짐)
 
 
 def ask_judge(api_key: str, text: str, has_context: bool, *, base_url: str = gw.BASE_URL, http=None, timeout: float = JUDGE_TIMEOUT) -> str:
@@ -121,6 +124,10 @@ def adjust(text: str, choice: str, conf: float, probs: dict) -> str:
         return "icon"
     if board_chat.is_diagram(text):   # 판단 모델엔 도형 길이 없음 — 낱말로(2026-11-03)
         return "diagram"
+    if choice in ("slides", "infographic", "live"):   # 판정 대화 모델만 아는 길(JEV 선택지엔 없음) — 그림 낱말 손질에 안 걸리게(「그림책으로 만들어 줘」)
+        return choice
+    if board_chat.special_kind(text):   # JEV만 답했을 때(판정 모델 실패) — 이름이 분명한 말은 낱말로(아이콘·도형과 같게)
+        return board_chat.special_kind(text)
     style = board_chat._STYLE_WORDS.search(text or "")   # 「손으로 그린 듯한·연필 스케치」 = 흐름도라도 그림(2026-11-03 사용자 검토)
     if choice == "image" and board_chat._DIAGRAM_WORDS.search(text or "") and not style:
         return "chat"
@@ -153,6 +160,8 @@ def decide(api_key: str, text: str, has_context: bool = False, *, prefs: dict | 
         return (pick, "rules", []) if pick in ("image", "icon") else ("image", "rules", ["image", "icon"])
     if board_chat.is_diagram(text):   # 「계통도 그려 줘」 = 🔷 고칠 수 있는 도형(2026-11-03 사용자 결정 — 묻지 않음, 그림 느낌 말이면 그림. 전엔 아이콘 vs 그림 되묻기)
         return "diagram", "rules", []
+    if board_chat.special_kind(text):   # 「발표 자료 만들어 줘」·「인포그래픽」·「인터랙티브」 — 이름이 분명하면 낱말로(2026-11-08, JEV는 이 길을 모름)
+        return board_chat.special_kind(text), "rules", []
     rules = board_chat.guess_kind(text, has_context)
     if os.environ.get("EASYCAD_ROUTE") == "rules" or not state["ai"] or not api_key:
         return rules, "rules", []

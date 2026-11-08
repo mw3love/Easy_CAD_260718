@@ -45,7 +45,7 @@ export const keptPlan = m => ({ ...m.plan, sections: (m.plan.sections || []).fil
 const PICK = { background: 'var(--mb-pick)', border: '1px solid transparent', color: 'var(--mb-ink)', fontWeight: 700 }
 export const GO = { all: 'unset', cursor: 'pointer', alignSelf: 'flex-start', background: 'var(--mb-accent)', color: '#fff', font: "700 12.5px 'Pretendard', sans-serif", padding: '5px 14px', borderRadius: 7 }
 const answerText = (v) => (Array.isArray(v) ? (v.length ? v.join(', ') : AUTO) : v || AUTO)
-export function DeepAsk({ m, set, go, busy, css, slides = false, shape = null }) {
+export function DeepAsk({ m, set, go, busy, css, slides = false, shape = null, cost = '' }) {   // m.pic = 인포그래픽 질문지(2026-11-08 — 대화창 「한 판」 대신 그림 한 장), cost = KAIROS 기능 표 어림(`/api/models` features)
   const b = m.brief || {}, lock = !!m.done || !!busy, qs = askQs(m, slides)
   const setNames = new Set((slides ? SLIDES_SET : DEEP_SET).map(([q]) => q))
   const content = qs.filter(([q]) => !setNames.has(q)), settings = qs.filter(([q]) => setNames.has(q))
@@ -55,7 +55,7 @@ export function DeepAsk({ m, set, go, busy, css, slides = false, shape = null })
   const answered = q => { const v = b[q]; return Array.isArray(v) ? v.length > 0 : !!v && v !== AUTO }
   if (m.done) return <div data-testid="deep-ask" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
     {qs.filter(([q]) => answered(q)).map(([q, , , h]) => <div key={q} style={{ display: 'flex', gap: 8, fontSize: 12.5 }}><span style={{ ...css.meta, fontSize: 12, flex: 'none' }}>{h || q}</span><b>{answerText(b[q])}</b></div>)}
-    <span style={css.meta}>{m.more ? `덧붙인 말: ${m.more} · ` : ''}이 답으로 {slides ? '장 계획' : '지면 계획'}을 짰어요</span></div>
+    <span style={css.meta}>{m.more ? `덧붙인 말: ${m.more} · ` : ''}{m.pic ? '이 답으로 조사해서 그림을 그렸어요' : `이 답으로 ${slides ? '장 계획' : '지면 계획'}을 짰어요`}</span></div>
   const chip = (q, v, on, onClick) => <button key={v} data-v={v} aria-pressed={on} disabled={lock} onClick={onClick}
     style={{ ...css.ghost, ...(on ? PICK : null), cursor: lock ? 'default' : 'pointer' }}>{on ? `✓ ${v}` : v}</button>
   // 질문 하나 — rows = 번호 줄(맞춤 질문) / 칩(설정)
@@ -99,8 +99,8 @@ export function DeepAsk({ m, set, go, busy, css, slides = false, shape = null })
           {[...content, ...settings].map(([q, , , h]) => <div key={q} style={{ display: 'flex', gap: 8, fontSize: 12.5 }}><span style={{ ...css.meta, fontSize: 12, width: 72, flex: 'none' }}>{h || q}</span><b>{answerText(b[q])}</b></div>)}</div>
       : question(content.find(([q]) => q === cur.id), true)}
     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-      <button data-testid="deep-plan-go" style={{ ...GO, ...(busy || m.asking ? { opacity: 0.5, cursor: 'default' } : null) }} disabled={!!busy || !!m.asking} onClick={go}>{slides ? '장 계획 짜기' : '지면 계획 짜기'}</button>
-      <span style={css.meta}>{slides ? '약 10크레딧' : '약 40크레딧'}</span></div>
+      <button data-testid="deep-plan-go" style={{ ...GO, ...(busy || m.asking ? { opacity: 0.5, cursor: 'default' } : null) }} disabled={!!busy || !!m.asking} onClick={go}>{m.pic ? '그림 만들기' : slides ? '장 계획 짜기' : '지면 계획 짜기'}</button>
+      <span style={css.meta}>{cost || (slides ? '약 10크레딧' : '약 40크레딧')}</span></div>
   </div>
 }
 

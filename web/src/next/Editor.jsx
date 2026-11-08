@@ -2798,11 +2798,13 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       {menu && <ContextMenu at={menu} onClose={() => setMenu(null)} entries={(() => {
         const m = R.current.model, ids = R.current.sel, has = ids.length > 0, selIt = m.items.filter(it => ids.includes(it._id)), act = f => () => { setMenu(null); f() }
         const out = []
+        const tidyMenu = () => ['정리 (KAIROS)', '', null, [['문서로 — 정리 문서 한 장', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))],
+          ['한 판으로 — 신문 지면처럼', act(() => onAsk(selIt.find(it => it.type === 'doc')?.title || selIt.find(it => it.type === 'frame')?.name || selIt.map(it => it.type === 'memo' && it.lines?.find(l => /^h[123]$/.test(l.k) && l.t.trim())?.t.trim()).find(Boolean) || '고른 자료 정리', 'deep'))]]]
         const lockedSel = selIt.filter(it => it.locked && !layerLocked(it))   // 고른 것 중 잠긴 것 — 한 번에 풀기(2026-10-25 사용자, 잠긴 레이어의 것은 레이어 카드에서)
         if (lockedSel.length) { const uids = new Set(lockedSel.map(it => it._id)); out.push([`잠금 해제 (${lockedSel.length}개)`, '', act(() => commit(m.items.map(it => (uids.has(it._id) ? { ...it, locked: false } : it)), ids, '잠금 해제'))], '-') }
         if (has && lockedSel.length === selIt.length) {   // 잠긴 것만 고름 = 안 바뀌는 일만(복사·내보내기·정리 문서)
           out.push(['복사', 'Ctrl+C', act(copy)], ['잠금 전환', 'Ctrl+L', act(() => commit(toggleLock(m.items, ids), ids, '잠금'))], '-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
-          if (onAsk && (selTexts().length || selImages().length)) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])
+          if (onAsk && (selTexts().length || selImages().length)) out.push(tidyMenu())
           return out }
         const pin = menu.pdfIn && m.items.find(it => it._id === menu.pdfIn.id)
         if (pin) { const n = menu.pdfIn.page   // PDF 안쪽 = 내용 메뉴만(틀 메뉴·칠판 메뉴 안 섞음)
@@ -2858,7 +2860,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           if (onAsk && (selTexts().length || selImages().length)) {   // 📽 발표 자료(§8 항목69 3단계) — 고른 것(딥모드 판·정리 문서·메모…)이 재료, 주제 = 판·문서 제목
             const t0 = selIt.find(it => it.deep_plan)?.deep_plan?.plan?.title || selIt.find(it => it.type === 'doc')?.title || selIt.find(it => it.type === 'frame')?.name || selIt.map(it => it.type === 'memo' && it.lines?.find(l => /^h[123]$/.test(l.k) && l.t.trim())?.t.trim()).find(Boolean) || ''   // 메모 = 맨 위 제목 줄(2026-11-02 실검증 — 전엔 「고른 자료로 발표 자료」)
             out.push(['발표 자료 만들기 (KAIROS)', '', act(() => onAsk(t0 ? `${t0} — 발표 자료` : '고른 자료로 발표 자료', 'slides'))]) }
-          if (onAsk && (selTexts().length || selImages().length)) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])   // 「정리해 줘」 ① — 고른 것이 재료
+          if (onAsk && (selTexts().length || selImages().length)) out.push(tidyMenu())   // 「정리해 줘」 ① 문서로 · 딥모드 「한 판」(2026-11-08 — 대화창에선 그림 한 장으로만, 사용자 결정) — 고른 것이 재료
         }
         // 빈 곳 = 붙여넣기만(2026-10-25 사용자: 빈 곳 메뉴는 없어도 됨 — 전체 선택은 Ctrl+A, 칠판 전체 정리 문서는 전체 선택 뒤 우클릭, 도움말은 왼쪽 「?」).
         // 우클릭한 그 자리에 붙는 것이 Ctrl+V와 다른 쓸모라 남김. 붙일 것도 없으면 메뉴를 안 띄움(항목 0개 = ContextMenu가 안 그림)

@@ -42,13 +42,13 @@ test('발표 레이저 — 끌면 빨간 자취(글 선택 안 잡힘), 펜을 �
 
 test('기다리는 동안 「취소」는 한 줄(진행 글이 길어도 — 정리 문서·인터랙티브 HTML처럼)', async ({ page }) => {
   const LONG = 'fake-model-with-a-long-name'
-  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { live: LONG } } }))
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { report: LONG } } }))
   await page.route('**/api/chat', () => {})   // 답이 안 옴
   await page.addInitScript(() => { try { localStorage.setItem('mb-chat-w', '320') } catch {} })   // 가장 좁은 대화창
   await openBoard(page, boardName('stopwrap'), { chat: true })
-  await page.getByTestId('plus').click(); await page.getByRole('menuitemradio', { name: /인터랙티브 HTML/ }).click()
-  await page.getByTestId('tool-chip').waitFor()
-  await page.getByPlaceholder('무엇을 움직여 볼까요', { exact: false }).click(); await page.keyboard.type('진자 운동'); await page.keyboard.press('Enter')
+  await page.evaluate(t => { const dt = new DataTransfer(); dt.setData('text/plain', t); window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })) }, '# 진자 운동\n- 주기')
+  await page.keyboard.press('Control+a'); const m0 = (await page.evaluate(() => window.__mb.toEcad())).items[0], q = await toPage(page, m0.pos[0] + 20, m0.pos[1] + 10)
+  await page.mouse.click(q.x, q.y, { button: 'right' }); await page.getByRole('button', { name: '정리 (KAIROS)' }).click(); await page.getByRole('button', { name: /문서로/ }).click()
   const stop = page.getByTestId('chat-stop'); await expect(stop).toBeVisible()
   await expect(page.getByTestId('chat-busy')).toContainText(LONG)
   const b = await stop.boundingBox()

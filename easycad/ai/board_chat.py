@@ -90,6 +90,25 @@ def maybe_icon(text: str) -> bool:
     return bool(_ICON_AMBIG.search(t) and _MAKE_WORDS.search(t) and not _HOWTO_WORDS.search(t) and not is_icon(t))
 
 
+# 「+」 창 없이 말로 가는 길(2026-11-08 — KAIROS 기능 표 `features.py`, 사용자 「모두 채팅창으로 녹여 버리자」): 인포그래픽·인터랙티브 카드·발표 자료.
+# 이름이 분명한 말 + 만들기 말이 같이 있고 묻는 말(만드는 법·뜻)이 아닐 때만 — 애매한 말(「신입 교육용 10장짜리 자료」)은 판정 모델이 고름
+_INFO_WORDS = re.compile(r"인포그래픽")
+_LIVE_WORDS = re.compile(r"인터랙티브|직접\s*(눌러|만져|움직여|조작)|만져\s*(보|볼)|움직여\s*(보|볼)|움직이는\s*카드|시뮬레이션|시뮬레이터")
+_SLIDES_WORDS = re.compile(r"발표\s*자료|슬라이드|ppt|피피티|프레젠테이션|(작은|그림|동화|이야기)\s*책", re.I)
+_SPECIAL_MAKE = re.compile(r"그려|그리|만들|생성|디자인|작성|준비|짜\s*(줘|주세요|봐)|으로\s*(줘|해|정리|바꿔|만들)")
+
+
+def special_kind(text: str) -> str:
+    """말에 이름이 분명한 길 → "infographic" | "live" | "slides" | ""."""
+    t = text or ""
+    if not _SPECIAL_MAKE.search(t) or _HOWTO_WORDS.search(t):
+        return ""
+    for kind, words in (("infographic", _INFO_WORDS), ("live", _LIVE_WORDS), ("slides", _SLIDES_WORDS)):
+        if words.search(t):
+            return kind
+    return ""
+
+
 # 정리 문서(「정리해 줘」 ①) — 칠판 자료를 아티팩트 같은 보고서·인포그래픽 한 장으로(`board_report`)
 _REPORT_WORDS = re.compile(r"정리해\s*(줘|주세요|봐)|정리\s*(문서|보고서)|보고서|인포그래픽|브리핑\s*(자료|문서|으로)|한\s*장(으로|짜리)|요약\s*(문서|자료|보고)|인쇄용")
 _DOC_WORDS = re.compile(r"문서|보고서|인포그래픽|브리핑|한\s*장|인쇄")
@@ -110,6 +129,8 @@ def guess_kind(text: str, has_context: bool = False) -> str:
     """질문 → "report"(정리 문서) | "board"(칠판에서 찾아 답) | "icon"(아이콘 후보) | "diagram"(🔷 도형) | "image"(그림 후보) | "search"(웹 검색) | "chat"(대화).
     낱말 규칙(데스크톱 `guess_kind`처럼) — 칠판에서 고른 글을 다루는 말이면 대화."""
     t = text or ""
+    if special_kind(t):   # 인포그래픽·인터랙티브 카드·발표 자료(2026-11-08 — 「+」 없이 말로)
+        return special_kind(t)
     if _REPORT_WORDS.search(t) and (has_context or _DOC_WORDS.search(t) or not _has_topic(t)):
         return "report"
     if _BOARD_WORDS.search(t):

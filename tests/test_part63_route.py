@@ -120,5 +120,19 @@ def test_judge_failure_falls_back_to_jev():
 
 
 def test_agree_keeps_jev_ask_when_close():   # 둘이 같은 답이면 JEV 확률로 지금처럼 되묻기(1·2등 차 < 0.3이고 비싼 길)
-    (kind, how, asks), _h = _decide2("발표 자료 만들어 줘", ("chat", 0.49, {"chat": 0.49, "report": 0.45}), "chat")
+    (kind, how, asks), _h = _decide2("회의 내용 자료로 만들어 줘", ("chat", 0.49, {"chat": 0.49, "report": 0.45}), "chat")
     assert kind == "chat" and asks == ["chat", "report"]
+
+
+def test_special_routes_without_plus():
+    """2026-11-08 「+」 없애기 — 발표 자료·인포그래픽·인터랙티브 카드는 말로(낱말이 분명하면 바로, 아니면 판정 모델), 묻는 말은 대화."""
+    assert route.decide("k", "송신소 점검 결과로 발표 자료 만들어 줘")[0] == "slides"
+    assert route.decide("k", "올해 OTT 이용률 인포그래픽 만들어 줘")[0] == "infographic"
+    assert route.decide("k", "가격 × 물량 = 수출액을 직접 움직여 볼 수 있게 만들어 줘")[0] == "live"
+    assert route.board_chat.guess_kind("발표 자료 잘 만드는 법 알려줘") == "chat"
+    (kind, how, asks), _h = _decide2("신입이 볼 10장짜리 교육 자료 준비해 줘", ("chat", 0.6, {"chat": 0.6, "report": 0.3}), "slides")
+    assert kind == "slides" and how == "ai" and asks == []                       # 판정 대화 모델만 아는 길이 이김(JEV 선택지엔 없음)
+    assert {"slides", "infographic", "live"} <= set(route.JUDGE_KINDS)            # 선택지 = KAIROS 기능 표
+    from easycad.ai import features
+    assert set(route.JUDGE_KINDS) == {f["kind"] for f in features.FEATURES} and features.ASK_FIRST == {"slides", "infographic"}
+    assert features.credit_text("live") == "약 30~60크레딧" and features.credit_text("report") == ""

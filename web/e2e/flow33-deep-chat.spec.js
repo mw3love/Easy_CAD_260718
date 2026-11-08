@@ -1,9 +1,9 @@
-// 흐름 33 — 딥모드 대화창(§8 항목66 3-2, 2026-10-25): 「+ › 📰 딥모드」 + 주제 → 질문지 카드(서버 안 부름) → 버튼 + 입력 칸 글 → 「지면 계획 짜기」 → 계획 카드(× 빼기·예상 크레딧 — 디자인 고르기는 2026-10-25 없앰, 톤은 만든 뒤)
+// 흐름 33 — 딥모드 대화창(§8 항목66 3-2, 2026-10-25): 칠판 자료 우클릭 「정리 › 한 판으로」(2026-11-08 — 전엔 「+ › 📰 딥모드」 + 주제) → 질문지 카드(서버 안 부름) → 버튼 + 입력 칸 글 → 「지면 계획 짜기」 → 계획 카드(× 빼기·예상 크레딧 — 디자인 고르기는 2026-10-25 없앰, 톤은 만든 뒤)
 // → 말로 고치기 = 계획 다시(뺀 꼭지는 빼고 보냄) → 「이대로 만들기」 = 칠판에 판(차분 톤) → 새로고침해도 카드 그대로.
 // KAIROS·서버는 가짜(/api/chat) — 진짜 서버 길은 3-3. 서버가 딥모드를 못 하면(/api/models `jobs.deep` 없음) 「+」에 안 보임
 import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
-import { boardName, openBoard, setCam, liveDoc } from './helpers.js'
+import { boardName, openBoard, setCam, liveDoc, toPage } from './helpers.js'
 import { overlaps } from '../src/next/deep.js'
 
 const load = t => JSON.parse(readFileSync(new URL(`../test/fixtures/deep_${t}.json`, import.meta.url), 'utf-8'))
@@ -13,12 +13,11 @@ const bare = p => ({ ...p, sections: p.sections.map(({ body, ...s }) => s) })   
 const GRAPH = bare(NEWS).sections.find(s => s.shape === '그래프')
 const box = it => ({ x: it.pos[0], y: it.pos[1], w: it.rect[2] * (it.scale || 1), h: it.rect[3] * (it.scale || 1) })
 
-test('서버가 딥모드를 못 하면 「+」에 없음', async ({ page }) => {
-  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
+test('「+」 창 없음 — 입력 칸 옆엔 📎·🎤·⚙만(2026-11-08 「모두 채팅창으로」)', async ({ page }) => {
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { deep: 'claude-opus-5-5', slides: 'm', live: 'sol' } } }))
   await openBoard(page, boardName('deepchat0'), { chat: true })
-  await page.getByTestId('plus').click()
-  await expect(page.getByRole('menuitemradio', { name: /아이콘/ })).toBeVisible()
-  await expect(page.getByRole('menuitemradio', { name: /Deep Mode/ })).toHaveCount(0)
+  await expect(page.getByTestId('attach')).toBeVisible()
+  await expect(page.getByTestId('plus')).toHaveCount(0); await expect(page.getByTestId('tool-chip')).toHaveCount(0)
 })
 
 test('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 다시 열어도 그대로', async ({ page }) => {
@@ -31,15 +30,14 @@ test('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 
   })
   const name = boardName('deepchat')
   await openBoard(page, name, { chat: true }); await setCam(page)
-  await page.getByTestId('plus').click()
-  await page.getByRole('menuitemradio', { name: /Deep Mode/ }).click()
-  await expect(page.getByTestId('tool-chip')).toHaveText('📰 Deep Mode ✕')
-  await page.getByPlaceholder('어떤 주제로', { exact: false }).click()
-  await page.keyboard.type('어텐션이 뭐야? 신입 교육용으로'); await page.keyboard.press('Enter')
+  await page.evaluate(t => { const dt = new DataTransfer(); dt.setData('text/plain', t); window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })) }, '# 어텐션이 뭐야? 신입 교육용으로\n- 단어끼리 서로 얼마나 볼지')
+  await expect.poll(async () => (await liveDoc(page)).items.length).toBe(1)
+  const memo = (await liveDoc(page)).items[0], at = await toPage(page, memo.pos[0] + 30, memo.pos[1] + 12)
+  await page.mouse.click(at.x, at.y, { button: 'right' })
+  await page.getByRole('button', { name: '정리 (KAIROS)' }).click(); await page.getByRole('button', { name: /한 판으로/ }).click()   // 주제 = 메모 맨 위 제목
   const ask = page.getByTestId('deep-ask')
   await expect(ask).toBeVisible()
   expect(sent).toHaveLength(0)                                                       // 질문지는 서버를 안 부름
-  await expect(page.getByTestId('tool-chip')).toHaveCount(0)
   await ask.locator('[data-tab="set"]').click()                                       // 설정 = ⚙ 탭(2026-11-07 질문 탭)
   await expect(ask.locator('[data-q="깊이"] [data-v="알아서"]')).toHaveAttribute('aria-pressed', 'true')   // 안 고르면 알아서
   await ask.locator('[data-tab="누구에게"]').click()
@@ -56,7 +54,7 @@ test('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 
   await expect(plan1).toBeVisible()
   expect(sent[0].kind).toBe('deep')
   expect(sent[0].deep).toEqual({ step: 'plan', topic: '어텐션이 뭐야? 신입 교육용으로',
-    brief: { 누구에게: '처음 보는 사람', 무엇에: '공부·교육', 깊이: '알아서', '꼭 넣을 것': ['숫자·그래프'], 재료: '알아서', 더: '그림은 빼 줘' } })
+    brief: { 누구에게: '처음 보는 사람', 무엇에: '공부·교육', 깊이: '알아서', '꼭 넣을 것': ['숫자·그래프'], 재료: '이 칠판', 더: '그림은 빼 줘' } })   // 우클릭 = 재료 「이 칠판」을 미리 고름
   await expect(ask.locator('[data-v]')).toHaveCount(0); await expect(ask).toContainText('지면 계획을 짰어요')   // 질문지는 잠김 = 고른 답 요약만(2026-11-07)
   const N = FULL.sections.length
   await expect(plan1.getByTestId('deep-sec')).toHaveCount(N)

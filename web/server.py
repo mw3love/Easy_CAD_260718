@@ -43,7 +43,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXAMPLES, EXAMPLE = os.path.join(HERE, "examples"), "intro"   # 예시 칠판 원본(2026-10-28) — `examples/intro/intro.ecad`·`.chat.json`·`.img/`
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_bubble, board_chat, brief_ask, board_diagram, slides, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, model_pick, route, see, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_bubble, board_chat, brief_ask, board_diagram, slides, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, features, kr_tools, live_card, meeting, model_pick, route, see, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
@@ -153,7 +153,7 @@ class Handler(SimpleHTTPRequestHandler):
         jobs = {"report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "diagram": board_diagram.DIAGRAM_MODEL, "deep": deep_mode.EDITOR_MODEL, "slides": slides.WRITER_MODEL, "live": live_card.LIVE_MODEL, "trace": board_trace.TRACE_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3), live = 「+ › 움직이는 카드」(4단계)
         jobs.update(deep_plan=deep_mode.EDITOR_MODEL, deep_write=deep_mode.WRITER_MODEL)   # 「모델 설정」 칸(2026-10-26)
         jobs = {k: model_pick.pick(v) for k, v in jobs.items()}   # 은퇴·없어져 갈아탄 것은 지금 부르는 이름으로
-        return self._json(200, {**hit[1], "jobs": jobs, "choices": model_pick.choices()})
+        return self._json(200, {**hit[1], "jobs": jobs, "choices": model_pick.choices(), "features": features.public()})   # features = KAIROS 기능 표(비용 안내, 2026-11-08)
 
     def _with(self, job: str, default: str, fn):
         """대화창 「모델 설정」에서 사람이 고른 모델(`models`)로 먼저 — 그 모델이 이 일을 못 하면(형식이 깨짐·창구가 안 받음 등) 앱 기본으로 한 번 다시,
@@ -229,6 +229,8 @@ class Handler(SimpleHTTPRequestHandler):
                 prefs = req.get("ask_pref") if isinstance(req.get("ask_pref"), dict) else {}
                 kind, how, choices = route.decide(key, str(last.get("content", "")), bool(ctx or last.get("context")), prefs=prefs, base_url=self._base())
                 sys.stderr.write("[길] %s (%s)%s\n" % (kind, how, " — 되묻기 " + "|".join(choices) if choices else ""))
+                if kind in features.ASK_FIRST:   # 발표 자료·인포그래픽 = 만들기 전에 질문지(2026-11-08 「+」 없애기) — 서버는 아무것도 안 만들고 대화창이 그 길의 질문지를 띄움
+                    return self._json(200, {"kind": "go", "to": kind, "content": "", "model": route.JUDGE_MODEL if how == "ai" else "낱말 규칙", "elapsed": 0})
                 if choices:   # 애매하고 비싼 갈림길 — 만들기 전에 버튼으로 물음(§8 항목64). 누르면 대화창이 그 길 이름표로 다시 보냄
                     return self._json(200, {"kind": "ask", "choices": choices, "default": kind, "key": "|".join(sorted(choices)),
                                             "content": "어느 쪽으로 만들까요?", "model": route.JUDGE_MODEL if how == "ai" else "낱말 규칙", "elapsed": 0})
@@ -315,7 +317,9 @@ class Handler(SimpleHTTPRequestHandler):
         base = self._base()
         b0 = self._balance(key, base)   # 쓴 크레딧 = 잔액 차이(대화 모델 답엔 credits_charged가 없음) — 같은 키를 동시에 쓰면 섞임(대화창이 「약」)
         if step == "ask":   # 맞춤 질문(2026-11-06) — 주제 글을 읽고 알아들은 것 + 질문 2~4개
-            return self._brief_ask("deep", topic, "", key, base, b0)
+            return self._brief_ask("deep", topic, str(d.get("material") or ""), key, base, b0)
+        if step == "pic":   # 대화창 인포그래픽(2026-11-08 — 딥모드 「한 판」 대신 대화창에선 그림 한 장, 사용자 결정) = 질문지 답 + 조사 → 그림 후보 둘
+            return self._infographic(str(req.get("board") or ""), topic, brief, str(d.get("material") or ""), key, base)
         try:
             if step == "plan":
                 prev = d.get("prev") if isinstance(d.get("prev"), dict) else None
@@ -384,6 +388,25 @@ class Handler(SimpleHTTPRequestHandler):
         time.sleep(1.5)
         b1 = self._balance(key, base)
         return round(b0 - b1, 1) if b1 is not None else None
+
+    def _infographic(self, board: str, topic: str, brief: dict, material: str, key: str, base: str):
+        """인포그래픽 → `_image`와 같은 답(그림 후보 둘). 재료: 「이 칠판」이면 칠판 글, 아니면 웹 검색(못 찾아도 그림은 그림), 고른 것이 있으면 그 글도."""
+        name = self._name(board)
+        if not topic.strip() or not name:
+            return self._json(400, {"error": "주제가 없어요"})
+        src = str(brief.get("재료") or "")
+        material = material[:board_report.MAX_MATERIAL]
+        if ("칠판" in src or "둘" in src) and not material:
+            material = self._board_material(name)
+        facts = None
+        if "칠판" not in src:
+            try:
+                facts = board_chat.chat(key, [{"role": "user", "content": topic + "\n(이 주제의 인포그래픽에 넣을 핵심 사실·숫자만 다섯 줄 이내로 — 기준 날짜 포함)"}],
+                                        model=gw.FALLBACK_DEFAULT_MODEL, kind="search", base_url=base)
+            except Exception as e:
+                sys.stderr.write("[인포그래픽 앞 검색 실패] %s\n" % e)
+        prompt = board_image.infographic_brief_prompt(topic, deep_mode.brief_text(brief), (facts or {}).get("content", ""), material)
+        return self._image(name, prompt, key, facts, "", topic)
 
     def _brief_ask(self, kind: str, topic: str, material: str, key: str, base: str, b0):
         """딥모드·발표 자료 질문지의 맞춤 질문 → {"kind", "step": "ask", "known", "audience", "questions", "model", "elapsed", "credits"}.

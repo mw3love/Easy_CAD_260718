@@ -30,20 +30,15 @@ test('우클릭 메뉴 단축키 · Alt+G = 프레임으로 감싸기 · 빈 곳
   expect(await menuBtns(page)).toEqual([expect.stringContaining('붙여넣기')])                 // 붙일 것이 있으면 그것만
 })
 
-test('「+」 메뉴 이름 = 이미지·아이콘(SVG)·인터랙티브 HTML·Deep Mode(정리 문서 없음) · 기다리는 동안 대화창 스켈레톤', async ({ page }) => {
+test('「그려 줘」를 기다리는 동안 대화창 스켈레톤(그림 두 칸 — 2026-11-08 「+」 이름표 없이 말로)', async ({ page }) => {
   const name = boardName('plus1025')
   await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { image: 'img-m', live: 'sol', deep: 'opus' } } }))
   await page.route('**/api/chat', async r => { await new Promise(s => setTimeout(s, 1500))
     await r.fulfill({ json: { kind: 'image', content: '그림 후보 2장', model: 'img-m', elapsed: 1.5, images: [{ url: `/api/img/${name}/1_aaaaaa.png` }, { url: `/api/img/${name}/2_bbbbbb.png` }] } }) })
   await page.route('**/api/img/**', r => r.fulfill({ body: Buffer.from(PNG, 'base64'), contentType: 'image/png' }))
   await openBoard(page, name, { chat: true })
-  await page.getByTestId('plus').click()
-  const items = await page.getByRole('menuitemradio').allInnerTexts()
-  expect(items.map(t => t.split('\n')[0])).toEqual(['🎨 이미지 만들기', '✏️ 아이콘 만들기 (SVG)', '🔷 도형 그리기 (흐름도·계통도)', '▶ 인터랙티브 HTML', '📰 Deep Mode'])   // 도형 그리기 = 2026-11-03
-  await page.getByRole('menuitemradio', { name: /이미지 만들기/ }).click()
-  await expect(page.getByTestId('tool-chip')).toHaveText('🎨 이미지 만들기 ✕')
-  await page.getByPlaceholder('무엇을 그릴까요', { exact: false }).click()
-  await page.keyboard.type('송신탑'); await page.keyboard.press('Enter')
+  await page.getByPlaceholder('물어보세요', { exact: false }).click()
+  await page.keyboard.type('송신탑 그려 줘'); await page.keyboard.press('Enter')
   await expect(page.locator('[data-testid="chat-skeleton"][data-kind="image"]')).toBeVisible()   // 후보 두 칸 자리
   await expect(page.getByTestId('image-pick')).toHaveCount(2)
   await expect(page.getByTestId('chat-skeleton')).toHaveCount(0)
