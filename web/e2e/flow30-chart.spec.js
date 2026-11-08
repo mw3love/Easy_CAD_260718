@@ -114,7 +114,7 @@ test('대화창 표 답 → 그래프로 붙이기 → 두 번 눌러 표로 →
   await page.mouse.dblclick(...await mid())
   await expect(page.locator('[data-chart]')).toHaveCount(0)                          // 표로 펼침
   await page.keyboard.press('Escape')
-  await clickScene(page, t.pos[0] + 600, t.pos[1] + 120)
+  await clickScene(page, t.pos[0] + 180, t.pos[1] + 300)   // 그래프 밑 빈자리(속성 카드가 두 줄이 돼 오른쪽 위는 카드에 걸림, 2026-11-08)
   await expect(page.locator('[data-chart="line"]')).toHaveCount(1)                   // 바깥 = 다시 그래프
 
   const src = await bar.locator('[data-chart-kind="col"]').boundingBox(), drop = await toPage(page, t.pos[0] + 120, t.pos[1] + 400)
@@ -125,4 +125,31 @@ test('대화창 표 답 → 그래프로 붙이기 → 두 번 눌러 표로 →
   const c2 = d.items.find(it => it.type === 'table' && it.chart === 'col')
   expect(c2.pos[1]).toBeGreaterThan(t.pos[1] + 240)                                  // 놓은 자리(첫 그래프 밑)
   expect(d.items.filter(it => it.type === 'table')).toHaveLength(2)
+})
+
+
+// 누적 막대·막대+꺾은선·도넛(2026-11-08) — 속성 카드 두 줄(넷씩), 자료에 맞을 때만 켜짐
+test('누적 막대·막대+꺾은선·도넛 — 맞는 표에서만 켜지고 그려짐', async ({ page }) => {
+  await openBoard(page, boardName('chart3'))
+  const doc = { format: 'easycad-doc', version: 1, items: [
+    { type: 'table', uid: 't1', pos: [0, 0], scale: 1, rotation: 0, z: 1, origin: [0, 0], locked: false, group_id: null, layer_id: null, rect: [0, 0, 360, 240], rows: 4, cols: 3, header: true, col_widths: [0.34, 0.33, 0.33], cells: [['달', '매출', '비용'], ['1월', '10', '7'], ['2월', '12', '8'], ['3월', '9', '6']] },
+    { type: 'table', uid: 't2', pos: [500, 0], scale: 1, rotation: 0, z: 1, origin: [0, 0], locked: false, group_id: null, layer_id: null, rect: [0, 0, 360, 240], rows: 3, cols: 2, header: true, col_widths: [0.5, 0.5], cells: [['나라', '비중'], ['중국', '60%'], ['미국', '40%']] }] }
+  await page.route('**/chart3.ecad', r => r.fulfill({ json: doc }))
+  await page.evaluate(() => window.__mb.open('/chart3.ecad'))
+  await expect.poll(async () => (await liveDoc(page)).items.length).toBe(2)
+  await setCam(page, { x: 100, y: 150, z: 0.9 })
+  const kinds = page.getByTestId('chart-kinds')
+  await clickScene(page, 60, 40)
+  for (const k of ['stack', 'combo']) await expect(kinds.locator(`[data-chart-kind="${k}"]`)).toBeEnabled()
+  for (const k of ['pie', 'donut']) await expect(kinds.locator(`[data-chart-kind="${k}"]`)).toBeDisabled()
+  await kinds.locator('[data-chart-kind="stack"]').click()
+  await expect(page.locator('[data-chart="stack"] rect[rx="0"][fill="#2a78d6"]')).toHaveCount(3)          // 1월~3월 = 아래 조각 셋
+  await page.locator('[data-testid="chart-kinds"]').locator('xpath=ancestor::div[contains(@style,"width: 192")]').screenshot({ path: 'test-results/chart-props-8.png' })
+  await kinds.locator('[data-chart-kind="combo"]').click()
+  await expect(page.locator('[data-chart="combo"] circle')).toHaveCount(3)
+  await clickScene(page, 560, 40)
+  await expect(kinds.locator('[data-chart-kind="stack"]')).toBeDisabled()                          // 열 하나 = 쌓을 게 없음
+  await kinds.locator('[data-chart-kind="donut"]').click()
+  await expect(page.locator('[data-chart="donut"] text', { hasText: '60%' })).toHaveCount(2)       // 가운데 + 목록
+  await clickScene(page, 300, 330); await page.screenshot({ path: 'test-results/chart-new-kinds.png' })
 })

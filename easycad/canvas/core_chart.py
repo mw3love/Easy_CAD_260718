@@ -1,6 +1,6 @@
 """그래프 = 표 + 모양(§8 항목66 1단계, 2026-10-25) — 웹 `web/src/next/chart.js`를 그대로 옮김.
 
-표(.ecad `table`)의 웹 칸 `chart`('col'·'row'·'line'·'pie')가 있으면 표 대신 그래프로 그린다. 숫자는 표 칸 그대로 —
+표(.ecad `table`)의 웹 칸 `chart`('col'·'stack'·'row'·'line'·'combo'·'pie'·'donut' — 셋은 2026-11-08)가 있으면 표 대신 그래프로 그린다. 숫자는 표 칸 그대로 —
 데스크톱에서 표 칸을 고치면 그래프가 따라간다(모양 바꾸기는 웹 속성 카드, 데스크톱은 아직 보이기·보존만).
 계산(`chart_data`·`chart_why`·`chart_scene`)은 Qt 없이 웹과 같은 숫자를 내야 한다 — 대조 시험 `tests/test_part72`가
 웹이 만든 `tests/fixtures/chart_cases.json`(`tools/export_chart_cases.mjs`)과 비교. 웹을 고치면 여기도 고치고 그 도구를 다시 돌린다.
@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 import re
 
-CHART_KINDS = [("table", "표"), ("col", "세로 막대"), ("row", "가로 막대"), ("line", "꺾은선"), ("pie", "원")]
+CHART_KINDS = [("table", "표"), ("col", "세로 막대"), ("stack", "누적 막대"), ("row", "가로 막대"), ("line", "꺾은선"), ("combo", "막대+꺾은선"), ("pie", "원"), ("donut", "도넛")]
 CHART_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 MAX_SERIES = len(CHART_COLORS)
 # 색 순서(테마) — 같은 8색의 순서만(딥모드 디자인 묶음, 2026-10-25 — 웹 `chart.js` `CHART_THEMES`와 같게). 표 칸 `chart_theme`(없으면 기본)
@@ -113,18 +113,31 @@ def chart_why(data: dict, kind: str) -> str:
         return f"숫자 열이 {MAX_SERIES}개를 넘으면 색으로 구별이 안 돼요 — 열을 줄여 주세요"
     if kind == "line" and len(cats) < 2:
         return "꺾은선은 항목이 둘 이상일 때만 — 시간 흐름에 써요"
-    if kind == "pie":
+    if kind == "stack":
+        if len(series) < 2:
+            return "누적 막대는 숫자 열이 둘 이상일 때만 — 항목마다 열을 쌓아 합계를 보여 줘요"
+        if any(v is not None and v < 0 for s in series for v in s["values"]):
+            return "누적 막대는 음수가 있으면 못 그려요"
+    if kind == "combo":
+        if len(series) < 2:
+            return "막대+꺾은선은 숫자 열이 둘 이상일 때만 — 마지막 열이 꺾은선이 돼요"
+        if len(cats) < 2:
+            return "막대+꺾은선은 항목이 둘 이상일 때만"
+        if len({s["unit"] for s in series if s["unit"]}) > 1:
+            return "열마다 단위가 달라 한 눈금에 못 그려요 — 같은 단위의 열만 두세요"
+    if kind in ("pie", "donut"):
+        nm = "원 그래프는" if kind == "pie" else "도넛은"
         if len(series) != 1:
-            return "원 그래프는 숫자 열이 하나일 때만 — 전체 중 몫을 보여 줘요"
+            return f"{nm} 숫자 열이 하나일 때만 — 전체 중 몫을 보여 줘요"
         v = [x for x in series[0]["values"] if x is not None]
         if any(x < 0 for x in v):
-            return "원 그래프는 음수가 있으면 못 그려요"
+            return f"{nm} 음수가 있으면 못 그려요"
         if len(cats) > MAX_SERIES:
-            return f"원 그래프는 조각 {MAX_SERIES}개까지 — 막대가 더 잘 읽혀요"
+            return f"{nm} 조각 {MAX_SERIES}개까지 — 막대가 더 잘 읽혀요"
         total = sum(v)
         share = bool(_SHARE.search(series[0]["name"])) or (series[0]["unit"] == "%" and abs(total - 100) <= 2)
         if not share or total <= 0:
-            return "원 그래프는 합쳐서 전체가 되는 몫(비중·비율)에만 써요 — 열 이름에 「비중」을 쓰거나 합이 100인 %면 켜져요"
+            return f"{nm} 합쳐서 전체가 되는 몫(비중·비율)에만 써요 — 열 이름에 「비중」을 쓰거나 합이 100인 %면 켜져요"
     return ""
 
 
@@ -195,7 +208,8 @@ def chart_scene(it: dict) -> list:
         out.append({"t": "text", "x": x + w / 2, "y": y + h / 2, "s": fit_text("숫자 칸이 없어요", FS, w - 2 * PAD), "fs": FS, "c": INK["muted"], "a": "middle"})
         return out
     L, R, T = x + PAD, x + w - PAD, y + PAD
-    if kind != "pie":
+    round_ = kind in ("pie", "donut")
+    if not round_:
         if len(series) == 1:
             if series[0]["name"]:
                 out.append({"t": "text", "x": L, "y": T + 8, "s": fit_text(series[0]["name"], 13, R - L), "fs": 13, "b": 1, "c": INK["title"], "a": "start"})
@@ -204,13 +218,17 @@ def chart_scene(it: dict) -> list:
             sx = L
             for j, s in enumerate(series):
                 name = fit_text(s["name"] or f"계열 {j + 1}", FS, share - 20)
-                out.append({"t": "rect", "x": _r1(sx), "y": T + 3, "w": 10, "h": 10, "rx": 2, "f": COL[j]})
+                if kind == "combo" and j == len(series) - 1:   # 꺾은선 열 = 선 견본
+                    out.append({"t": "line", "x1": _r1(sx), "y1": T + 8, "x2": _r1(sx + 10), "y2": T + 8, "s": COL[j], "sw": 2})
+                else:
+                    out.append({"t": "rect", "x": _r1(sx), "y": T + 3, "w": 10, "h": 10, "rx": 2, "f": COL[j]})
                 out.append({"t": "text", "x": _r1(sx + 14), "y": T + 8, "s": name, "fs": FS, "c": INK["text"], "a": "start"})
                 sx += 14 + text_w(name, FS) + 16
     top, bottom = T + HEAD, y + h - PAD
-    if kind == "pie":
-        return _pie_scene(out, data, L, top - HEAD + 4, R, bottom, COL)
-    allv = [v for s in series for v in s["values"] if v is not None]
+    if round_:
+        return _pie_scene(out, data, L, top - HEAD + 4, R, bottom, COL, kind == "donut")
+    sums = [sum((s["values"][i] or 0) for s in series) for i in range(len(cats))]   # 누적 막대 = 항목마다 합
+    allv = sums if kind == "stack" else [v for s in series for v in s["values"] if v is not None]
     ticks = nice_ticks(min(allv), max(allv))
     lo, hi = ticks[0], ticks[-1]
 
@@ -249,12 +267,33 @@ def chart_scene(it: dict) -> list:
         out.append({"t": "text", "x": pl - 6, "y": _r1(Y(v)), "s": tick_text(v), "fs": 10, "c": INK["muted"], "a": "end"})
     for i, c in enumerate(cats):
         out.append({"t": "text", "x": _r1(pl + band * i + band / 2), "y": pb + 11, "s": fit_text(c, FS, band - 4), "fs": FS, "c": INK["text"], "a": "middle"})
-    if kind == "col":
-        inner = band * 0.7
-        bw = max(1.0, (inner - 2 * (len(series) - 1)) / len(series))
-        labels = len(cats) * len(series) <= 12 and bw >= 16
+    if kind == "stack":   # 아래부터 열 순서로 쌓음, 맨 위 조각만 끝이 둥글고 조각 사이는 흰 선 1px, 위에 합계
+        bw = band * 0.6
+        units = [s["unit"] for s in series]
+        unit = units[0] if units[0] and all(u == units[0] for u in units) else ""
         for i, c in enumerate(cats):
-            for j, s in enumerate(series):
+            bx = pl + band * i + (band - bw) / 2
+            js = [j for j, s in enumerate(series) if s["values"][i] is not None and s["values"][i] > 0]
+            acc = 0.0
+            for j in js:
+                s = series[j]
+                v = s["values"][i]
+                y0, y1 = Y(acc), Y(acc + v)
+                if j == js[-1]:
+                    out.append({"t": "path", "d": _bar_path(bx, y1, bw, y0 - y1, "up"), "f": COL[j], "s": INK["card"], "sw": 1, "tip": tip(c, s, i)})
+                else:
+                    out.append({"t": "rect", "x": _r1(bx), "y": _r1(y1), "w": _r1(bw), "h": _r1(y0 - y1), "rx": 0, "f": COL[j], "s": INK["card"], "sw": 1, "tip": tip(c, s, i)})
+                acc += v
+            if js and len(cats) <= 12 and bw >= 16:
+                out.append({"t": "text", "x": _r1(bx + bw / 2), "y": _r1(Y(sums[i]) - 8), "s": tick_text(sums[i]) + unit, "fs": 10, "b": 1, "c": INK["text"], "a": "middle"})
+        return out
+    if kind in ("col", "combo"):   # 막대+꺾은선 = 마지막 열만 꺾은선, 앞 열들은 막대
+        bars = series[:-1] if kind == "combo" else series
+        inner = band * 0.7
+        bw = max(1.0, (inner - 2 * (len(bars) - 1)) / len(bars))
+        labels = len(cats) * len(bars) <= 12 and bw >= 16 and kind == "col"
+        for i, c in enumerate(cats):
+            for j, s in enumerate(bars):
                 v = s["values"][i]
                 if v is None:
                     continue
@@ -262,8 +301,11 @@ def chart_scene(it: dict) -> list:
                 out.append({"t": "path", "d": _bar_path(bx, min(y0, y1), bw, abs(y1 - y0), "up" if v >= 0 else "down"), "f": COL[j], "tip": tip(c, s, i)})
                 if labels:
                     out.append({"t": "text", "x": _r1(bx + bw / 2), "y": _r1(y1 - 8 if v >= 0 else y1 + 8), "s": _val_text(s, i), "fs": 10, "c": INK["text"], "a": "middle"})
-        return out
+        if kind == "col":
+            return out
     for j, s in enumerate(series):
+        if kind == "combo" and j < len(series) - 1:
+            continue
         pts = [None if v is None else [_r1(pl + band * i + band / 2), _r1(Y(v))] for i, v in enumerate(s["values"])]
         d, pen = "", False
         for p in pts:
@@ -278,12 +320,13 @@ def chart_scene(it: dict) -> list:
             if not p:
                 continue
             out.append({"t": "circle", "cx": p[0], "cy": p[1], "r": 4, "f": COL[j], "s": INK["card"], "sw": 2, "tip": tip(cats[i], s, i)})
-            if len(series) == 1 and len(cats) <= 8:
+            if kind == "line" and len(series) == 1 and len(cats) <= 8:
                 out.append({"t": "text", "x": p[0], "y": _r1(p[1] - 12), "s": _val_text(s, i), "fs": 10, "c": INK["text"], "a": "middle"})
     return out
 
 
-def _pie_scene(out, data, L, top, R, bottom, COL=CHART_COLORS):
+def _pie_scene(out, data, L, top, R, bottom, COL=CHART_COLORS, hole=False):
+    """원(hole = 도넛 — 안 반지름 0.58, 가운데에 가장 큰 조각의 몫과 이름)."""
     cats, s = data["cats"], data["series"][0]
     vals = [0.0 if v is None else v for v in s["values"]]
     total = sum(vals)
@@ -300,13 +343,25 @@ def _pie_scene(out, data, L, top, R, bottom, COL=CHART_COLORS):
             continue
         sweep = (v / total) * 360
         n = max(2, math.ceil(sweep / 2))
-        pts = [[cx, cy]]
-        for k in range(n + 1):
-            t = ((a + (sweep * k) / n) * math.pi) / 180
-            pts.append([cx + rad * math.cos(t), cy + rad * math.sin(t)])
+
+        def arc(r, a=a, sweep=sweep, n=n):
+            q = []
+            for k in range(n + 1):
+                t = ((a + (sweep * k) / n) * math.pi) / 180
+                q.append([cx + r * math.cos(t), cy + r * math.sin(t)])
+            return q
+        pts = arc(rad) + arc(rad * 0.58)[::-1] if hole else [[cx, cy]] + arc(rad)
         d = "M" + " L".join(f"{_js(_r1(p[0]))},{_js(_r1(p[1]))}" for p in pts) + " Z"
         out.append({"t": "path", "d": d, "f": COL[i], "s": INK["card"], "sw": 2, "tip": f"{cats[i]}: {_val_text(s, i)} ({round_half_up(v / total * 100)}%)"})
         a += sweep
+    if hole and total > 0:   # 가운데 = 가장 큰 조각(같으면 앞 것)
+        k = 0
+        for i, v in enumerate(vals):
+            if v > vals[k]:
+                k = i
+        in_w = rad * 0.58 * 2 * 0.86
+        out.append({"t": "text", "x": _r1(cx), "y": _r1(cy - 7), "s": f"{round_half_up(vals[k] / total * 100)}%", "fs": 18, "b": 1, "c": INK["title"], "a": "middle"})
+        out.append({"t": "text", "x": _r1(cx), "y": _r1(cy + 12), "s": fit_text(cats[k], FS, in_w), "fs": FS, "c": INK["muted"], "a": "middle"})
     lx, row_h = x0 + size + 20, 20
     ly0 = cy - (len(cats) * row_h) / 2 + row_h / 2
     for i, c in enumerate(cats):

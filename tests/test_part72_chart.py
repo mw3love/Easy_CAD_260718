@@ -104,3 +104,34 @@ def test_plain_table_unchanged():
             "rect": [0, 0, 200, 90], "rows": 2, "cols": 2, "header": True, "cells": [["이름", "메모"], ["가", "나"]], "col_widths": [0.5, 0.5]}
     assert dict_to_item(base)._chart_dict() is None
     assert dict_to_item({**base, "chart": "col"})._chart_dict() is None   # 숫자 없음 = 표로
+
+
+
+def test_new_kinds_sit_in_their_own_column():
+    """누적 막대·막대+꺾은선(2026-11-08) — 항목마다 제 칸에 서고(첫 시도에선 누적 막대가 모두 첫 칸에 겹쳤음 — 웹·데스크톱이 같이 틀려 대조 시험은 통과), 합계는 위에."""
+    cells = [["달", "2025", "2026"], ["1월", "10", "12"], ["2월", "11", "15"], ["3월", "9", "16"]]
+    st = cc.chart_scene({"type": "table", "rect": [0, 0, 360, 240], "cells": cells, "chart": "stack"})
+    xs = sorted({p["x"] for p in st if p["t"] == "rect" and p.get("rx") == 0})
+    assert len(xs) == 3 and xs[1] - xs[0] > 50                                # 셋째 줄까지 칸마다 다른 자리
+    assert [p["s"] for p in st if p["t"] == "text" and p.get("b") and p["fs"] == 10] == ["22", "26", "25"]
+    co = cc.chart_scene({"type": "table", "rect": [0, 0, 360, 240], "cells": cells, "chart": "combo"})
+    assert len([p for p in co if p["t"] == "path" and p.get("f")]) == 3      # 막대 = 첫 열만
+    assert len([p for p in co if p["t"] == "circle"]) == 3                   # 점 = 마지막 열
+    assert cc.chart_why(cc.chart_data({"cells": [["나라", "인구"], ["가", "3"], ["나", "4"]]}), "donut").startswith("도넛은 ")
+
+
+def test_desktop_paints_new_kinds(tmp_path):
+    """데스크톱이 세 모양을 실제로 칠함(계열 색이 넓게)."""
+    from PyQt6.QtGui import QImage, QPainter, QColor
+
+    for kind, cells in (("stack", [["달", "가", "나"], ["1월", "10", "12"], ["2월", "11", "15"]]),
+                        ("combo", [["달", "가", "나"], ["1월", "10", "12"], ["2월", "11", "15"]]),
+                        ("donut", [["나라", "비중"], ["중국", "60%"], ["미국", "40%"]])):
+        img = QImage(400, 280, QImage.Format.Format_ARGB32)
+        img.fill(QColor("#808080"))
+        p = QPainter(img)
+        cc.paint_chart(p, {"type": "table", "rect": [0, 0, 360, 240], "cells": cells, "chart": kind})
+        p.end()
+        img.save(str(tmp_path / f"{kind}.png"))
+        blues = sum(1 for x in range(0, 360, 3) for y in range(0, 240, 3) if img.pixelColor(x, y).name() == cc.CHART_COLORS[0])
+        assert blues > 40, kind

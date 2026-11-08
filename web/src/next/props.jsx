@@ -259,6 +259,9 @@ export const CHART_ICONS = {
   row: <Svg><path d="M2.5 4H10M2.5 8H15M2.5 12H7" strokeWidth="2.6" /></Svg>,
   line: <Svg><path d="M2.5 12L7 7.5L10.5 10L15.5 4" /></Svg>,
   pie: <Svg><circle cx="9" cy="8" r="5.5" /><path d="M9 8V2.5M9 8L13.6 11" /></Svg>,
+  stack: <Svg><path d="M5 13.5V9M13 13.5V7" strokeWidth="3.4" /><path d="M5 9V5M13 7V3" strokeWidth="3.4" opacity=".45" /></Svg>,
+  combo: <Svg><path d="M4 13.5V9.5M9 13.5V8M14 13.5V10.5" strokeWidth="2.6" opacity=".45" /><path d="M2.5 7L7 4.5L11 6L15.5 2.5" /></Svg>,
+  donut: <Svg><circle cx="9" cy="8" r="5.5" /><circle cx="9" cy="8" r="2.4" /><path d="M9 2.5V5.6" /></Svg>,
 }
 // 표 ↔ 그래프 — 그래프로 갈 때 작으면 키우고(CHART_MIN) 표 크기를 기억(`table_wh`), 표로 돌아오면 그 크기로
 function chartPatch(it, k) {
@@ -378,7 +381,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, con
     </>}
     {items.some(it => it.type === 'rect') && <Row label="둥글기"><Stepper title="네모 모서리 둥글기(0 = 각짐)" {...num(items.filter(it => it.type === 'rect'), it => it.radius, 0, 0, 60, 2, '모서리 둥글기', (it, v) => ({ radius: v || undefined }))} /></Row>}
     {tables.length === 1 && (() => { const t = tables[0], why = chartWhys(t), cur = isChart(t) ? t.chart : 'table'   // 그래프 = 표 + 모양(§8 항목66 1단계 — 시안 「그래프 = 표 + 모양」), 안 맞는 모양은 흐리게 + 까닭
-      return <><Row label="모양"><div data-testid="chart-kinds" style={{ display: 'flex', gap: 2, background: C.seg, borderRadius: 8, padding: 2, flex: 1 }}>
+      return <><Row label="모양"><div data-testid="chart-kinds" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 2, background: C.seg, borderRadius: 8, padding: 2, flex: 1 }}>
         {CHART_KINDS.map(([k, name]) => { const no = !!why[k]
           return <button key={k} data-chart-kind={k} title={no ? `${name} — ${why[k]}` : name} aria-label={name} aria-pressed={cur === k} disabled={no} onClick={() => set(it => (it._id === t._id ? chartPatch(it, k) : null), '그래프 모양')}
             style={btn(cur === k, { flex: 1, opacity: no ? 0.3 : 1, cursor: no ? 'not-allowed' : 'pointer' })}>{CHART_ICONS[k]}</button> })}</div></Row>

@@ -1,9 +1,10 @@
-// 그래프(§8 항목66 1단계, 2026-10-25) — 「그래프 = 표 + 모양」(시안 판정). 새 종류가 아니라 표(`table`)에 칸 하나: `chart` = 'col'|'row'|'line'|'pie'(없으면 표).
+// 그래프(§8 항목66 1단계, 2026-10-25) — 「그래프 = 표 + 모양」(시안 판정). 새 종류가 아니라 표(`table`)에 칸 하나: `chart` = 'col'|'stack'|'row'|'line'|'combo'|'pie'|'donut'(없으면 표).
+// 누적 막대·막대+꺾은선·도넛은 2026-11-08(Chart.js 견본 목록에서 — 보고 자료에 흔한 셋만, 라이브러리는 안 씀).
 // 숫자는 표 칸 그대로 — 칸을 고치면 그래프가 따라가고, 그래프를 모르는 프로그램에선 표로 보여 숫자를 잃지 않음.
 // 이 파일은 순수 계산(읽기·막기·그릴 조각). 그림 조각(`chartScene`)은 데스크톱 `canvas/core_chart.py`가 똑같이 옮김 — 고치면 `tools/export_chart_cases.mjs`를 다시 돌림.
 // 글 폭은 글자 수로 어림(`textW`) — 브라우저·Qt 글꼴 재기가 달라도 두 앱이 같은 자리에 놓게.
 
-export const CHART_KINDS = [['table', '표'], ['col', '세로 막대'], ['row', '가로 막대'], ['line', '꺾은선'], ['pie', '원']]
+export const CHART_KINDS = [['table', '표'], ['col', '세로 막대'], ['stack', '누적 막대'], ['row', '가로 막대'], ['line', '꺾은선'], ['combo', '막대+꺾은선'], ['pie', '원'], ['donut', '도넛']]
 // 계열 색 — dataviz 기본 팔레트 밝은 화면 칸(검사기로 이웃 색 구별 통과, 순서가 색약 안전 장치라 바꾸지 않음). 그래프는 흰 종이 카드라 어두운 화면에도 이 색
 export const CHART_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948']
 export const MAX_SERIES = CHART_COLORS.length
@@ -74,14 +75,24 @@ export function chartWhy(data, kind) {
   if (!series.length || !cats.length) return '숫자 칸이 없어요 — 둘째 열부터 숫자를 넣으면 그래프가 돼요'
   if (series.length > MAX_SERIES) return `숫자 열이 ${MAX_SERIES}개를 넘으면 색으로 구별이 안 돼요 — 열을 줄여 주세요`
   if (kind === 'line' && cats.length < 2) return '꺾은선은 항목이 둘 이상일 때만 — 시간 흐름에 써요'
-  if (kind === 'pie') {
-    if (series.length !== 1) return '원 그래프는 숫자 열이 하나일 때만 — 전체 중 몫을 보여 줘요'
+  if (kind === 'stack') {
+    if (series.length < 2) return '누적 막대는 숫자 열이 둘 이상일 때만 — 항목마다 열을 쌓아 합계를 보여 줘요'
+    if (series.some(s => s.values.some(v => v != null && v < 0))) return '누적 막대는 음수가 있으면 못 그려요'
+  }
+  if (kind === 'combo') {
+    if (series.length < 2) return '막대+꺾은선은 숫자 열이 둘 이상일 때만 — 마지막 열이 꺾은선이 돼요'
+    if (cats.length < 2) return '막대+꺾은선은 항목이 둘 이상일 때만'
+    if (new Set(series.map(s => s.unit).filter(Boolean)).size > 1) return '열마다 단위가 달라 한 눈금에 못 그려요 — 같은 단위의 열만 두세요'
+  }
+  if (kind === 'pie' || kind === 'donut') {
+    const nm = kind === 'pie' ? '원 그래프는' : '도넛은'
+    if (series.length !== 1) return `${nm} 숫자 열이 하나일 때만 — 전체 중 몫을 보여 줘요`
     const v = series[0].values.filter(x => x != null)
-    if (v.some(x => x < 0)) return '원 그래프는 음수가 있으면 못 그려요'
-    if (cats.length > MAX_SERIES) return `원 그래프는 조각 ${MAX_SERIES}개까지 — 막대가 더 잘 읽혀요`
+    if (v.some(x => x < 0)) return `${nm} 음수가 있으면 못 그려요`
+    if (cats.length > MAX_SERIES) return `${nm} 조각 ${MAX_SERIES}개까지 — 막대가 더 잘 읽혀요`
     const sum = v.reduce((a, b) => a + b, 0)
     const share = SHARE.test(series[0].name) || (series[0].unit === '%' && Math.abs(sum - 100) <= 2)
-    if (!share || sum <= 0) return '원 그래프는 합쳐서 전체가 되는 몫(비중·비율)에만 써요 — 열 이름에 「비중」을 쓰거나 합이 100인 %면 켜져요'
+    if (!share || sum <= 0) return `${nm} 합쳐서 전체가 되는 몫(비중·비율)에만 써요 — 열 이름에 「비중」을 쓰거나 합이 100인 %면 켜져요`
   }
   return ''
 }
@@ -137,20 +148,23 @@ export function chartScene(it) {
   if (why) { out.push({ t: 'text', x: x + w / 2, y: y + h / 2, s: fitText('숫자 칸이 없어요', FS, w - 2 * PAD), fs: FS, c: INK.muted, a: 'middle' }); return out }
   const L = x + PAD, R = x + w - PAD, T = y + PAD
   // 머리 — 계열 하나 = 그 이름(제목), 여럿 = 색 견본 + 이름(원은 오른쪽 목록이라 머리 없음)
-  if (kind !== 'pie') {
+  const round = kind === 'pie' || kind === 'donut'
+  if (!round) {
     if (series.length === 1) { if (series[0].name) out.push({ t: 'text', x: L, y: T + 8, s: fitText(series[0].name, 13, R - L), fs: 13, b: 1, c: INK.title, a: 'start' }) }
     else {
       const share = (R - L) / series.length   // 견본은 왼쪽부터 붙여 늘어놓되 한 계열이 폭을 넘지 않게
       let sx = L
       series.forEach((s, j) => { const name = fitText(s.name || `계열 ${j + 1}`, FS, share - 20)
-        out.push({ t: 'rect', x: r1(sx), y: T + 3, w: 10, h: 10, rx: 2, f: COL[j] })
+        if (kind === 'combo' && j === series.length - 1) out.push({ t: 'line', x1: r1(sx), y1: T + 8, x2: r1(sx + 10), y2: T + 8, s: COL[j], sw: 2 })   // 꺾은선 열 = 선 견본
+        else out.push({ t: 'rect', x: r1(sx), y: T + 3, w: 10, h: 10, rx: 2, f: COL[j] })
         out.push({ t: 'text', x: r1(sx + 14), y: T + 8, s: name, fs: FS, c: INK.text, a: 'start' })
         sx += 14 + textW(name, FS) + 16 })
     }
   }
   const top = T + HEAD, bottom = y + h - PAD
-  if (kind === 'pie') return pieScene(out, data, L, top - HEAD + 4, R, bottom, COL)
-  const all = series.flatMap(s => s.values).filter(v => v != null), ticks = niceTicks(Math.min(...all), Math.max(...all))
+  if (round) return pieScene(out, data, L, top - HEAD + 4, R, bottom, COL, kind === 'donut')
+  const sums = cats.map((_, i) => series.reduce((a, s) => a + (s.values[i] || 0), 0))   // 누적 막대 = 항목마다 합
+  const all = kind === 'stack' ? sums : series.flatMap(s => s.values).filter(v => v != null), ticks = niceTicks(Math.min(...all), Math.max(...all))
   const lo = ticks[0], hi = ticks[ticks.length - 1]
   if (kind === 'row') {
     const labW = Math.min((R - L) * 0.35, Math.max(...cats.map(c => textW(c, FS))) + 8), pl = L + labW, pb = bottom - CAT, band = (pb - top) / cats.length
@@ -172,39 +186,57 @@ export function chartScene(it) {
   ticks.forEach(v => { out.push({ t: 'line', x1: pl, y1: r1(Y(v)), x2: R, y2: r1(Y(v)), s: v === 0 ? INK.base : INK.grid, sw: v === 0 ? 1 : 0.75 })
     out.push({ t: 'text', x: pl - 6, y: r1(Y(v)), s: tickText(v), fs: 10, c: INK.muted, a: 'end' }) })
   cats.forEach((c, i) => out.push({ t: 'text', x: r1(pl + band * i + band / 2), y: pb + 11, s: fitText(c, FS, band - 4), fs: FS, c: INK.text, a: 'middle' }))
-  if (kind === 'col') {
-    const inner = band * 0.7, bw = Math.max(1, (inner - 2 * (series.length - 1)) / series.length), labels = cats.length * series.length <= 12 && bw >= 16
-    cats.forEach((c, i) => series.forEach((s, j) => { const v = s.values[i]; if (v == null) return
+  if (kind === 'stack') {   // 아래부터 열 순서로 쌓음, 맨 위 조각만 끝이 둥글고 조각 사이는 흰 선 1px, 위에 합계
+    const bw = band * 0.6, units = series.map(s => s.unit), unit = units[0] && units.every(u => u === units[0]) ? units[0] : ''
+    cats.forEach((c, i) => { const bx = pl + band * i + (band - bw) / 2, js = series.map((s, j) => j).filter(j => series[j].values[i] > 0), last = js[js.length - 1]
+      let acc = 0
+      js.forEach(j => { const s = series[j], v = s.values[i], y0 = Y(acc), y1 = Y(acc + v), tip = `${c}${s.name ? ' · ' + s.name : ''}: ${valText(s, i)}`
+        if (j === last) out.push({ t: 'path', d: barPath(bx, y1, bw, y0 - y1, 'up'), f: COL[j], s: INK.card, sw: 1, tip })
+        else out.push({ t: 'rect', x: r1(bx), y: r1(y1), w: r1(bw), h: r1(y0 - y1), rx: 0, f: COL[j], s: INK.card, sw: 1, tip })
+        acc += v })
+      if (js.length && cats.length <= 12 && bw >= 16) out.push({ t: 'text', x: r1(bx + bw / 2), y: r1(Y(sums[i]) - 8), s: tickText(sums[i]) + unit, fs: 10, b: 1, c: INK.text, a: 'middle' }) })
+    return out
+  }
+  if (kind === 'col' || kind === 'combo') {   // 막대+꺾은선 = 마지막 열만 꺾은선, 앞 열들은 막대
+    const bars = kind === 'combo' ? series.slice(0, -1) : series
+    const inner = band * 0.7, bw = Math.max(1, (inner - 2 * (bars.length - 1)) / bars.length), labels = cats.length * bars.length <= 12 && bw >= 16 && kind === 'col'
+    cats.forEach((c, i) => bars.forEach((s, j) => { const v = s.values[i]; if (v == null) return
       const bx = pl + band * i + (band - inner) / 2 + j * (bw + 2), y0 = Y(0), y1 = Y(v)
       out.push({ t: 'path', d: barPath(bx, Math.min(y0, y1), bw, Math.abs(y1 - y0), v >= 0 ? 'up' : 'down'), f: COL[j], tip: `${c}${s.name ? ' · ' + s.name : ''}: ${valText(s, i)}` })
       if (labels) out.push({ t: 'text', x: r1(bx + bw / 2), y: r1(v >= 0 ? y1 - 8 : y1 + 8), s: valText(s, i), fs: 10, c: INK.text, a: 'middle' }) }))
-    return out
+    if (kind === 'col') return out
   }
-  // 꺾은선 — 2px 선, 점 8px(흰 테두리 2px), 계열 하나이고 항목 8개 이하면 값 글
-  series.forEach((s, j) => {
+  // 꺾은선 — 2px 선, 점 8px(흰 테두리 2px), 계열 하나이고 항목 8개 이하면 값 글(막대+꺾은선은 마지막 열만, 값 글 없음)
+  series.forEach((s, j) => { if (kind === 'combo' && j < series.length - 1) return
     const pts = s.values.map((v, i) => (v == null ? null : [r1(pl + band * i + band / 2), r1(Y(v))]))
     let d = '', pen = false
     pts.forEach(p => { if (!p) { pen = false; return } d += `${pen ? ' L' : (d ? ' M' : 'M')}${p[0]},${p[1]}`; pen = true })
     if (d) out.push({ t: 'path', d, s: COL[j], sw: 2 })
     pts.forEach((p, i) => { if (!p) return
       out.push({ t: 'circle', cx: p[0], cy: p[1], r: 4, f: COL[j], s: INK.card, sw: 2, tip: `${cats[i]}${s.name ? ' · ' + s.name : ''}: ${valText(s, i)}` })
-      if (series.length === 1 && cats.length <= 8) out.push({ t: 'text', x: p[0], y: r1(p[1] - 12), s: valText(s, i), fs: 10, c: INK.text, a: 'middle' }) })
+      if (kind === 'line' && series.length === 1 && cats.length <= 8) out.push({ t: 'text', x: p[0], y: r1(p[1] - 12), s: valText(s, i), fs: 10, c: INK.text, a: 'middle' }) })
   })
   return out
 }
 
 // 원 — 왼쪽 원(조각 사이 흰 틈 2px), 오른쪽 목록(견본 · 이름 · 몫 %). 호는 2° 마다 점(데스크톱이 같은 길을 그림)
-function pieScene(out, { cats, series }, L, top, R, bottom, COL = CHART_COLORS) {
+// 도넛(hole) = 가운데가 빈 고리(안 반지름 0.58), 가운데에 가장 큰 조각의 몫과 이름
+function pieScene(out, { cats, series }, L, top, R, bottom, COL = CHART_COLORS, hole = false) {
   const s = series[0], vals = s.values.map(v => (v == null ? 0 : v)), sum = vals.reduce((a, b) => a + b, 0)
   const listW = Math.min((R - L) * 0.45, Math.max(...cats.map(c => textW(c, FS))) + 64)
   if (s.name) { out.push({ t: 'text', x: L, y: top + 4, s: fitText(s.name, 13, R - L), fs: 13, b: 1, c: INK.title, a: 'start' }); top += HEAD }   // 제목 밑부터 원
   const size = Math.min(R - L - listW - 12, bottom - top), x0 = L + Math.max(0, (R - L - (size + 20 + listW)) / 2), cx = x0 + size / 2, cy = (top + bottom) / 2, rad = size / 2   // 원 + 목록 한 덩어리를 가운데(넓은 칸에서 사이가 벌어졌음 — 2026-10-25 사용자)
   let a = -90
   vals.forEach((v, i) => { if (v <= 0) return
-    const sweep = (v / sum) * 360, n = Math.max(2, Math.ceil(sweep / 2)), pts = [[cx, cy]]
-    for (let k = 0; k <= n; k++) { const t = ((a + (sweep * k) / n) * Math.PI) / 180; pts.push([cx + rad * Math.cos(t), cy + rad * Math.sin(t)]) }
+    const sweep = (v / sum) * 360, n = Math.max(2, Math.ceil(sweep / 2)), arc = r => { const q = []; for (let k = 0; k <= n; k++) { const t = ((a + (sweep * k) / n) * Math.PI) / 180; q.push([cx + r * Math.cos(t), cy + r * Math.sin(t)]) } return q }
+    const pts = hole ? [...arc(rad), ...arc(rad * 0.58).reverse()] : [[cx, cy], ...arc(rad)]
     out.push({ t: 'path', d: 'M' + pts.map(p => `${r1(p[0])},${r1(p[1])}`).join(' L') + ' Z', f: COL[i], s: INK.card, sw: 2, tip: `${cats[i]}: ${valText(s, i)} (${Math.round((v / sum) * 100)}%)` })
     a += sweep })
+  if (hole && sum > 0) {   // 가운데 = 가장 큰 조각(같으면 앞 것)
+    const k = vals.reduce((b, v, i) => (v > vals[b] ? i : b), 0), inW = rad * 0.58 * 2 * 0.86
+    out.push({ t: 'text', x: r1(cx), y: r1(cy - 7), s: Math.round((vals[k] / sum) * 100) + '%', fs: 18, b: 1, c: INK.title, a: 'middle' })
+    out.push({ t: 'text', x: r1(cx), y: r1(cy + 12), s: fitText(cats[k], FS, inW), fs: FS, c: INK.muted, a: 'middle' })
+  }
   const lx = x0 + size + 20, rowH = 20, ly0 = cy - (cats.length * rowH) / 2 + rowH / 2
   cats.forEach((c, i) => { const ly = r1(ly0 + i * rowH)
     out.push({ t: 'rect', x: lx, y: ly - 5, w: 10, h: 10, rx: 2, f: COL[i] })
