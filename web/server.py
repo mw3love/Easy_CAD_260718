@@ -85,7 +85,7 @@ class Handler(SimpleHTTPRequestHandler):
         path = self.path.split("?")[0]
         if not path.startswith("/api/"):
             # 글꼴(`/fonts.css`·`/fonts/`) = 30일 — 칠판을 옮길 때마다(페이지를 새로 엶) 「바뀌었나」를 두 번 줄 서서 물었음(2026-11-05, 노트북 칠판 옮기기).
-            # 글꼴 파일을 바꿀 일이 생기면 이름을 바꿀 것(브라우저가 옛 것을 한 달 씀)
+            # 글꼴 파일을 바꿀 일이 생기면 이름을 바꾸고 `fonts.css?v=`도 올릴 것(index.html·exporter.jsx — 브라우저가 옛 것을 한 달 씀)
             long = path.startswith("/assets/") or path == "/fonts.css" or path.startswith("/fonts/")
             self.send_header("Cache-Control", ("public, max-age=31536000, immutable" if path.startswith("/assets/") else "public, max-age=2592000") if long else "no-cache")
         super().end_headers()

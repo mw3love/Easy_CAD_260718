@@ -5,6 +5,7 @@
 import base64
 import json
 import os
+import re
 import sys
 import threading
 import urllib.error
@@ -94,3 +95,16 @@ def test_fonts_are_cached(server):
     base, _ = server
     _, _, hd = _req(f"{base}/fonts.css")
     assert "max-age=2592000" in hd.get("Cache-Control", "")
+
+
+def test_font_files_exist_and_are_served(server):
+    """fonts.css가 가리키는 파일이 다 있고(2026-11-08 woff2로 교체), 화면은 새 주소(`?v=`)로 부름 — 브라우저가 옛 fonts.css를 30일 기억해 지운 파일을 찾지 않게"""
+    base, _ = server
+    _, css, _ = _req(f"{base}/fonts.css")
+    urls = re.findall(r"url\((/fonts/[^)]+)\)", css.decode("utf-8"))
+    assert len(urls) == 4 and all(u.endswith(".woff2") for u in urls)
+    for u in urls:
+        code, body, _ = _req(base + u)
+        assert code == 200 and body[:4] == b"wOF2"
+    html = open(os.path.join(os.path.dirname(__file__), "..", "web", "index.html"), encoding="utf-8").read()
+    assert 'href="/fonts.css?v=' in html
