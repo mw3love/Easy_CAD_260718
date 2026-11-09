@@ -167,3 +167,56 @@ def test_server_report_two_docs_pick_one_and_revise_each(server):
     n = len(seen)
     _post(base + "/api/chat", {"board": "공부", "prev_docs": prev, "messages": [{"role": "user", "content": "발표용만 더 크게"}]})
     assert len(seen) == n + 1 and seen[-1]["style"] == "present" and seen[-1]["prev"] == "<html>발표</html>"   # 하나를 말하면 그것만
+
+
+class _Said:
+    """정해 둔 답을 돌려주는 가짜 클라이언트(찾을 질문 고르기)."""
+    def __init__(self, text):
+        self.text, self.seen = text, []
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+    def create(self, **kw):
+        self.seen.append(kw)
+        if isinstance(self.text, Exception):
+            raise self.text
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=self.text))])
+
+
+def test_find_gaps_only_when_material_lacks_facts():
+    """찾아 보태기(2026-11-09) — 찾을 질문 최대 3개, 빈 자료·망가진 답·오류면 [](문서는 칠판 자료만으로)."""
+    c = _Said('```json\n{"queries": [{"q": "2024년 국내 OTT 이용률", "source": "kr"}, {"q": "지상파 광고매출 추이", "source": "x"}, {"q": "a"}, {"q": "b"}]}\n```')
+    got = board_report.find_gaps(c, "OTT 때문에 지상파가 얼마나 줄었나", "문서로", today="2026-11-09")
+    assert got == [{"q": "2024년 국내 OTT 이용률", "source": "kr"}, {"q": "지상파 광고매출 추이", "source": "web"}, {"q": "a", "source": "web"}]
+    assert "오늘: 2026-11-09" in c.seen[0]["messages"][0]["content"] and "OTT 때문에" in c.seen[0]["messages"][1]["content"]
+    assert board_report.find_gaps(_Said('{"queries": []}'), "회의록 — 할 일 셋") == []
+    assert board_report.find_gaps(_Said("모르겠어요"), "자료") == []
+    assert board_report.find_gaps(_Said(RuntimeError("끊김")), "자료") == []
+    assert board_report.find_gaps(None, "자료") == [] and board_report.find_gaps(_Said("{}"), "  ") == []
+
+
+def test_make_with_found_material_cites_and_skips_its_numbers():
+    c = _Said("<!doctype html><html><head><title>OTT</title></head><body>OTT 이용률 79% [1] · 칠판에 없는 1234</body></html>")
+    found = {"text": "· 2024년 OTT 이용률\n이용률은 79%예요 [1]", "sources": [{"n": 1, "title": "KOSIS", "url": "https://kosis.kr"}], "asked": 1}
+    out = board_report.make(c, "(메모) OTT 조사", "읽기용으로", style="read", found=found)
+    user = c.seen[0]["messages"][1]["content"]
+    assert "[찾아 보탠 자료" in user and "이용률은 79%예요 [1]" in user and "[1] KOSIS — https://kosis.kr" in user
+    assert out["unchecked"] == ["1234"]                                                   # 찾아 보탠 숫자(79)는 「못 찾은 숫자」가 아님
+
+
+def test_server_report_looks_up_only_for_new_docs(server, monkeypatch):
+    import server as srv
+    base, seen = server
+    asked, gathered = [], []
+    monkeypatch.setattr(srv.board_report, "find_gaps", lambda client, material, ask="", **k: asked.append(material) or [{"q": "OTT 이용률", "source": "kr"}])
+    monkeypatch.setattr(srv.deep_mode, "gather", lambda key, plan, **k: gathered.append(plan) or {"sources": [{"n": 1, "title": "KOSIS", "url": "https://kosis.kr"}], "materials": [{"text": "79% [1]"}]})
+    fakes = []
+    def rec(client, material, ask="", **k):
+        fakes.append(k.get("found"))
+        return {"html": "<html><title>T</title></html>", "title": "T", "model": "m", "elapsed": 0.1, "tone": "", "unchecked": [], "style": k.get("style", "present")}
+    monkeypatch.setattr(srv.board_report, "make", rec)
+    out = _post(base + "/api/chat", {"board": "공부", "kind": "report", "messages": [{"role": "user", "content": "읽기용 문서로", "context": "- OTT 조사 메모"}]})
+    assert asked == ["- OTT 조사 메모"] and gathered[0]["sections"] == [{"source": "kr", "query": "OTT 이용률", "title": "OTT 이용률"}]
+    assert fakes[-1] == {"text": "· OTT 이용률\n79% [1]", "sources": [{"n": 1, "title": "KOSIS", "url": "https://kosis.kr"}], "asked": 1}
+    assert "찾아 보탰어요(찾아본 질문 1개)" in out["content"]
+    _post(base + "/api/chat", {"board": "공부", "kind": "report", "prev_html": "<html>앞</html>", "messages": [{"role": "user", "content": "더 짧게"}]})
+    assert len(asked) == 1 and fakes[-1] is None                                          # 고쳐 쓰기 = 찾지 않음

@@ -579,8 +579,19 @@ class Handler(SimpleHTTPRequestHandler):
         else:
             jobs = [(s, "") for s in ([pick] if pick else board_report.STYLES)]
         client = gw._client(key, self._base(), timeout=600)
+        found = None   # 찾아 보태기(2026-11-09) — 새로 쓸 때만, 칠판 자료가 빈약한 사실만(`find_gaps`), 찾기는 취재 한 판 재료 모으기 그대로
+        if not prev_html and not prev_docs:
+            gaps = board_report.find_gaps(client, material, ask, today=deep_mode.today())
+            if gaps:
+                try:
+                    got = deep_mode.gather(key, {"sections": [{"source": g["source"], "query": g["q"], "title": g["q"]} for g in gaps]}, base_url=self._base())
+                    text = "\n\n".join(f"· {g['q']}\n{m['text']}" for g, m in zip(gaps, got["materials"]) if m and m.get("text"))
+                    found = {"text": text, "sources": got["sources"], "asked": len(gaps)} if text.strip() else None
+                    sys.stderr.write("[정리 문서 찾아 보태기] 질문 %d개 · 출처 %d곳\n" % (len(gaps), len(got["sources"])))
+                except Exception as e:
+                    sys.stderr.write("[정리 문서 찾아 보태기 실패] %s\n" % e)
         with ThreadPoolExecutor(len(jobs)) as ex:
-            futs = [ex.submit(self._with, "report", board_report.REPORT_MODEL, lambda m, s=s, p=p: board_report.make(client, material, ask, prev_html=p, model=m, images=images, style=s)) for s, p in jobs]
+            futs = [ex.submit(self._with, "report", board_report.REPORT_MODEL, lambda m, s=s, p=p: board_report.make(client, material, ask, prev_html=p, model=m, images=images, style=s, **({"found": found} if found else {}))) for s, p in jobs]
             docs, errs = [], []
             for (s, _p), f in zip(jobs, futs):
                 try:
@@ -599,6 +610,7 @@ class Handler(SimpleHTTPRequestHandler):
                          + (f" — 칠판 글에서 그대로 찾지 못한 숫자: {', '.join(out['unchecked'])}" if out.get("unchecked") else ""))
         note = f"\n\n숫자는 {why}. 문서에서 한 번 확인해 주세요" if any(o.get("unchecked") for o in docs) else ""
         fail = f"\n\n한 장은 못 만들었어요: {gw.friendly_error(errs[0])}" if errs else ""
+        fail += f"\n\n칠판에 없던 것을 찾아 보탰어요(찾아본 질문 {found['asked']}개) — 쓴 출처는 문서 끝에" if found else ""   # 출처 수 = 검색 결과 전부라 부풀려짐(실측 24곳, 문서엔 9곳)
         head = "정리 문서 두 장 — 발표용(화려)·읽기용(차분), 칠판에 나란히 붙여요. 안 쓸 쪽은 지우면 돼요" if len(docs) > 1 else "정리 문서 — 칠판에 붙이면 인쇄용 문서 카드가 돼요"
         body = "\n".join(("· " if len(docs) > 1 else "") + ln for ln in lines)
         return self._json(200, {"kind": "report", "content": f"{head}\n\n{body}{note}{fail}", **docs[0],

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import html as _html
+import json
 import re
 import time
 
@@ -55,6 +56,45 @@ def style_of(ask: str) -> str:
     """요청 속 「발표용」·「읽기용」 → 그 하나만(없거나 둘 다면 "" = 둘 다 만듦)."""
     hits = [k for k, rx in _STYLE_WORDS.items() if re.search(rx, ask or "")]
     return hits[0] if len(hits) == 1 else ""
+
+
+# 찾아 보태기(2026-11-09 사용자 — AI 칩 「문서」): 칠판 자료만으론 빈약한 사실(숫자·통계·날짜·정의·최근 동향)이 있을 때만 찾을 질문을 뽑음.
+# 회의록·할 일처럼 칠판 내용 자체가 주제면 빈 목록 — 늘 검색하면 일반론이 끼어 문서를 망침(비교 1회차: 취재 한 판이 회의록에 일반론을 채움).
+# 찾기는 서버가 취재 한 판 재료 모으기(`deep_mode.gather`)로 — 여기선 질문만(deep_mode가 이 모듈을 불러 순환을 피함).
+GAP_MODEL = "claude-sonnet-5-5"
+MAX_GAPS = 3
+GAPS = """너는 문서 편집자다. 아래 [칠판 자료]로 [요청]의 문서 한 장을 쓰려 한다. 오늘: {today}.
+자료에 없어서 문서가 빈약해지는 사실(숫자·통계·날짜·정의·최근 동향)이 있으면, 밖에서 찾아볼 질문을 최대 3개 고른다.
+- 자료만으로 충분하면 빈 목록: 회의록·할 일·내 생각 정리처럼 칠판 내용 자체가 주제일 때, 자료에 이미 숫자·근거가 있을 때.
+- 자료 속 사람·회의·우리 조직 일정처럼 밖에서 찾을 수 없는 것은 고르지 않는다.
+- 질문은 그것만 읽어도 통하는 한국어 한 문장(대상·기간·단위를 넣음).
+- source: 한국 공공 통계·법령·날씨처럼 공공 데이터로 답할 것은 "kr", 나머지는 "web".
+JSON만: {{"queries": [{{"q": "…", "source": "web"}}]}}"""
+
+
+def find_gaps(client, material: str, ask: str = "", *, model: str = GAP_MODEL, today: str = "") -> list:
+    """칠판 자료로 문서를 쓸 때 밖에서 찾을 질문 [{"q", "source"}](최대 3개) — 충분하면 []. 틀어지면 [](문서는 칠판 자료만으로)."""
+    if client is None or not str(material or "").strip():
+        return []
+    try:
+        r = client.chat.completions.create(model=model, max_tokens=600, messages=[
+            {"role": "system", "content": GAPS.format(today=today or time.strftime("%Y-%m-%d"))},
+            {"role": "user", "content": f"[요청]\n{ask or '정리한 문서 한 장'}\n\n[칠판 자료]\n{material.strip()[:MAX_MATERIAL]}"}])
+        m = re.search(r"\{.*\}", r.choices[0].message.content or "", re.S)
+        qs = (json.loads(m.group(0)) if m else {}).get("queries") or []
+    except Exception:
+        return []
+    out = [{"q": str(q["q"]).strip()[:300], "source": "kr" if q.get("source") == "kr" else "web"} for q in qs if isinstance(q, dict) and str(q.get("q") or "").strip()]
+    return out[:MAX_GAPS]
+
+
+def found_text(found: dict | None) -> str:
+    """찾아 보탠 자료 → 문서 지시에 붙일 글(없으면 "")."""
+    if not found or not str(found.get("text") or "").strip():
+        return ""
+    src = "\n".join(f"[{s['n']}] {s.get('title') or s.get('url')} — {s.get('url') or ''}" for s in found.get("sources") or [])
+    return ("[찾아 보탠 자료 — 칠판 밖에서 찾음. 여기서 가져온 사실엔 그 [n] 번호를 달고, 문서 끝에 출처(번호·제목·주소)를 작게 남긴다]\n"
+            + found["text"].strip()[:20_000] + ("\n\n[출처 번호]\n" + src if src else ""))
 
 
 REVISE = """아래는 앞서 만든 정리 문서다. 사용자의 요청대로 고친 완결된 HTML 문서 하나만 다시 출력한다(같은 규칙 — 스크립트·외부 파일 없음, A4 인쇄).
@@ -171,10 +211,11 @@ def unchecked_numbers(doc: str, material: str, limit: int = 8) -> list:
     return out[:limit]
 
 
-def make(client, material: str, ask: str = "", *, prev_html: str = "", model: str = REPORT_MODEL, images=None, style: str = "present") -> dict:
+def make(client, material: str, ask: str = "", *, prev_html: str = "", model: str = REPORT_MODEL, images=None, style: str = "present", found: dict | None = None) -> dict:
     """칠판 자료(+요청) → {"html", "title", "model", "elapsed", "tone", "unchecked", "style"}. `prev_html`이 있으면 그 문서를 `ask`대로 고쳐 씀(톤은 말했을 때만 바꿈).
     unchecked = 자료에서 그대로 못 찾은 숫자(`unchecked_numbers` — 서버가 답 글에 알림). images = 칠판 그림(`see` — 새로 쓸 때만, 고쳐 쓰기는 앞 문서가 재료).
-    style = "present"(발표용 — 기본 톤 차분) / "read"(읽기용 — 색은 모델이 고르고 톤은 말했을 때만)."""
+    style = "present"(발표용 — 기본 톤 차분) / "read"(읽기용 — 색은 모델이 고르고 톤은 말했을 때만).
+    found = 서버가 찾아 보탠 자료 {"text", "sources": [{n, title, url}]}(새로 쓸 때만 — `find_gaps` → `deep_mode.gather`)."""
     style = style if style in STYLES else "present"
     tone = tone_of(ask)
     images = [] if prev_html else list(images or [])
@@ -182,11 +223,12 @@ def make(client, material: str, ask: str = "", *, prev_html: str = "", model: st
         user = REVISE.format(prev=prev_html[:60_000], ask=ask or "더 보기 좋게") + ("\n\n" + tone_line(tone) if tone else "")
     else:
         tone = tone or ("calm" if style == "present" else "")
-        user = ("[칠판 자료]\n" + (material or "").strip()[:MAX_MATERIAL] + see.note(len(images)) + "\n\n" + (f"[요청]\n{ask}\n\n" if ask else "") + (tone_line(tone) + "\n\n" if tone else "")
+        extra = found_text(found)
+        user = ("[칠판 자료]\n" + (material or "").strip()[:MAX_MATERIAL] + see.note(len(images)) + "\n\n" + (extra + "\n\n" if extra else "") + (f"[요청]\n{ask}\n\n" if ask else "") + (tone_line(tone) + "\n\n" if tone else "")
                 + "위 자료를 정리한 문서 한 장을 만들어 줘.")
     t0 = time.time()
     r = client.chat.completions.create(model=model, max_tokens=MAX_TOKENS, messages=see.attach([{"role": "system", "content": SYSTEM_READ if style == "read" else SYSTEM}, {"role": "user", "content": user}], images))
     doc = clean_html(r.choices[0].message.content or "")
     if "<" not in doc:
         raise RuntimeError("정리 문서를 만들지 못했어요(HTML이 아닌 답)")
-    return {"html": doc, "title": title_of(doc), "model": model, "elapsed": round(time.time() - t0, 1), "tone": tone, "unchecked": unchecked_numbers(doc, material), "style": style}
+    return {"html": doc, "title": title_of(doc), "model": model, "elapsed": round(time.time() - t0, 1), "tone": tone, "unchecked": unchecked_numbers(doc, material + ("\n" + found["text"] if not prev_html and found and found.get("text") else "")), "style": style}
