@@ -100,6 +100,10 @@ test('큰 창 — 「움직이게」 = 문서 글은 그대로 · ▶ 그 블록
   expect((await docIt()).lives.b2).toContain("textContent='돈다 1'")
   expect(seen.at(-1).live).toBeFalsy()
   await page.screenshot({ path: 'test-results/doc-live.png' })
+  const gap = await page.evaluate(() => { const r = s => document.querySelector(s).getBoundingClientRect(), f = document.querySelector('[data-testid="doc-frame"]'), d = f.contentDocument, k = f.getBoundingClientRect().width / f.offsetWidth
+    const bar = r('[data-testid="live-bar"]'), prev = d.querySelector('[data-block="b1"]').getBoundingClientRect()
+    return { overlap: bar.top < f.getBoundingClientRect().top + prev.bottom * k, below: bar.bottom <= r('[data-testid="block-live"]').top + 1 } })
+  expect(gap).toEqual({ overlap: false, below: true })                                         // ▶ 단추 묶음이 앞 블록 글을 안 가림
   await page.keyboard.press('Escape')
   await page.getByTestId('live-talk').click(); await page.getByTestId('block-input').fill('느리게'); await page.getByTestId('block-input').press('Enter')
   await expect(page.frameLocator('[data-testid="block-live"]').locator('#x')).toHaveText('돈다 2')   // 그 판 고치기
@@ -107,6 +111,10 @@ test('큰 창 — 「움직이게」 = 문서 글은 그대로 · ▶ 그 블록
   await page.keyboard.press('Escape')
   await page.getByTestId('live-play').click(); await expect(page.getByTestId('block-live')).toHaveCount(0)   // 멈춘 모습
   await expect(page.getByTestId('live-play')).toHaveText('▶ 움직여 보기')
+  await doc.locator('[data-block="b2"]').dblclick(); await page.keyboard.press('End'); await page.keyboard.type('!')   // 움직이는 블록을 손으로 고쳐도
+  await doc.locator('[data-block="b1"]').click()
+  await expect.poll(async () => (await docIt()).html).toContain('어려운 말로 쓴 단락!')
+  expect((await docIt()).html).toContain('<p data-block="b2" data-kind="text">어려운 말로 쓴 단락!</p>')                 // 이 창의 자리 표시(여백)는 문서에 안 들어감
   await page.getByTestId('live-drop').click(); await expect(page.getByTestId('live-bar')).toHaveCount(0)
   expect((await docIt()).lives).toBeFalsy()
   await page.keyboard.press('Escape'); await expect(page.getByTestId('doc-view')).toHaveCount(0)

@@ -15,6 +15,7 @@ const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line
 const KIND = { text: '글', table: '표', chart: '그래프', image: '그림', box: '상자', live: '움직이는 칸' }
 const PICK_CSS = '[data-block]{cursor:pointer}[data-block]:hover{outline:2px solid #2563eb;outline-offset:3px}[data-block].mb-sel{outline:2px solid #da7756 !important;outline-offset:3px}[data-block].mb-done{outline:2px solid #16a34a;outline-offset:3px}[data-block].mb-edit{outline:2px dashed #da7756 !important;outline-offset:3px;cursor:text}'
 const BUB_W = 320
+const BAR_H = 32   // 움직이는 칸 단추 묶음 자리(화면 px)
 
 export function DocView({ it, size, readOnly, threads = {}, onThread, onClose, onHtml, onLives, onPrint, onHwpx, onStatus }) {   // onLives = 움직이는 칸 `lives` { bN: 카드 HTML }(3단계 ②)   // threads·onThread = 블록 대화(말풍선 대화 저장소, 키 「문서 _id#bN」 — 창을 닫아도 남음)
   const frame = useRef(null), scroller = useRef(null), swaps = useRef({}), keepTop = useRef(0)
@@ -31,12 +32,20 @@ export function DocView({ it, size, readOnly, threads = {}, onThread, onClose, o
     const out = {}
     for (const bid of Object.keys(it.lives || {})) {
       const el = d.querySelector(`[data-block="${bid}"]`); if (!el) continue
+      if (el.dataset.mbMt == null) { el.dataset.mbStyle = el.getAttribute('style') || ''; el.dataset.mbMt = d.defaultView.getComputedStyle(el).marginTop }   // ▶ 단추 자리 = 블록 위 여백을 단추 높이만큼(이 창에서만 — 문서 글은 그대로)
+      el.style.marginTop = `calc(${el.dataset.mbMt} + ${Math.ceil(BAR_H / scale)}px)`
       el.style.minHeight = bid === play ? Math.ceil(el.getBoundingClientRect().width * LIVE_H / LIVE_W) + 'px' : ''   // 움직이는 동안만 칸을 카드 비율만큼(문서 글은 안 바뀜)
       const r = el.getBoundingClientRect(); out[bid] = { x: r.left, y: r.top, w: r.width, h: r.height }
     }
     setRects(out); setDocH(Math.max(400, d.documentElement.scrollHeight))
   }
   useEffect(measure, [play, it.lives])
+  const bare = el => {   // 이 창이 붙인 자리 표시(움직이는 칸 여백)를 뗀 원래 모양의 outerHTML
+    const c = el.cloneNode(true)
+    if (c.dataset.mbMt != null) { const st = c.dataset.mbStyle; if (st) c.setAttribute('style', st); else c.removeAttribute('style') }
+    delete c.dataset.mbMt; delete c.dataset.mbStyle
+    return c.outerHTML
+  }
   const fin = useRef(null); fin.current = save => {
     const e = edit.current; if (!e) return false
     edit.current = null; setEditBid('')
@@ -46,7 +55,7 @@ export function DocView({ it, size, readOnly, threads = {}, onThread, onClose, o
     if (!save || !changed) return true
     try {
       keepTop.current = scroller.current?.scrollTop || 0
-      if (!onHtml(spliceBlock(it.html, e.bid, cleanEdited(e.el.outerHTML)), '글자 고침')) throw new Error('칠판 문서를 못 바꿨어요')
+      if (!onHtml(spliceBlock(it.html, e.bid, cleanEdited(bare(e.el))), '글자 고침')) throw new Error('칠판 문서를 못 바꿨어요')
       onStatus?.(`${e.bid} 글자를 고쳤어요 — Ctrl+Z로 되돌려요`)
     } catch (x) { setErr(String(x.message || x)) }
     return true
@@ -143,7 +152,7 @@ export function DocView({ it, size, readOnly, threads = {}, onThread, onClose, o
           {Object.entries(rects).filter(([bid]) => lives[bid]).map(([bid, r]) => <div key={bid}>
             {play === bid && <iframe data-testid="block-live" data-block={bid} title={`${bid} 움직이는 칸`} srcDoc={liveSrc(lives[bid])} sandbox="allow-scripts" csp={LIVE_CSP} scrolling="no"
               style={{ position: 'absolute', left: fx + r.x * scale, top: r.y * scale, width: r.w, height: r.h, border: 0, transform: `scale(${scale})`, transformOrigin: '0 0', background: '#fff', boxShadow: '0 0 0 2px #da7756' }} />}
-            <div data-testid="live-bar" data-block={bid} style={{ position: 'absolute', left: fx + (r.x + r.w) * scale, top: Math.max(0, r.y * scale - 30), transform: 'translateX(-100%)', display: 'flex', gap: 4, zIndex: 1, width: 'max-content', whiteSpace: 'nowrap' }}>
+            <div data-testid="live-bar" data-block={bid} style={{ position: 'absolute', left: fx + (r.x + r.w) * scale, top: Math.max(0, r.y * scale - BAR_H + 2), transform: 'translateX(-100%)', display: 'flex', gap: 4, zIndex: 1, width: 'max-content', whiteSpace: 'nowrap' }}>
               <button data-testid="live-play" style={liveBtn(play === bid)} onClick={() => setPlay(p => (p === bid ? '' : bid))} title={play === bid ? '멈춘 모습(인쇄에 나가는 모습)으로' : '이 칸을 직접 움직여 보기'}>{play === bid ? '■ 멈춘 모습' : '▶ 움직여 보기'}</button>
               {!readOnly && play === bid && <button data-testid="live-talk" style={liveBtn()} onClick={() => talkLive(bid)}>고치기</button>}
               {!readOnly && <button data-testid="live-drop" style={liveBtn()} onClick={() => dropLive(bid)} title="움직이는 판 빼기(문서 글은 그대로)">빼기</button>}
