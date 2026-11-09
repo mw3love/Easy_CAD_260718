@@ -81,8 +81,11 @@ test('움직이는 카드 — 한 번 = 고르기 · 두 번 = 조작 · 바깥 
   const plain = (await liveDoc(page)).items.find(it => it.type === 'doc' && !it.live)
   const pb = await page.locator(`iframe[data-docid="${plain.uid}"]`).boundingBox()
   await page.mouse.click(pb.x + pb.width / 2, pb.y - 20, { button: 'right' })
+  await page.getByText('크게 보기', { exact: true }).click()                      // 보통 문서 = 앱 안 큰 창(2026-11-09) — 그 틀도 스크립트가 안 돎
+  await expect(page.getByTestId('doc-view')).toBeVisible()
+  await expect.poll(() => page.evaluate(() => document.querySelector('[data-testid="doc-frame"]')?.contentDocument?.title)).toBe('파일')
   const pop2 = context.waitForEvent('page')
-  await page.getByText('크게 보기', { exact: true }).click()
+  await page.getByTestId('doc-print').click()                                     // 인쇄 = 새 탭(옛 크게 보기)
   const big2 = await pop2
   await big2.waitForLoadState()
   expect(await big2.title()).toBe('파일')                                        // 스크립트가 안 돎(돌면 RAN)

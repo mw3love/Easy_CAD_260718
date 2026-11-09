@@ -197,6 +197,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._motion(req, key)
             if kind == "bubble":   # 💬 AI 말풍선(2026-10-28) — 물건 하나의 글·그림 + 그 말풍선 앞 대화만, 길 고르기 없음
                 return self._bubble(req, key)
+            if kind == "block":   # 문서 블록 하나 고치기(2026-11-09 문서 통합 2단계) — 큰 창에서 고른 블록 + 그 블록의 대화, 길 고르기 없음
+                return self._block(req, key)
             if kind == "live":   # 「+ › 움직이는 카드」(§8 항목66 4단계) — 하나만 따로, 재료 = 고른 것의 글. 앞 답이 카드이고 고칠 말이면 그 카드 고치기
                 t = str(last.get("content", ""))
                 fix = str(req.get("prev_html") or "") if req.get("prev_kind") == "live" and live_card.FOLLOW_WORDS.search(t) else ""
@@ -463,6 +465,55 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             return self._json(502, {"error": gw.friendly_error(e)})
         return self._json(200, {"kind": "slides", **out, "credits": self._spent(key, base, b0)})
+
+    _PIC_WORDS = re.compile(r"그림|이미지|일러스트|사진|삽화")
+
+    def _block(self, req: dict, key: str):
+        """문서 블록 하나 — {"doc", "block", "messages"} → {"kind": "block", "content", "html"(고친 문서), "block", "model", "elapsed", "credits"}.
+        「그림 넣어 줘」면 그림 모델로 한 장 그려(블록 글로) 문서 안에 넣음(인터넷 없이 보이게 data: 주소 — 폭 900 JPEG로 줄임)."""
+        doc, bid = str(req.get("doc") or ""), str(req.get("block") or "")
+        msgs = [m for m in (req.get("messages") or []) if isinstance(m, dict)]
+        ask = str(next((m.get("content", "") for m in reversed(msgs) if m.get("role") == "user"), "")).strip()
+        if not doc or not re.fullmatch(r"b\d{1,3}", bid) or not ask:
+            return self._json(400, {"error": "고칠 블록과 말이 필요해요"})
+        old = board_report.block_of(doc, bid)
+        if not old:
+            return self._json(400, {"error": f"문서에 {bid} 블록이 없어요 — 문서를 다시 열어 주세요"})
+        base = self._base()
+        b0, t0, img = self._balance(key, base), time.time(), ""
+        if self._PIC_WORDS.search(ask):
+            try:
+                words = board_report.plain_text(old, 600)
+                out = self._with("image", board_image.IMAGE_MODEL, lambda m: board_image.generate(key, f"문서 속 한 칸에 들어갈 설명 그림 한 장. 흰 바탕, 깔끔한 업무용 그림, 글자는 넣지 마. 내용: {words}. 바라는 점: {ask}", base_url=base, model=m, n=1))
+                img = self._small_jpeg_uri(out["images"][0][0])
+            except Exception as e:
+                return self._json(502, {"error": f"그림 그리기 실패: {gw.friendly_error(e)}"})
+        try:
+            out = self._with("block", board_report.BLOCK_MODEL, lambda m: board_report.rewrite_block(gw._client(key, base, timeout=300), doc, bid, ask, history=msgs[:-1], model=m, image_uri=img))
+        except ValueError as e:
+            return self._json(502, {"error": f"블록을 못 고쳤어요 — {e}"})
+        except Exception as e:
+            return self._json(502, {"error": gw.friendly_error(e)})
+        el = round(time.time() - t0, 1)
+        sys.stderr.write("[블록 고치기] %s %s %.1f초%s\n" % (bid, out["model"], el, " + 그림" if img else ""))
+        return self._json(200, {"kind": "block", "content": f"{bid}만 고쳤어요" + (" — 그림을 넣었어요" if img else "") + ". 나머지는 그대로예요.",
+                                "html": out["html"], "block": bid, "model": out["model"], "elapsed": el, "credits": self._spent(key, base, b0)})
+
+    @staticmethod
+    def _small_jpeg_uri(data: bytes, width: int = 900) -> str:
+        """그림 바이트 → 폭 900 JPEG data: 주소(문서 안에 넣을 크기로). Pillow가 없으면 원본 그대로."""
+        try:
+            import io
+            from PIL import Image
+            im = Image.open(io.BytesIO(data)).convert("RGB")
+            if im.width > width:
+                im = im.resize((width, round(im.height * width / im.width)))
+            buf = io.BytesIO()
+            im.save(buf, "JPEG", quality=82)
+            data, mime = buf.getvalue(), "image/jpeg"
+        except Exception:
+            mime = "image/png"
+        return f"data:{mime};base64," + base64.b64encode(data).decode()
 
     def _bubble(self, req: dict, key: str):
         """💬 AI 말풍선 — {"item": {"type", "text", "edit"?(memo·table·text), "image"?}, "messages"} → {"kind": "bubble", "content", "edit"?(고친 물건 전체), "model", "elapsed", "credits"}."""

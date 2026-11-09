@@ -1,0 +1,57 @@
+// 흐름 70 — 문서 블록 고치기(2026-11-09 문서 통합 2단계): 문서 카드 「크게 보기」 = 앱 안 큰 창 → 블록 누르기 = 말 칸 → 그 블록만 바뀜 · 원래대로 · Ctrl+Z
+// + 새 문서에 넘치는 블록이 있으면 그 블록만 저절로 한 번 고침. KAIROS는 가짜(/api/chat).
+import { test, expect } from '@playwright/test'
+import { boardName, openBoard, setCam, clickScene, liveDoc, toPage } from './helpers.js'
+
+const page1 = b2 => `<!doctype html><html><head><title>점검</title></head><body style="margin:0"><main style="width:1000px">
+<h1 data-block="b1" data-kind="text">결론 한 문장</h1>${b2}<p data-block="b3" data-kind="text">끝 단락</p></main></body></html>`
+const HARD = '<p data-block="b2" data-kind="text">어려운 말로 쓴 단락</p>'
+const WIDE = '<div data-block="b2" data-kind="box" style="width:1400px">너무 넓은 칸</div>'
+
+async function makeDoc(page, html, seen, fix) {
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
+  await page.route('**/api/chat', async r => { const b = r.request().postDataJSON(); seen.push(b)
+    if (b.kind === 'block') return r.fulfill({ json: { kind: 'block', content: `${b.block}만 고쳤어요`, html: b.doc.replace(/<(p|div) data-block="b2"[^]*?<\/(p|div)>/, fix), block: b.block, model: 'claude-sonnet-5-5', credits: 2 } })
+    return r.fulfill({ json: { kind: 'report', content: '문서', title: '점검', html, docs: [{ style: 'read', html, title: '점검' }], page_w: 1000, model: 'claude-opus-5-5', elapsed: 3 } }) })
+  await page.getByRole('button', { name: '메모', exact: true }).click(); await page.keyboard.type('송신소 점검'); await clickScene(page, 1500, 900)
+  const m = (await liveDoc(page)).items.find(it => it.type === 'memo')
+  await clickScene(page, m.pos[0] + 40, m.pos[1] + 15)
+  await page.getByTestId('ai-chip').click(); await page.locator('[data-testid="ai-kind"][data-kind="doc"]').click(); await page.getByTestId('ai-input').press('Enter')
+  await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'doc').length).toBe(1)
+  return (await liveDoc(page)).items.find(it => it.type === 'doc')
+}
+
+test('큰 창 — 블록 누르기 = 말 칸 → 그 블록만 바뀜 · 원래대로 ↔ 바꾼 것 · 닫고 Ctrl+Z', async ({ page }) => {
+  const seen = []
+  await openBoard(page, boardName('docblk'), { chat: false }); await setCam(page)
+  const card = await makeDoc(page, page1(HARD), seen, '<p data-block="b2" data-kind="text">쉬운 말 단락</p>')
+  const at = await toPage(page, card.pos[0] + 100, card.pos[1] + 200)
+  await page.mouse.click(at.x, at.y, { button: 'right' }); await page.getByRole('button', { name: '크게 보기' }).click()
+  const view = page.getByTestId('doc-view'); await expect(view).toBeVisible()
+  const doc = page.frameLocator('[data-testid="doc-frame"]')
+  await doc.locator('[data-block="b2"]').click()
+  const bub = page.getByTestId('block-bubble'); await expect(bub).toContainText('b2 · 글')
+  await page.getByTestId('block-input').fill('쉬운 말로'); await page.getByTestId('block-input').press('Enter')
+  await expect(page.getByTestId('block-a')).toContainText('b2만 고쳤어요')
+  const blk = seen.find(b => b.kind === 'block')
+  expect(blk.block).toBe('b2'); expect(blk.doc).toContain('어려운 말로'); expect(blk.messages.at(-1).content).toBe('쉬운 말로')
+  const html = async () => (await liveDoc(page)).items.find(it => it.type === 'doc').html
+  await expect.poll(html).toContain('쉬운 말 단락')
+  expect(await html()).toContain('결론 한 문장'); expect(await html()).toContain('끝 단락')       // 나머지는 그대로
+  await expect(doc.locator('[data-block="b2"]')).toHaveText('쉬운 말 단락')                      // 창 안 문서도 바뀜
+  await page.screenshot({ path: 'test-results/doc-blocks.png' })
+  await page.getByTestId('block-flip').click(); await expect.poll(html).toContain('어려운 말로')   // 원래대로
+  await page.getByTestId('block-flip').click(); await expect.poll(html).toContain('쉬운 말 단락')   // 바꾼 것으로
+  await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await expect(view).toHaveCount(0)
+  await page.keyboard.press('Control+z'); await expect.poll(html).toContain('어려운 말로')
+})
+
+test('새 문서에 넘치는 블록 = 그 블록만 저절로 한 번 고침(문제가 줄었을 때만)', async ({ page }) => {
+  const seen = []
+  await openBoard(page, boardName('docfix'), { chat: true }); await setCam(page)
+  await makeDoc(page, page1(WIDE), seen, '<div data-block="b2" data-kind="box">알맞은 칸</div>')
+  await expect.poll(() => seen.map(b => b.kind).join()).toBe('report,block')
+  expect(seen[1].block).toBe('b2'); expect(seen[1].messages[0].content).toContain('넘침')
+  await expect.poll(async () => (await liveDoc(page)).items.find(it => it.type === 'doc')?.html || '').toContain('알맞은 칸')
+  await expect(page.locator('aside[aria-label="KAIROS 대화"]')).toContainText('잘린 곳 1곳을 고쳤어요')
+})

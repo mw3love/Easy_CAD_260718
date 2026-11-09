@@ -51,8 +51,11 @@ test('정리해 줘 → 📄 미리보기 → 문서 카드 → 더 짧게 = 고
   expect(d.items.find(it => it.type === 'doc').html).toContain('<h1>회의 브리핑</h1>')
   await setCam(page, { x: 0, y: 100, z: 1 })   // 카드 ↗가 칠판 안에(대화창이 열려 칠판 폭 1005 — 그대로면 ↗ 자리가 대화창의 「짧은 브리핑」 답 위, 2026-11-02)
   const c2 = d.items.find(it => it.type === 'doc'), ob =await toPage(page, c2.pos[0] + c2.rect[2] - 20, c2.pos[1] + 20)
+  await page.mouse.click(ob.x, ob.y)                                                 // ↗ 크게 보기 = 앱 안 큰 창(2026-11-09 문서 통합 2단계)
+  await expect(page.getByTestId('doc-view')).toBeVisible()
+  await expect(page.frameLocator('[data-testid="doc-frame"]').locator('h1')).toHaveText('회의 브리핑')
   const popup = page.waitForEvent('popup')
-  await page.mouse.click(ob.x, ob.y)                                                 // ↗ 크게 보기
+  await page.getByTestId('doc-print').click()                                        // 인쇄 · PDF = 새 탭(옛 크게 보기)
   const tab = await popup
   await expect(tab.locator('h1')).toHaveText('회의 브리핑')
 })

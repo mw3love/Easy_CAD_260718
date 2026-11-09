@@ -25,6 +25,7 @@ import { EmptyGuide } from './guide.jsx'
 import { FindBar } from './find.jsx'
 import { CommandBar, menuToCommands } from './cmdk.jsx'
 import { Bubble, BubbleBadge } from './bubble.jsx'
+import { DocView } from './docview.jsx'
 
 const ZMIN = 0.02, ZMAX = 40, LEFT_CARDS = 24   // LEFT_CARDS = 맞출 때 왼쪽 여백 — 카드가 칠판 위에 떠 있던 때는 220(2026-10-23 왼쪽 판으로 붙이며 칠판 밖으로 나감)
 // 화면 색은 next.html의 CSS 변수(밝은/어두운 화면 — 어두운 쪽은 데스크톱과 같은 값)
@@ -618,6 +619,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
   const setThread = (id, msgs) => { const next = { ...threadsRef.current, [id]: msgs }; threadsRef.current = next; setThreads(next)
     if (server) fetch(THREADS_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [id]: msgs }) })
       .then(r => (r.ok ? r.json() : Promise.reject(r))).then(d => takeThreads(d.threads)).catch(() => setStatus('말풍선 대화를 저장하지 못했어요')) }
+  const [docView, setDocView] = useState('')   // 문서 큰 창(docview.jsx) — 문서 카드 _id
   const [bubbleFirst, setBubbleFirst] = useState({})   // 말풍선을 열며 바로 보낼 첫 말(AI 칩에서 단추 없이 말만 — 2026-11-09)
   const openBubble = (id, first) => { pullThreads(); if (first) setBubbleFirst(f => ({ ...f, [id]: { q: first, n: Date.now() } })); setBubbles(bs => (bs.includes(id) ? bs : [...bs, id])) }
   // 서버 답 전(첫 0.1초)에도 서버 있는 모습으로 그림 — 「Magic Board」·흐린 공유·동그라미 없음 → 바뀌며 위 막대가 좌우로 밀렸음(2026-10-28 사용자 「새 칠판 누르면 살짝 깜빡」)
@@ -926,9 +928,11 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
           if (fs.length) return ed.current?.dropFiles(fs, e)
           const u = (e.dataTransfer?.getData('text/uri-list') || '').split(/\r?\n/).find(x => x && !x.startsWith('#')); if (u) ed.current?.dropUrl(u, e.dataTransfer.getData('text/x-mb-caption') || '', e) }}
         style={{ flex: 1, position: 'relative', overflow: 'hidden', '--mb-right-inset': narrow && chatOpen ? `${chatW + 12}px` : '0px' }}>
-        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} phone={phone} keepTool={keepTool} onKeepTool={toggleKeep} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onAddSymbol={(items, name, folder) => setSymAdd({ items, name, folder })} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onBubble={phone ? undefined : openBubble} onAsk={(text, kind, extra) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind, extra }) }} />
+        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} phone={phone} keepTool={keepTool} onKeepTool={toggleKeep} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onAddSymbol={(items, name, folder) => setSymAdd({ items, name, folder })} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onBubble={phone ? undefined : openBubble} onOpenDoc={phone ? undefined : setDocView} onAsk={(text, kind, extra) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind, extra }) }} />
         {!phone && Object.entries(threads).filter(([id, t]) => t?.length && !bubbles.includes(id)).map(([id, t]) => { const info = ed.current?.bubbleInfo(id)
           return info && <BubbleBadge key={'bb' + id} id={id} info={info} cam={cam} count={t.filter(m => m.role === 'user').length} onOpen={() => openBubble(id)} /> })}
+        {docView && (it => it && <DocView key={'dv' + docView} it={it} size={size} onClose={() => setDocView('')} onStatus={setStatus}
+          onHtml={html => !!ed.current?.setFields(docView, { html }, '블록 고침')} onPrint={() => ed.current?.printDoc(it)} onHwpx={() => ed.current?.saveHwpx(it)} />)(model.items.find(x => x._id === docView))}
         {!phone && bubbles.map(id => <Bubble key={'b' + id} id={id} info={ed.current?.bubbleInfo(id)} cam={cam} size={size} thread={threads[id] || []} first={bubbleFirst[id]} onThread={msgs => setThread(id, msgs)}
           onClose={() => setBubbles(bs => bs.filter(x => x !== id))} onEdit={md => ed.current?.bubbleEdit(id, md)} onFields={patch => ed.current?.setFields(id, patch)} onImage={(data, aspect) => ed.current?.setImage(id, data, aspect)} onStatus={setStatus} />)}
         {gone && <div data-testid="gone-banner" style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 25, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 10, background: '#d44c47', color: '#fff', font: "600 13px 'Pretendard', sans-serif", boxShadow: '0 4px 14px rgba(0,0,0,.2)' }}>

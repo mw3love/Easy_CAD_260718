@@ -21,6 +21,7 @@ import { svgPreview } from './svgin.js'
 import { DeepAsk, DeepConfirm, DeepFlip, DeepPlan, REDO_RE, SlidesPlan, askBrief, keptPlan, keptSlides, nextPic, picOf } from './deepchat.jsx'
 import { LIVE_CSP, LIVE_H, LIVE_W, bigPage, liveSrc } from './livecard.js'
 import { checkCard, problemLines } from './cardcheck.js'
+import { measureDoc } from './docfix.js'
 import { ChatSkeleton } from './skeleton.jsx'
 const LINK_CHAT = '#4f8fe8'
 // 정리 문서 크게 보기 — 새 탭에 그 HTML(인쇄·PDF는 그 탭에서 Ctrl+P)
@@ -53,7 +54,7 @@ const askMemo = () => { try { return JSON.parse(localStorage.getItem(ASK_KEY) ||
 const askPrefs = () => Object.fromEntries(Object.entries(askMemo()).filter(([, v]) => Array.isArray(v) && v.length >= 2 && v.at(-1) === v.at(-2)).map(([k, v]) => [k, v.at(-1)]))
 const rememberAsk = (key, kind) => { try { const m = askMemo(); m[key] = [...(m[key] || []), kind].slice(-2); localStorage.setItem(ASK_KEY, JSON.stringify(m)) } catch { /* 기억 못 해도 그만 */ } }
 // 기다리는 동안 보일 말 — 일마다 실제로 일하는 모델(서버 /api/models `jobs`)을 같이(2026-10-20 사용자: 정돈인데 고른 gpt가 보여 헷갈림, 칠판엔 아무 표시가 없어 안 되는 줄 알았음)
-const JOB_LABEL = { motion: '▶ 장을 움직이게 만드는 중(3~4분)', 'motion-check': '▶ 만든 장을 확인하는 중', 'motion-fix': '▶ 장의 잘린 곳을 고치는 중(1~4분)', 'live-fix': '▶ 잘린 글자를 고치는 중', 'slides-plan': '📽 장 계획 짜는 중', 'slides-build': '📽 슬라이드 만드는 중', live: '▶ 인터랙티브 HTML 만드는 중', report: '📄 문서 만드는 중', image: '🎨 이미지 그리는 중', icon: '✏️ 아이콘(SVG) 그리는 중', diagram: '🔷 도형 그리는 중', 'deep-plan': '📰 지면 계획 짜는 중', 'deep-build': '📰 취재 한 판 만드는 중', 'deep-section': '📰 꼭지 다시 쓰는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
+const JOB_LABEL = { motion: '▶ 장을 움직이게 만드는 중(3~4분)', 'motion-check': '▶ 만든 장을 확인하는 중', 'motion-fix': '▶ 장의 잘린 곳을 고치는 중(1~4분)', 'live-fix': '▶ 잘린 글자를 고치는 중', 'slides-plan': '📽 장 계획 짜는 중', 'slides-build': '📽 슬라이드 만드는 중', live: '▶ 인터랙티브 HTML 만드는 중', report: '📄 문서 만드는 중', 'doc-fix': '📄 잘린 곳 고치는 중', image: '🎨 이미지 그리는 중', icon: '✏️ 아이콘(SVG) 그리는 중', diagram: '🔷 도형 그리는 중', 'deep-plan': '📰 지면 계획 짜는 중', 'deep-build': '📰 취재 한 판 만드는 중', 'deep-section': '📰 꼭지 다시 쓰는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
 // 「+」 도구 창은 2026-11-08에 없앰(대화창 bakeoff 3라운드 사용자 — 「모두 채팅창으로 녹여 버리자」). 길은 말로만: 서버 길 고르기가 KAIROS 기능 표(`easycad/ai/features.py`)에서
 // 고르고, 발표 자료·인포그래픽처럼 질문지가 먼저인 길은 서버가 `kind: 'go'`로 알려 대화창이 질문지를 띄움. 파일 올리기는 입력 칸 옆 📎
 const CUT_MORE = '끊긴 곳부터 이어서 계속 써 줘. 앞 내용은 되풀이하지 말고 끊긴 문장부터.'   // 끊긴 답 「이어서 쓰기」(2026-10-27)
@@ -334,7 +335,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     update(next); setReplyTo(null); if (text == null) setDraft(''); setBusy(Date.now()); setBusyJob(kind || (/그려|그림|이미지|일러스트/.test(q) && !/흐름도|순서도|계통도|구성도|도면|조직도|아이콘|svg/i.test(q) ? 'image' : ''))   // 길은 서버가 고르지만 「그려 줘」면 기다리는 동안 그림 두 칸 자리(2026-11-08 「+」 이름표가 없어져 — 보이기만)
     try { const ans = await ask([...before, mine], kind, !fresh && (!kind || kind === 'report' || kind === 'live') && lastA?.role === 'assistant' && lastA.html && !lastA.docs && (kind !== 'live' || lastA.kind === 'live') ? lastA.html : '', { ...(lastA?.role === 'assistant' && lastA.style && !lastA.docs ? { prev_style: lastA.style } : {}), ...(!fresh && (!kind || kind === 'report') && lastA?.role === 'assistant' && lastA.docs ? { prev_docs: lastA.docs.map(({ style, html }) => ({ style, html })) } : {}), ...(boardImgs.length ? { board_images: boardImgs } : {}), ...(lastA?.kind === 'live' ? { prev_kind: 'live' } : {}), ...(fl?.spec ? { base_flow: fl.spec, flow_into: fl.id } : {}) })
       if (ans.kind === 'go') { setBusy(null); goTo(ans.to, q); return }   // 내 질문 = 질문지 카드의 주제(그 카드가 질문·카드를 다시 씀 — 이 질문은 대화 기록에서 바뀜)
-      const done = await checkLive(ans, [...before, mine])
+      const done = await fixDoc(await checkLive(ans, [...before, mine]))
       if (opts.pin && (done.kind === 'report' || done.kind === 'live') && done.html && !done.docs) { const ids = ed.current?.pinCard(done); if (ids) { setSkipSel(ids.join()); done.pinned = true } }   // AI 칩 「문서」·「HTML」 = 칠판에 바로 붙임(2026-11-09)
       update([...next, done]) } catch (e) {
       setMsgs([...next, { role: 'error', content: String(e.message || e) }])   // 오류는 기록에 안 남김
@@ -382,6 +383,25 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   }
   const planMsg = (m, d) => ({ role: 'assistant', kind: 'deep', step: 'plan', topic: m.topic, brief: m.brief, plan: d.plan, estimate: d.estimate, drop: [], model: d.model, elapsed: d.elapsed, credits: d.credits, at: Date.now() })
   // 움직이는 카드 검사(2026-11-08) — 보이지 않는 칸에서 돌려 글자 잘림·겹침을 잼(크레딧 없음). 문제가 있으면 한 번만 고쳐 보고(약 45크레딧) 나아졌을 때만 바꿈
+  // 📄 새 문서 재기 → 잘림·넘침이 있는 블록만(최대 3개) 다시 써서 한 번 고침, 문제가 줄었을 때만 바꿈(2026-11-09 문서 통합 2단계 ④)
+  async function fixDoc(ans) {
+    if (ans.kind !== 'report' || !ans.html || ans.docs?.length > 1) return ans
+    const probs = await measureDoc(ans.html, ans.page_w || 794); if (!probs.length) return ans
+    setBusy(Date.now()); setBusyJob('doc-fix')
+    let html = ans.html, credits = 0
+    for (const p of probs.slice(0, 3)) {
+      try {
+        const r = await chatPost({ kind: 'block', board: DOC_NAME, doc: html, block: p.block, messages: [{ role: 'user', content: `이 블록에서 ${p.why}. 내용은 그대로 두고, 글자·표시가 잘리거나 칸 밖으로 나가지 않게 배치만 고쳐 줘.` }] })
+        const d = await r.json().catch(() => ({})); if (r.ok && d.html) { html = d.html; credits += d.credits || 0 }
+      } catch { /* 이 블록은 두고 다음 */ }
+    }
+    if (html === ans.html) return ans
+    const after = await measureDoc(html, ans.page_w || 794)
+    if (after.length >= probs.length) return ans
+    return { ...ans, html, content: `${ans.content || ''}
+
+잘린 곳 ${probs.length - after.length}곳을 고쳤어요(그 블록만 · 약 ${Math.round(credits)}크레딧)`, ...(ans.credits != null ? { credits: ans.credits + credits } : {}) }
+  }
   async function checkLive(ans, history) {
     if (ans.kind !== 'live' || !ans.html) return ans
     const c = await checkCard(ans.html); if (!c?.problems.length) return ans

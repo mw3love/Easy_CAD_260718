@@ -32,7 +32,7 @@ FEATURES = [
     {"kind": "diagram", "judge": "상자와 화살표로 된 흐름도·계통도·구성도를 칠판에서 고칠 수 있는 도형으로 그리기",
      "ask": False, "api": "/chat/completions/", "type": "chat", "model": board_diagram.DIAGRAM_MODEL, "board": "프레임 안 상자·화살표", "credits": (10, 20)},
     {"kind": "report", "judge": "칠판 자료를 문서·보고서 한 장으로 정리",
-     "ask": False, "api": "/chat/completions/", "type": "chat", "model": board_report.REPORT_MODEL, "board": "정리 문서 카드", "credits": None},
+     "ask": False, "api": "/chat/completions/", "type": "chat", "model": board_report.REPORT_MODEL, "board": "문서 카드(블록으로 나뉜 한 장)", "credits": (180, 340)},   # 2026-11-09 실측 장당(찾아 보태기 약 7~19 따로)
     {"kind": "slides", "judge": "발표 자료·슬라이드·PPT·여러 장짜리 작은 책이나 그림책·동화책 만들기",
      "ask": True, "api": "/chat/completions/ + /images/generations/", "type": "chat", "model": slides.WRITER_MODEL, "board": "16:9 프레임 여러 장(바로 발표)", "credits": (40, 160)},
     {"kind": "live", "judge": "원리를 직접 눌러 보고 값을 바꿔 보는 인터랙티브 HTML·시뮬레이션 카드 만들기",
@@ -40,6 +40,9 @@ FEATURES = [
     # 말로는 안 감(judge 비움) — 발표 자료 장 프레임 우클릭 「이 장 움직이게」만. 실측: 그림 참고 366(11-07)·266(11-08)·없이 510
     {"kind": "motion", "judge": "", "ask": False, "api": "/chat/completions/", "type": "chat", "model": motion_slide.MOTION_MODEL,
      "board": "그 장 프레임을 덮는 움직이는 카드(→ 로 단계)", "credits": (270, 520)},
+    # 말로는 안 감 — 문서 큰 창에서 블록 하나 고치기(2026-11-09 문서 통합 2단계). 실측: 쉬운 말로 30·잘림 고치기 28·도표로 63·그림 넣기 46(그림 포함)
+    {"kind": "block", "judge": "", "ask": False, "api": "/chat/completions/", "type": "chat", "model": board_report.BLOCK_MODEL,
+     "board": "문서의 그 블록만 바꿈(Ctrl+Z 한 번)", "credits": (25, 65)},
     # 말로는 안 감 — 발표 막대 「읽어 주기」(N). 실측 2026-11-08: 메모 3문장 → 13.4초 소리 약 6크레딧, 같은 글은 다시 씀(0)
     {"kind": "voice", "judge": "", "ask": False, "api": "/audio/speech/", "type": "tts", "model": slide_voice.TTS_MODEL,
      "board": "발표 중 그 장 발표자 메모를 소리로(WAV, 서버에 남김)", "credits": (3, 10)},

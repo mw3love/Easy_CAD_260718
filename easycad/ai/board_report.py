@@ -143,6 +143,82 @@ def ensure_blocks(doc: str) -> str:
 def block_count(doc: str) -> int:
     return len(re.findall(r"\sdata-block\s*=", doc or ""))
 
+
+# 블록 하나 다시 쓰기(2026-11-09 문서 통합 2단계): 문서 전체는 모양을 맞추라고 보여 주고, 같은 번호의 블록 하나만 돌려받아 그 자리에 끼움.
+# 블록 하나라 빠른 모델(문서 전체 = opus 1~2분·약 180~340크레딧). 돌아온 것이 요소 하나가 아니거나 번호가 바뀌면 받지 않음.
+BLOCK_MODEL = "claude-sonnet-5-5"
+IMG_SLOT = "{{그림}}"
+BLOCK_EDIT = """너는 문서의 블록 하나만 고치는 편집자다. [문서 전체]는 모양·색·글꼴·말투를 맞추라고 보여 주는 것이고, 고칠 것은 [고칠 블록] 하나뿐이다.
+출력은 고친 블록 HTML 요소 하나뿐이다(설명·코드펜스 없이).
+- 바깥 요소의 data-block="{bid}"는 그대로 둔다. 내용이 표·그래프·그림으로 바뀌면 data-kind를 맞게 바꾼다(text|table|chart|image|box).
+- 바깥 요소의 태그와 class는 되도록 그대로(문서 배치가 그 class에 걸려 있음). 새 꾸밈은 style 속성으로(문서의 <style>은 고칠 수 없음).
+- 블록 밖 내용은 쓰지 않는다. 블록 안에 data-block을 또 달지 않는다.
+- 스크립트·외부 파일·외부 그림을 쓰지 않는다. 문서에 없는 사실을 지어내지 않는다 — 이 블록과 문서에 있는 사실만 다시 배치하고, 계산한 값은 계산했다고 작게 밝힌다. 출처 번호 [n]은 그대로 둔다.
+- 그래프는 한 눈금에 맞추고 눈금 글자는 실제로 닿는 값만, 글자·표시가 겹치거나 칸 밖으로 나가지 않게(인라인 SVG는 viewBox에 바깥 글자 자리를 남긴다).
+- 정지된 문서다: 버튼·접기·애니메이션 없이. 칸 높이를 고정하지 않는다."""
+BLOCK_IMG = "\n- 쓸 그림이 하나 있다: <img src=\"" + IMG_SLOT + "\" alt=\"(무엇인지 한 줄)\" style=\"max-width:100%\">로 이 블록 안 알맞은 자리에 넣는다."
+
+
+def find_block(doc: str, bid: str):
+    """data-block="bid" 요소의 (시작, 끝) — 없으면 None. 짝 맞추기는 `_children`과 같은 단순판."""
+    m = re.search(r"<([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*\sdata-block\s*=\s*[\"']" + re.escape(bid) + r"[\"'][^>]*>", doc or "")
+    if not m:
+        return None
+    depth = 0
+    for t in re.finditer(r"<(/?)([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*?(/?)>", doc[m.start():]):
+        close, tag, selfc = t.group(1), t.group(2).lower(), t.group(3)
+        if tag in _VOID or selfc:
+            if depth == 0:
+                return m.start(), m.start() + t.end()
+            continue
+        depth += -1 if close else 1
+        if depth == 0:
+            return m.start(), m.start() + t.end()
+    return None
+
+
+def block_of(doc: str, bid: str) -> str:
+    at = find_block(doc, bid)
+    return doc[at[0]:at[1]] if at else ""
+
+
+def splice_block(doc: str, bid: str, new: str) -> str:
+    at = find_block(doc, bid)
+    if not at:
+        raise ValueError(f"문서에 {bid} 블록이 없어요")
+    return doc[:at[0]] + new + doc[at[1]:]
+
+
+def clean_block(text: str, bid: str) -> str:
+    """모델 답 → 끼울 요소 하나(청소 포함). 요소가 하나가 아니거나 번호가 다르면 ValueError."""
+    t = re.sub(r"^```(?:html)?\s*|\s*```\s*$", "", (text or "").strip())
+    i = t.find("<")
+    t = t[i:] if i >= 0 else ""
+    for rx in _BAD:
+        t = rx.sub("", t)
+    t = _JS_URL.sub(r'\1=\2#\2', _ON_ATTR.sub("", t)).strip()
+    kids = _children(t, 0, len(t))
+    head = re.match(r"<[^>]*>", t)
+    if len(kids) != 1 or not head or not re.search(r"\sdata-block\s*=\s*[\"']" + re.escape(bid) + r"[\"']", head.group(0)):
+        raise ValueError("블록 하나로 돌아오지 않았어요")
+    return t[:kids[0][3]]
+
+
+def rewrite_block(client, doc: str, bid: str, ask: str, *, history=None, model: str = BLOCK_MODEL, image_uri: str = "") -> dict:
+    """문서 + 블록 번호 + 말 → {"html"(고친 문서 전체), "block"(새 블록), "before"(옛 블록), "model", "elapsed"}."""
+    old = block_of(doc, bid)
+    if not old:
+        raise ValueError(f"문서에 {bid} 블록이 없어요")
+    talk = "\n".join(f"{'사람' if m.get('role') == 'user' else 'AI'}: {str(m.get('content') or '')[:400]}" for m in (history or [])[-6:] if isinstance(m, dict))
+    user = (f"[문서 전체 — 참고만]\n{doc[:60_000]}\n\n[고칠 블록 {bid}]\n{old}\n\n" + (f"[이 블록에 대한 앞 대화]\n{talk}\n\n" if talk else "")
+            + f"[고칠 점]\n{ask}")
+    t0 = time.time()
+    r = client.chat.completions.create(model=model, max_tokens=8000, messages=[{"role": "system", "content": BLOCK_EDIT.format(bid=bid) + (BLOCK_IMG if image_uri else "")}, {"role": "user", "content": user}])
+    new = clean_block(r.choices[0].message.content or "", bid)
+    if image_uri:
+        new = new.replace(IMG_SLOT, image_uri)
+    return {"html": splice_block(doc, bid, new), "block": new, "before": old, "model": model, "elapsed": round(time.time() - t0, 1)}
+
 SYSTEM += BLOCK_RULE
 SYSTEM_READ += BLOCK_RULE
 

@@ -249,3 +249,43 @@ def test_make_adds_blocks_and_counts_them():
     c = _Said('<!doctype html><html><head><title>T</title></head><body><h1>결론</h1><p>가</p><ul><li>나</li></ul></body></html>')
     out = board_report.make(c, "(메모) 가", "읽기용으로", style="read")
     assert out["blocks"] == 3 and 'data-block="b3" data-kind="text"' in out["html"]
+
+
+DOC3 = ('<!doctype html><html><head><style>.k{color:red}</style></head><body><main><h1 data-block="b1" data-kind="text">결론</h1>'
+        '<section class="k" data-block="b2" data-kind="box"><div><img src="x"><br></div><p>OTT 81.8% [1]</p></section><p data-block="b3" data-kind="text">끝</p></main></body></html>')
+
+
+def test_block_find_splice_and_reject():
+    """블록 하나 다시 쓰기(2026-11-09 문서 통합 2단계) — 찾기·끼우기, 요소가 둘이거나 번호가 다르면 거절, 청소."""
+    assert board_report.block_of(DOC3, "b2").startswith('<section class="k"') and board_report.block_of(DOC3, "b2").endswith("</section>")
+    out = board_report.splice_block(DOC3, "b2", '<section class="k" data-block="b2" data-kind="table"><table></table></section>')
+    assert board_report.block_of(out, "b1") == board_report.block_of(DOC3, "b1") and board_report.block_of(out, "b3") == board_report.block_of(DOC3, "b3")
+    assert board_report.block_of(DOC3, "b9") == ""
+    for bad in ('<p data-block="b2">가</p><p>나</p>', '<p data-block="b3">가</p>', '그냥 글'):
+        with pytest.raises(ValueError):
+            board_report.clean_block(bad, "b2")
+    assert board_report.clean_block('```html\n<div data-block="b2" onclick="x()"><script>a()</script>ok</div>\n```', "b2") == '<div data-block="b2">ok</div>'
+
+
+def test_rewrite_block_sends_doc_and_block_and_puts_picture():
+    c = _Said('<section class="k" data-block="b2" data-kind="image"><img src="{{그림}}" alt="막대"><p>OTT 81.8% [1]</p></section>')
+    out = board_report.rewrite_block(c, DOC3, "b2", "그림 넣어 줘", history=[{"role": "user", "content": "전에 한 말"}], image_uri="data:image/jpeg;base64,AAAA")
+    sys_msg, user = c.seen[0]["messages"][0]["content"], c.seen[0]["messages"][1]["content"]
+    assert 'data-block="b2"' in sys_msg and "{{그림}}" in sys_msg and "[문서 전체 — 참고만]" in user and "[고칠 블록 b2]" in user and "전에 한 말" in user
+    assert c.seen[0]["model"] == board_report.BLOCK_MODEL and out["before"] == board_report.block_of(DOC3, "b2")
+    assert 'src="data:image/jpeg;base64,AAAA"' in board_report.block_of(out["html"], "b2") and board_report.block_of(out["html"], "b1") == '<h1 data-block="b1" data-kind="text">결론</h1>'
+
+
+def test_server_block_route(server, monkeypatch):
+    import server as srv
+    base, _seen = server
+    calls = []
+    monkeypatch.setattr(srv.board_report, "rewrite_block", lambda client, doc, bid, ask, **k: calls.append((bid, ask, k.get("image_uri", ""))) or {"html": doc.replace("끝", "끝!"), "block": "", "before": "", "model": "m", "elapsed": 0.1})
+    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, **k: calls.append(("그림", prompt)) or {"images": [(b"\x89PNG", "png")], "model": "g", "credits": 1})
+    out = _post(base + "/api/chat", {"kind": "block", "board": "공부", "doc": DOC3, "block": "b3", "messages": [{"role": "user", "content": "쉬운 말로"}]})
+    assert out["kind"] == "block" and out["block"] == "b3" and "끝!" in out["html"] and calls[-1] == ("b3", "쉬운 말로", "")
+    _post(base + "/api/chat", {"kind": "block", "board": "공부", "doc": DOC3, "block": "b2", "messages": [{"role": "user", "content": "그림 넣어 줘"}]})
+    assert calls[-2][0] == "그림" and "OTT 81.8%" in calls[-2][1] and calls[-1][2].startswith("data:image/")
+    import urllib.error
+    with pytest.raises(urllib.error.HTTPError):
+        _post(base + "/api/chat", {"kind": "block", "board": "공부", "doc": DOC3, "block": "b9", "messages": [{"role": "user", "content": "x"}]})
