@@ -52,7 +52,7 @@ export function Frames({ items, sel, onReorder, onRename, onGo, onPresent, onExp
           style={{ all: 'unset', cursor: 'pointer', flex: 'none', width: 20, height: 18, borderRadius: 4, border: `1px solid ${C.line}`, boxSizing: 'border-box', color: C.ink, fontSize: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>▶</button>}
         {onSkip && renaming?.id !== f._id && <button data-testid="frame-skip" aria-pressed={!f.skip} title={f.skip ? '발표에 안 나와요 — 누르면 넣기' : '발표에 나와요 — 누르면 빼기(칠판엔 그대로)'} onClick={e => { e.stopPropagation(); onSkip(f._id, !f.skip) }}
           style={{ all: 'unset', cursor: 'pointer', flex: 'none', width: 20, height: 18, borderRadius: 4, color: C.muted, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{SCREEN(f.skip)}</button>}
-        {renaming?.id !== f._id && <button data-testid="frame-more" aria-label="프레임 메뉴" title="발표·이름 바꾸기·내보내기·지우기" onClick={e => { e.stopPropagation(); openMenu(f._id, menuBelow(e)) }} style={moreBtn(hover === f._id || menu?.id === f._id)}>⋯</button>}   {/* 이름 안 지은 프레임 = 「프레임 N」 흐리게(2026-10-26 실검증 — 「이름 없음」은 빠진 것처럼 보였음) */}
+        {renaming?.id !== f._id && <button data-testid="frame-more" className="mb-hit" aria-label="프레임 메뉴" title="발표·이름 바꾸기·내보내기·지우기" onClick={e => { e.stopPropagation(); openMenu(f._id, menuBelow(e)) }} style={moreBtn(hover === f._id || menu?.id === f._id)}>⋯</button>}   {/* 이름 안 지은 프레임 = 「프레임 N」 흐리게(2026-10-26 실검증 — 「이름 없음」은 빠진 것처럼 보였음) */}
       </div>)}
     </div>
     {menu && <FloatMenu testid="frame-menu" at={menu} onClose={() => setMenu(null)} entries={[...(frames.find(f => f._id === menu.id)?.skip ? [] : [['이 장부터 발표', '', () => { setMenu(null); onPresent(menu.id) }]]),

@@ -21,6 +21,8 @@
     button:not([data-own-ring]):focus-visible,[role=button]:focus-visible,[role=switch]:focus-visible{outline:2px solid var(--mb-icon-acc)!important;outline-offset:2px}
     .mb-row:focus-visible{outline-offset:-2px!important}   /* 목록 칸이 굴림 칸이라 바깥 테두리는 잘림 — 줄 안쪽에 */
     .mb-row:focus-within .mb-more{visibility:visible!important}   /* 줄 ⋯는 마우스 올림 때만(규칙 ④) + 글쇠로 그 줄에 왔을 때도 */
+    .mb-hit::after{content:'';position:absolute;inset:var(--hit,-3px)}   /* 겉모양은 작게 두고 누르는 자리만 24px로(2026-11-09 점검 — ⋯ 18·▾ 22×20) */
+    .mb-dlg::backdrop{background:transparent}   /* 확인 창 바탕은 창이 직접 칠함(ui.jsx Confirm) */
     .mb-btn-icon svg [fill="currentColor"]{fill:var(--mb-icon-acc)}
     @media (max-width:1039px){[data-cmd-btn]{display:none!important}}
   </style>

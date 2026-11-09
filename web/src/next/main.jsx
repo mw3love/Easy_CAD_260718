@@ -269,7 +269,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
   const row = (b, i) => { const cur = b.name === DOC_NAME, isMine = myNames.has(b.name), ppl = people[b.name] || [], edit = renaming === b.name, lit = cur ? 'rgba(218,119,86,.18)' : hov === b.name ? C.group : 'transparent', code = boardLabel(b.name).code
     const tip = `${boardTitle(b.name, b.title)}${code ? ` · 칠판 코드 ${code}` : ''} — ${cur ? '두 번 누르면' : '우클릭·F2로'} 이름 바꾸기${isMine ? ' · 끌거나 Alt+↑↓로 순서 바꾸기' : ''}\n${b.fresh ? '아직 빈 칠판' : b.mtime ? `${ago(b.mtime)} 고침` : ''}${ppl.length ? ` · 지금 ${ppl.map(p => (p.id === myId ? `${me || '나'} (나)` : p.name)).join(', ')}` : ''}`
     return <div key={b.name} data-testid="board-row" data-board={b.name} role="button" tabIndex={0} className="mb-row" title={edit ? '' : tip} draggable={isMine && !edit}
-      onClick={() => onRow(b.name)} onDoubleClick={() => cur && startRename(b.name)} onKeyDown={e => { if (edit) return; if (e.key === 'Enter') onRow(b.name); if (e.key === 'F2') startRename(b.name)
+      onClick={() => onRow(b.name)} onDoubleClick={() => cur && startRename(b.name)} onKeyDown={e => { if (edit || e.target !== e.currentTarget) return; if (e.key === 'Enter') onRow(b.name);   /* ⋯에서 누른 Enter는 ⋯ 몫(2026-11-09 — 줄이 받아 칠판으로 옮겨 갔음) */ if (e.key === 'F2') startRename(b.name)
         if (isMine && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); nudge(b.name, e.key === 'ArrowUp' ? -1 : 1) } }}
       onContextMenu={e => { e.preventDefault(); menuAt(b.name, { x: e.clientX, y: e.clientY }) }} onMouseEnter={() => setHov(b.name)} onMouseLeave={() => setHov(h => (h === b.name ? null : h))}
       onDragStart={e => { setDrag(b.name); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('application/x-mb-board', b.name) }}   // 칠판 위 놓기(파일·주소)와 안 섞이게 따로 종류
@@ -288,7 +288,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
             <span data-testid="board-sub" style={{ flex: 'none', fontSize: 12, color: C.muted }}>{b.fresh ? '빈 칠판' : b.mtime ? ago(b.mtime) : ''}</span></>
         : <BoardName name={b.name} title={b.title} at={b.c || (b.mtime || 0) * 1000} bold={cur} />}
       {!edit && !big && <MiniFaces list={ppl} myId={myId} me={me} />}
-      {!edit && <button data-testid="board-more" className="mb-more" aria-label="칠판 메뉴" title="이름 바꾸기·새 탭·주소 복사·내려받기·목록에서 빼기" onClick={e => { e.stopPropagation(); menuAt(b.name, menuBelow(e)) }}
+      {!edit && <button data-testid="board-more" className="mb-more mb-hit" aria-label="칠판 메뉴" title="이름 바꾸기·새 탭·주소 복사·내려받기·목록에서 빼기" onClick={e => { e.stopPropagation(); menuAt(b.name, menuBelow(e)) }}
         onDoubleClick={e => e.stopPropagation()}
         style={big ? { ...moreBtn(true), width: 32, height: 32, lineHeight: '32px', fontSize: 15 } : moreBtn(hov === b.name || menu?.name === b.name)}>⋯</button>}
     </div> }
@@ -320,10 +320,10 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
       <span style={{ flex: 1, font: docked ? "700 15px 'Pretendard', sans-serif" : "700 13px 'Pretendard', sans-serif" }}>칠판</span>
       {!making && <div style={{ display: 'flex' }}>   {/* 갈라진 단추(2026-10-28 사용자 고름) — 왼쪽 = 바로 새 칠판(한 번), ▾ = 칠판 코드로 열기·파일로 새 칠판 */}
         <button data-testid="board-new" onClick={startNew} title={open ? '새 칠판 만들기 — 누르면 바로 새 칠판으로 옮겨 가요(이름은 나중에 목록에서 두 번 눌러서)' : '새 칠판 만들기 — 이름을 정하면 그 칠판으로 옮겨 가요'}
-          style={{ ...accent, padding: '3px 8px 3px 10px', borderRadius: '6px 0 0 6px' }}>＋ 새 칠판</button>
+          className="mb-hit" style={{ ...accent, position: 'relative', '--hit': '-2px 0', padding: '3px 8px 3px 10px', borderRadius: '6px 0 0 6px' }}>＋ 새 칠판</button>
         <button ref={moreRef} data-testid="board-new-more" aria-label="새 칠판 메뉴" aria-expanded={!!newMenu} title="칠판 코드로 열기 · 파일로 새 칠판"
           onClick={e => { if (newMenu) { closeMenu(); return } const r = e.currentTarget.getBoundingClientRect(); setNewMenu({ x: Math.max(RAIL_W + 4, r.right - 200), y: r.bottom + 4 }) /* 아이콘 줄은 안 덮게 */ }}
-          style={{ ...accent, padding: '3px 6px', borderRadius: '0 6px 6px 0', borderLeft: '1px solid rgba(255,255,255,.45)', fontSize: 10 }}>▾</button>
+          className="mb-hit" style={{ ...accent, position: 'relative', '--hit': '-2px -2px -2px 0', padding: '3px 6px', borderRadius: '0 6px 6px 0', borderLeft: '1px solid rgba(255,255,255,.45)', fontSize: 10 }}>▾</button>
       </div>}
     </div>}
     {!making && !big && <button data-testid="board-example-new" onClick={exampleNew} title="기능마다 진짜로 만든 예시가 담긴 칠판 — 마음껏 고쳐 보세요. 누를 때마다 최신 예시로 새로 열려요(지금 칠판은 그대로)"
@@ -366,17 +366,18 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
       navigator.share ? [<><PI n="send" />주소 보내기</>, '', () => { setMenu(null); navigator.share({ title: `「${boardTitle(menu.name, findB(menu.name)?.title)}」 칠판`, url: location.origin + boardUrl(menu.name) }).catch(() => {}) }]
         : [<><PI n="copy" />주소 복사</>, '', () => { setMenu(null); navigator.clipboard?.writeText(location.origin + boardUrl(menu.name)) }],
       '-', ...(menu.mine && menu.name !== DOC_NAME ? [[<><PI n="minus" />목록에서 빼기</>, '', () => { setMenu(null); forgetBoard(menu.name); loadMine() }]] : []),
-      [<span style={{ display: 'contents', color: 'var(--mb-danger-ink)' }}><PI n="trash" />칠판 지우기</span>, '', () => { setMenu(null); setDel({ name: menu.name }) }]]} />}
-    {menu && !big && <FloatMenu at={menu} onClose={() => setMenu(null)} entries={[['이름 바꾸기', big ? '' : 'F2', () => startRename(menu.name)], ...(menu.mine ? [['위로 옮기기', 'Alt+↑', () => { setMenu(null); nudge(menu.name, -1) }], ['아래로 옮기기', 'Alt+↓', () => { setMenu(null); nudge(menu.name, 1) }]] : []), ...(big ? [] : [['새 탭에서 열기', '', () => { setMenu(null); window.open(boardUrl(menu.name), '_blank', 'noopener') }]]),
+      [<span style={{ display: 'contents', color: 'var(--mb-danger-ink)' }}><PI n="trash" />칠판 지우기</span>, '', () => { setMenu(null); setDel({ name: menu.name, back: menu.anchor }) }]]} />}
+    {menu && !big && <FloatMenu at={menu} onClose={() => setMenu(null)} entries={[['이름 바꾸기', big ? '' : 'F2', () => startRename(menu.name)], ...(() => { const at = menu.mine ? (mine || []).findIndex(x => x.name === menu.name) : -1   // 옮길 수 있을 때만(맨 위면 「위로」 없음)
+        return [...(at > 0 ? [['위로 옮기기', 'Alt+↑', () => { setMenu(null); nudge(menu.name, -1) }]] : []), ...(at >= 0 && at < (mine || []).length - 1 ? [['아래로 옮기기', 'Alt+↓', () => { setMenu(null); nudge(menu.name, 1) }]] : [])] })(), ...(big ? [] : [['새 탭에서 열기', '', () => { setMenu(null); window.open(boardUrl(menu.name), '_blank', 'noopener') }]]),
       ...(big && navigator.share ? [['주소 보내기…', '', () => { setMenu(null); navigator.share({ title: `「${boardTitle(menu.name, findB(menu.name)?.title)}」 칠판`, url: location.origin + boardUrl(menu.name) }).catch(() => {}) }]]
         : [['주소 복사', '', () => { setMenu(null); navigator.clipboard?.writeText(location.origin + boardUrl(menu.name)) }]]), ...(big ? [] : [['내려받기 (.ecad)', '', () => download(menu.name)]]),
-      '-', ...(menu.mine && menu.name !== DOC_NAME ? [['목록에서 빼기', '', () => { setMenu(null); forgetBoard(menu.name); loadMine() }]] : []), ['칠판 지우기…', '', () => { setMenu(null); setDel({ name: menu.name }) }]]} />}
+      '-', ...(menu.mine && menu.name !== DOC_NAME ? [['목록에서 빼기', '', () => { setMenu(null); forgetBoard(menu.name); loadMine() }]] : []), ['칠판 지우기…', '', () => { setMenu(null); setDel({ name: menu.name, back: menu.anchor }) }]]} />}
     {/* 칠판 지우기(2026-10-28 사용자) — 앱 안 확인 창(브라우저 confirm은 칠판 조작을 막음), 지금 들어와 있는 사람을 보여 줌. 서버 휴지통으로 옮김 */}
     {del && (() => { const t = boardTitle(del.name, findB(del.name)?.title), here = (people[del.name] || []).filter(p => p.id !== myId), name = del.name
       const go = async () => { if (!(await api.deleteBoard(name))) { setWhy('지우지 못했어요 — 서버 연결을 확인해 주세요'); return }
         forgetBoard(name); if (name === DOC_NAME) location.href = location.pathname; else loadMine() }   // 지금 칠판을 지웠으면 쓰던(마지막) 칠판으로
       // 엔터 = 지우기(2026-10-28 사용자 — 두 번 일부러 눌러 온 창이고 휴지통으로 감) · Esc·바깥 = 취소 — 공용 확인 창(`ui.jsx`)
-      return <Confirm testid="board-delete" okTestid="board-delete-ok" title={`「${t}」 칠판을 지울까요?`} onOk={go} onClose={() => setDel(null)}>
+      return <Confirm testid="board-delete" okTestid="board-delete-ok" returnTo={del.back} title={`「${t}」 칠판을 지울까요?`} onOk={go} onClose={() => setDel(null)}>
         같이 쓰는 사람도 이 칠판을 더는 못 열어요(대화·그림·PDF 포함). 서버 휴지통으로 옮겨서, 서버를 맡은 사람은 되살릴 수 있어요.
         {here.length > 0 && <div data-testid="board-delete-here" style={{ marginTop: 8, color: 'var(--mb-danger-ink)', fontWeight: 600 }}>지금 {here.map(p => p.name).join(', ')} 님이 이 칠판에 있어요</div>}
       </Confirm> })()}

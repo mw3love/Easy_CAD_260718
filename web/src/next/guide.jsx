@@ -29,7 +29,7 @@ export function EmptyGuide({ onAsk, onDeep, onMeet, onExample, phone = false }) 
     boxShadow: '0 8px 24px rgba(0,0,0,.12)', font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
     <div style={{ display: 'flex', alignItems: 'center', marginBottom: 2 }}>
       <span style={{ font: "700 17px 'Pretendard', sans-serif", flex: 1 }}>무엇부터 해 볼까요?</span>
-      <button data-testid="empty-guide-close" onClick={close} title="이 안내 다시 보지 않기(이 브라우저)" style={{ border: 'none', background: 'none', color: C.muted, cursor: 'pointer', fontSize: 15, padding: 2 }}>✕</button>
+      <button data-testid="empty-guide-close" onClick={close} title="이 안내 다시 보지 않기(이 브라우저)" className="mb-hit" style={{ position: 'relative', '--hit': '0 -4px', border: 'none', background: 'none', color: C.muted, cursor: 'pointer', fontSize: 15, padding: 2 }}>✕</button>
     </div>
     <div style={{ color: C.muted, marginBottom: 10 }}>KAIROS에게 물은 것이 쌓이고 정리되는 칠판이에요.</div>
     {rows.map(([icon, title, tip, go]) => <button key={title} className="mb-mi" data-testid={`empty-guide-${title}`} onClick={() => { if (tight) setAway(true); go() }}

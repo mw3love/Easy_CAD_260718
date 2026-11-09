@@ -13,7 +13,7 @@
 - **초점 표시**: 단추가 `all: 'unset'`이어도 글쇠 초점 테두리는 `index.html`의 전역 `:focus-visible` 규칙이 그린다(파랑 `--mb-icon-acc`). 제 테두리를 직접 그리는 단추만 `data-own-ring`을 단다(확인 창). `outline: 'none'`으로 지우지 않는다(2026-11-09).
 - **메뉴**: `ctxmenu.jsx`의 `ContextMenu`(칠판 위)·`FloatMenu`(판 위) 하나뿐이다. 바깥 누르기·Esc로 닫힌다.
   ⋯ 단추로 열 때는 `ui.jsx`의 `menuBelow(e)`로 자리를 잡는다 — 그 단추를 `anchor`로 기억해서, 같은 ⋯를 다시 누르면 닫힌다.
-- **확인 창·단추·마우스 올림**: `ui.jsx`의 `Confirm`·`btnPrimary`·`btnSecondary`·`btnHead`·`moreBtn`·`hoverBg`.
+- **확인 창·단추·마우스 올림**: `ui.jsx`의 `Confirm`·`btnPrimary`·`btnSecondary`·`btnHead`·`moreBtn`·`hoverBg`. `Confirm`은 `<dialog>`(showModal — 뒤 막힘·Tab은 창 안), 메뉴 항목에서 열면 `returnTo`에 메뉴를 연 단추를 준다. 작은 단추(⋯·▾)는 겉모양 그대로 `className="mb-hit"` + `position: 'relative'`(`--hit`로 넓힐 둘레)로 누르는 자리를 24px 이상(2026-11-09).
 
 ## 규칙
 

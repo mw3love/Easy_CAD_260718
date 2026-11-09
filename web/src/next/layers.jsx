@@ -59,7 +59,7 @@ export function Layers({ model, setModel, active, setActive, onChanged, dark, do
         <span style={{ color: C.muted, fontSize: 11 }}>{count(l.id)}</span>
         <button title="레이어 표시/숨김" aria-pressed={l.visible} onClick={e => { e.stopPropagation(); setVisible(l.id, !l.visible) }} style={iconBtn}>{l.visible ? EYE : EYE_OFF}</button>
         <button title="레이어 잠금" aria-pressed={l.locked} onClick={e => { e.stopPropagation(); setLocked(l.id, !l.locked) }} style={iconBtn}>{l.locked ? LOCK : UNLOCK}</button>
-        {renaming !== l.id && <button data-testid="layer-more" aria-label="레이어 메뉴" title="이름 바꾸기·지우기" onClick={e => { e.stopPropagation(); openMenu(l.id, menuBelow(e)) }} style={moreBtn(hov === l.id || menu?.id === l.id)}>⋯</button>}
+        {renaming !== l.id && <button data-testid="layer-more" className="mb-hit" aria-label="레이어 메뉴" title="이름 바꾸기·지우기" onClick={e => { e.stopPropagation(); openMenu(l.id, menuBelow(e)) }} style={moreBtn(hov === l.id || menu?.id === l.id)}>⋯</button>}
       </div>)}
     </div>
     {/* 지우기 = 확인 없음(규칙 ⑥ — 안의 도형은 「기본」으로 옮겨 남음) */}
