@@ -40,9 +40,9 @@ FEATURES = [
     # 말로는 안 감(judge 비움) — 발표 자료 장 프레임 우클릭 「이 장 움직이게」만. 실측: 그림 참고 366(11-07)·266(11-08)·없이 510
     {"kind": "motion", "judge": "", "ask": False, "api": "/chat/completions/", "type": "chat", "model": motion_slide.MOTION_MODEL,
      "board": "그 장 프레임을 덮는 움직이는 카드(→ 로 단계)", "credits": (270, 520)},
-    # 말로는 안 감 — 문서 큰 창에서 블록 하나 고치기(2026-11-09 문서 통합 2단계). 실측: 쉬운 말로 30·잘림 고치기 28·도표로 63·그림 넣기 46(그림 포함)
+    # 말로는 안 감 — 문서 큰 창에서 블록 하나 고치기(2026-11-09 문서 통합 2단계). 실측: 문서 일부만 보낸 뒤(같은 날 손보기) 쉬운 말로 13.5·그림 넣기 31, 전엔 쉬운 말로 30·잘림 28·도표로 63·그림 46
     {"kind": "block", "judge": "", "ask": False, "api": "/chat/completions/", "type": "chat", "model": board_report.BLOCK_MODEL,
-     "board": "문서의 그 블록만 바꿈(Ctrl+Z 한 번)", "credits": (25, 65)},
+     "board": "문서의 그 블록만 바꿈(Ctrl+Z 한 번)", "credits": (10, 45)},
     # 말로는 안 감 — 발표 막대 「읽어 주기」(N). 실측 2026-11-08: 메모 3문장 → 13.4초 소리 약 6크레딧, 같은 글은 다시 씀(0)
     {"kind": "voice", "judge": "", "ask": False, "api": "/audio/speech/", "type": "tts", "model": slide_voice.TTS_MODEL,
      "board": "발표 중 그 장 발표자 메모를 소리로(WAV, 서버에 남김)", "credits": (3, 10)},

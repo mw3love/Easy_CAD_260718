@@ -271,7 +271,7 @@ def test_rewrite_block_sends_doc_and_block_and_puts_picture():
     c = _Said('<section class="k" data-block="b2" data-kind="image"><img src="{{그림}}" alt="막대"><p>OTT 81.8% [1]</p></section>')
     out = board_report.rewrite_block(c, DOC3, "b2", "그림 넣어 줘", history=[{"role": "user", "content": "전에 한 말"}], image_uri="data:image/jpeg;base64,AAAA")
     sys_msg, user = c.seen[0]["messages"][0]["content"], c.seen[0]["messages"][1]["content"]
-    assert 'data-block="b2"' in sys_msg and "{{그림}}" in sys_msg and "[문서 전체 — 참고만]" in user and "[고칠 블록 b2]" in user and "전에 한 말" in user
+    assert 'data-block="b2"' in sys_msg and "{{그림}}" in sys_msg and "[문서 일부 — 참고만" in user and "<style>.k{color:red}</style>" in user and '<h1 data-block="b1"' in user and "[고칠 블록 b2]" in user and "전에 한 말" in user
     assert c.seen[0]["model"] == board_report.BLOCK_MODEL and out["before"] == board_report.block_of(DOC3, "b2")
     assert 'src="data:image/jpeg;base64,AAAA"' in board_report.block_of(out["html"], "b2") and board_report.block_of(out["html"], "b1") == '<h1 data-block="b1" data-kind="text">결론</h1>'
 
@@ -285,7 +285,7 @@ def test_server_block_route(server, monkeypatch):
     out = _post(base + "/api/chat", {"kind": "block", "board": "공부", "doc": DOC3, "block": "b3", "messages": [{"role": "user", "content": "쉬운 말로"}]})
     assert out["kind"] == "block" and out["block"] == "b3" and "끝!" in out["html"] and calls[-1] == ("b3", "쉬운 말로", "")
     _post(base + "/api/chat", {"kind": "block", "board": "공부", "doc": DOC3, "block": "b2", "messages": [{"role": "user", "content": "그림 넣어 줘"}]})
-    assert calls[-2][0] == "그림" and "OTT 81.8%" in calls[-2][1] and calls[-1][2].startswith("data:image/")
+    assert calls[-2][0] == "그림" and "OTT 81.8%" in calls[-2][1] and "숫자·글자" in calls[-2][1] and calls[-1][2].startswith("data:image/")
     import urllib.error
     with pytest.raises(urllib.error.HTTPError):
         _post(base + "/api/chat", {"kind": "block", "board": "공부", "doc": DOC3, "block": "b9", "messages": [{"role": "user", "content": "x"}]})

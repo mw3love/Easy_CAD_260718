@@ -148,7 +148,7 @@ def block_count(doc: str) -> int:
 # 블록 하나라 빠른 모델(문서 전체 = opus 1~2분·약 180~340크레딧). 돌아온 것이 요소 하나가 아니거나 번호가 바뀌면 받지 않음.
 BLOCK_MODEL = "claude-sonnet-5-5"
 IMG_SLOT = "{{그림}}"
-BLOCK_EDIT = """너는 문서의 블록 하나만 고치는 편집자다. [문서 전체]는 모양·색·글꼴·말투를 맞추라고 보여 주는 것이고, 고칠 것은 [고칠 블록] 하나뿐이다.
+BLOCK_EDIT = """너는 문서의 블록 하나만 고치는 편집자다. [문서 일부]는 모양·색·글꼴·말투를 맞추라고 보여 주는 것이고(스타일과 이웃 블록), 고칠 것은 [고칠 블록] 하나뿐이다.
 출력은 고친 블록 HTML 요소 하나뿐이다(설명·코드펜스 없이).
 - 바깥 요소의 data-block="{bid}"는 그대로 둔다. 내용이 표·그래프·그림으로 바뀌면 data-kind를 맞게 바꾼다(text|table|chart|image|box).
 - 바깥 요소의 태그와 class는 되도록 그대로(문서 배치가 그 class에 걸려 있음). 새 꾸밈은 style 속성으로(문서의 <style>은 고칠 수 없음).
@@ -204,13 +204,24 @@ def clean_block(text: str, bid: str) -> str:
     return t[:kids[0][3]]
 
 
+def block_context(doc: str, bid: str, limit: int = 24_000) -> str:
+    """블록 고치기에 보낼 문서 일부 — <style>·제목·첫 블록(결론)·앞뒤 블록(2026-11-09 손보기: 문서 전체를 보내 블록 하나에 30~60크레딧이었음)."""
+    styles = "\n".join(re.findall(r"<style\b[^>]*>.*?</style>", doc or "", re.S | re.I))[:12_000]
+    ids = re.findall(r"\sdata-block\s*=\s*[\"'](b\d+)[\"']", doc or "")
+    i = ids.index(bid) if bid in ids else -1
+    near = [x for x in dict.fromkeys([ids[0] if ids else "", ids[i - 1] if i > 0 else "", ids[i + 1] if 0 <= i < len(ids) - 1 else ""]) if x and x != bid]
+    m = re.search(r"<title[^>]*>.*?</title>", doc or "", re.S | re.I)
+    parts = [m.group(0) if m else "", styles] + [f"<!-- {x} -->\n" + block_of(doc, x)[:5000] for x in near]
+    return "\n\n".join(x for x in parts if x)[:limit]
+
+
 def rewrite_block(client, doc: str, bid: str, ask: str, *, history=None, model: str = BLOCK_MODEL, image_uri: str = "") -> dict:
     """문서 + 블록 번호 + 말 → {"html"(고친 문서 전체), "block"(새 블록), "before"(옛 블록), "model", "elapsed"}."""
     old = block_of(doc, bid)
     if not old:
         raise ValueError(f"문서에 {bid} 블록이 없어요")
     talk = "\n".join(f"{'사람' if m.get('role') == 'user' else 'AI'}: {str(m.get('content') or '')[:400]}" for m in (history or [])[-6:] if isinstance(m, dict))
-    user = (f"[문서 전체 — 참고만]\n{doc[:60_000]}\n\n[고칠 블록 {bid}]\n{old}\n\n" + (f"[이 블록에 대한 앞 대화]\n{talk}\n\n" if talk else "")
+    user = (f"[문서 일부 — 참고만: 제목·스타일·첫 블록·앞뒤 블록]\n{block_context(doc, bid)}\n\n[고칠 블록 {bid}]\n{old}\n\n" + (f"[이 블록에 대한 앞 대화]\n{talk}\n\n" if talk else "")
             + f"[고칠 점]\n{ask}")
     t0 = time.time()
     r = client.chat.completions.create(model=model, max_tokens=8000, messages=[{"role": "system", "content": BLOCK_EDIT.format(bid=bid) + (BLOCK_IMG if image_uri else "")}, {"role": "user", "content": user}])

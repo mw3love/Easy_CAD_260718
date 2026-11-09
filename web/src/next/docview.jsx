@@ -14,10 +14,11 @@ const KIND = { text: '글', table: '표', chart: '그래프', image: '그림', b
 const PICK_CSS = '[data-block]{cursor:pointer}[data-block]:hover{outline:2px solid #2563eb;outline-offset:3px}[data-block].mb-sel{outline:2px solid #da7756 !important;outline-offset:3px}[data-block].mb-done{outline:2px solid #16a34a;outline-offset:3px}'
 const BUB_W = 320
 
-export function DocView({ it, size, readOnly, onClose, onHtml, onPrint, onHwpx, onStatus }) {
+export function DocView({ it, size, readOnly, threads = {}, onThread, onClose, onHtml, onPrint, onHwpx, onStatus }) {   // threads·onThread = 블록 대화(말풍선 대화 저장소, 키 「문서 _id#bN」 — 창을 닫아도 남음)
   const frame = useRef(null), scroller = useRef(null), swaps = useRef({}), keepTop = useRef(0)
   const [docH, setDocH] = useState(1200), [pick, setPick] = useState(null)   // pick = { bid, kind, top, left, right } (창 안 px)
-  const [talk, setTalk] = useState({}), [draft, setDraft] = useState(''), [busy, setBusy] = useState(''), [err, setErr] = useState(''), [done, setDone] = useState('')
+  const tkey = bid => `${it._id}#${bid}`, talk = bid => threads[tkey(bid)] || []
+  const [draft, setDraft] = useState(''), [busy, setBusy] = useState(''), [err, setErr] = useState(''), [done, setDone] = useState('')
   const pageW = docPageW(it), winW = Math.min(pageW + 48, size.w - 32), scale = Math.min(1, (winW - 40) / pageW), winH = size.h - 24
   const esc = useRef(null); esc.current = () => (pick ? setPick(null) : onClose())
   useEffect(() => { const k = e => { if (e.key === 'Escape') esc.current() }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k) }, [])   // 초점이 창 밖(말 칸이 닫힌 뒤 등)일 때   // Esc = 말 칸 먼저, 그다음 창(창 밖으로 글쇠를 안 내보내서 여기서 받음 — 문서 틀 안 글쇠도)
@@ -40,8 +41,8 @@ export function DocView({ it, size, readOnly, onClose, onHtml, onPrint, onHwpx, 
   }
   async function send() {
     const q = draft.trim(); if (!q || busy || !pick) return
-    const bid = pick.bid, mine = { role: 'user', content: q, at: Date.now() }, msgs = [...(talk[bid] || []), mine]
-    setTalk(t => ({ ...t, [bid]: msgs })); setDraft(''); setBusy(bid); setErr('')
+    const bid = pick.bid, mine = { role: 'user', content: q, at: Date.now() }, msgs = [...talk(bid), mine]
+    onThread?.(tkey(bid), msgs); setDraft(''); setBusy(bid); setErr('')
     try {
       const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() },
         body: JSON.stringify({ kind: 'block', board: DOC_NAME, doc: it.html, block: bid, messages: msgs.map(({ role, content }) => ({ role, content })) }) })
@@ -51,15 +52,15 @@ export function DocView({ it, size, readOnly, onClose, onHtml, onPrint, onHwpx, 
       keepTop.current = scroller.current?.scrollTop || 0
       if (!onHtml(d.html)) throw new Error('칠판 문서를 못 바꿨어요')
       const k = `${bid}:${msgs.length}`; swaps.current[k] = { before, after: d.html, on: true }
-      setTalk(t => ({ ...t, [bid]: [...msgs, { role: 'assistant', content: d.content || '고쳤어요', swap: k, model: d.model, credits: d.credits }] }))
+      onThread?.(tkey(bid), [...msgs, { role: 'assistant', content: d.content || '고쳤어요', swap: k, model: d.model, credits: d.credits, at: Date.now() }])
       setDone(bid); onStatus?.(`${bid}만 고쳤어요 — Ctrl+Z로 되돌려요`)
     } catch (e) { setErr(String(e.message || e)) } finally { setBusy('') }
   }
-  function flip(k) { const s = swaps.current[k]; if (!s) return; keepTop.current = scroller.current?.scrollTop || 0; if (onHtml(s.on ? s.before : s.after)) { s.on = !s.on; setTalk(t => ({ ...t })) } }
+  function flip(k) { const s = swaps.current[k]; if (!s) return; keepTop.current = scroller.current?.scrollTop || 0; if (onHtml(s.on ? s.before : s.after)) { s.on = !s.on; setDraft(x => x + '') } }   // 표시만 다시 그림
   const btn = { all: 'unset', cursor: 'pointer', font: `600 12.5px ${F}`, padding: '4px 10px', borderRadius: 7, border: `1px solid ${C.line}`, color: C.ink }
   const bx = pick ? (pick.right + 12 + BUB_W <= winW - 8 ? pick.right + 12 : Math.max(8, Math.min(winW - BUB_W - 8, pick.left - 12 - BUB_W >= 8 ? pick.left - 12 - BUB_W : pick.right - BUB_W))) : 0
   const by = pick ? Math.max(52, Math.min(pick.top, winH - 230)) : 0
-  const msgs = pick ? talk[pick.bid] || [] : []
+  const msgs = pick ? talk(pick.bid) : []
   return <div data-testid="doc-view" onPointerDown={e => e.stopPropagation()} onWheel={e => e.stopPropagation()} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') esc.current() }}
     style={{ position: 'absolute', inset: 0, zIndex: 9, background: 'rgba(24,24,27,.42)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 12 }}
     onClick={e => { if (e.target === e.currentTarget) onClose() }}>

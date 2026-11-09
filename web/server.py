@@ -484,7 +484,7 @@ class Handler(SimpleHTTPRequestHandler):
         if self._PIC_WORDS.search(ask):
             try:
                 words = board_report.plain_text(old, 600)
-                out = self._with("image", board_image.IMAGE_MODEL, lambda m: board_image.generate(key, f"문서 속 한 칸에 들어갈 설명 그림 한 장. 흰 바탕, 깔끔한 업무용 그림, 글자는 넣지 마. 내용: {words}. 바라는 점: {ask}", base_url=base, model=m, n=1))
+                out = self._with("image", board_image.IMAGE_MODEL, lambda m: board_image.generate(key, f"문서 속 한 칸에 들어갈 장면·사물 일러스트 한 장. 흰 바탕의 깔끔한 업무용 그림. 숫자·글자·퍼센트·그래프·도표·화살표·눈금은 하나도 넣지 마 — 숫자는 문서 글이 맡고, 그림은 내용을 떠올리게 하는 장면만. 내용: {words}. 바라는 점: {ask}", base_url=base, model=m, n=1))
                 img = self._small_jpeg_uri(out["images"][0][0])
             except Exception as e:
                 return self._json(502, {"error": f"그림 그리기 실패: {gw.friendly_error(e)}"})

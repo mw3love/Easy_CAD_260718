@@ -43,6 +43,9 @@ test('큰 창 — 블록 누르기 = 말 칸 → 그 블록만 바뀜 · 원래�
   await page.getByTestId('block-flip').click(); await expect.poll(html).toContain('어려운 말로')   // 원래대로
   await page.getByTestId('block-flip').click(); await expect.poll(html).toContain('쉬운 말 단락')   // 바꾼 것으로
   await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await expect(view).toHaveCount(0)
+  await page.mouse.click(at.x, at.y, { button: 'right' }); await page.getByRole('button', { name: '크게 보기' }).click()   // 다시 열어도 그 블록 대화는 남음(말풍선 대화 저장소)
+  await doc.locator('[data-block="b2"]').click(); await expect(page.getByTestId('block-a')).toContainText('b2만 고쳤어요')
+  await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await expect(view).toHaveCount(0)
   await page.keyboard.press('Control+z'); await expect.poll(html).toContain('어려운 말로')
 })
 
