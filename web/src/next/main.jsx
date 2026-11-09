@@ -42,7 +42,7 @@ function useSize(ref) {
 
 // 위 막대 버튼 — 아이콘 밑 짧은 이름(데스크톱 첫 화면 원칙), 켜짐은 옅은 코랄 바탕
 // 좁은 창(NARROW_W 미만 — 브라우저 옆에 띄워 쓸 때, 2026-10-19 사용자 선택)은 아이콘만(이름은 툴팁) — 지침 「자리가 모자랄 때만 아이콘만」
-const NARROW_W = 1440, Narrow = createContext(false), InGroup = createContext(false)
+const NARROW_W = 1440, TOOLS_ROOM = 1180,   /* 위 막대에서 판 끝선 오른쪽에 도구·오른쪽 묶음이 들어갈 자리(2026-11-09 실측 — 도구 811 + 명령 검색~KAIROS 300 + 여유) */ Narrow = createContext(false), InGroup = createContext(false)
 // 휴대폰(2026-10-27, 기준 `ui.jsx` `isPhone`) = 보기·묻기·회의만 — 위 막대는 이름(누르면 칠판 판)·되돌리기, 아래 큰 버튼, 왼쪽 판 없음, 대화창은 화면 전체, 손가락 = 이동·확대
 // special = KAIROS(2026-10-23 사용자: 다른 버튼과 다른 특별한 버튼 — 오른쪽 구석, 코랄로 채움. 열림은 한 단계 진하게)
 const SPECIAL_BG = on => (on ? '#c4613f' : 'var(--mb-accent)')
@@ -587,9 +587,9 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
   useEffect(() => { try { localStorage.setItem('mb-chat-open', chatOpen ? '1' : '0') } catch { /* 기억 못 해도 그만 */ } }, [chatOpen])
   const [chatW, setChatWS] = useState(() => { try { return chatClamp(+localStorage.getItem('mb-chat-w') || CHAT_W) } catch { return CHAT_W } })   // 대화창 폭 — 이 브라우저에 기억(왼쪽 판 `mb-dock-w`와 같게)
   const setChatW = v => { setChatWS(v); try { localStorage.setItem('mb-chat-w', String(v)) } catch { /* 기억 못 해도 그만 */ } }
-  const [narrow, setNarrow] = useState(() => window.innerWidth < NARROW_W)   // 좁은 창 = 위 막대 아이콘만 + 대화창은 칠판 위에 뜸
+  const [winW, setWinW] = useState(() => window.innerWidth), [narrow, setNarrow] = useState(() => window.innerWidth < NARROW_W)   // 좁은 창 = 위 막대 아이콘만 + 대화창은 칠판 위에 뜸
   const [phone, setPhone] = useState(isPhone), phoneRef = useRef(phone); phoneRef.current = phone
-  useEffect(() => { const on = () => { setNarrow(window.innerWidth < NARROW_W); setPhone(isPhone()) }; window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
+  useEffect(() => { const on = () => { setWinW(window.innerWidth); setNarrow(window.innerWidth < NARROW_W); setPhone(isPhone()) }; window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
   usePhoneViewport(phone)   // 브라우저 확대 막기(칠판 두 손가락 확대만 — `ui.jsx`)
   const [sheet, setSheet] = useState(false), [peopleOpen, setPeopleOpen] = useState(false)   // 휴대폰 칠판 판(2026-11-06 — 위 이름 톡: 내 칠판·새 칠판·코드로 열기·공유)
   const [activeLayer, setActiveLayer] = useState('default')   // 「그리는 중」 레이어(파일을 열면 기본부터 — 데스크톱 `_apply_loaded_layers`)
@@ -629,6 +629,9 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
   const openBubble = (id, first) => { pullThreads(); if (first) setBubbleFirst(f => ({ ...f, [id]: { q: first, n: Date.now() } })); setBubbles(bs => (bs.includes(id) ? bs : [...bs, id])) }
   // 서버 답 전(첫 0.1초)에도 서버 있는 모습으로 그림 — 「Magic Board」·흐린 공유·동그라미 없음 → 바뀌며 위 막대가 좌우로 밀렸음(2026-10-28 사용자 「새 칠판 누르면 살짝 깜빡」)
   const live = server || !srvKnown
+  // 위 막대 왼쪽 = 왼쪽 판의 머리(시안 C): 판이 열린 넓은 창만. 자리가 모자라면(창 폭 1440에서 판을 넓히면 버튼이 겹쳤음)·팀 이름표가 붙는 서버는 예전 배치. 코랄은 레일 아이콘이 맡음(이름 칸 전체가 칠해졌음)
+  const dockRight = RAIL_W + 1 + dockW + 1, headed = !phone && !narrow && !!dockTab && !(live && team) && dockRight <= winW - TOOLS_ROOM
+  const titleBg = dockTab === 'board' && !headed ? 'rgba(218,119,86,.22)' : 'transparent'
   const [me, setMe] = useState(() => { try { return localStorage.getItem('mb.name') || '' } catch { return '' } }), [others, setOthers] = useState([]), [shareOpen, setShareOpen] = useState(false)
   const sync = useRef({ base: null, rev: 0, busy: false, again: false, id: Math.random().toString(36).slice(2, 10) }), modelRef = useRef(model); modelRef.current = model
   const box = useRef(null), size = useSize(box), file = useRef(null), ed = useRef(null), saveT = useRef(null)
@@ -853,11 +856,13 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
       {phone && sheet === 'share' && server && <PhonePop side="right" testid="phone-share-pop" onClose={() => setSheet(false)}>
         {openServer ? <PhoneShare title={title} /> : <ShareForm inline people={crowd} title={title} onClose={() => setSheet(false)} />}</PhonePop>}
       <Narrow.Provider value={narrow}>
-      <div style={{ display: phone ? 'none' : 'flex', flexWrap: narrow ? 'wrap' : 'nowrap', rowGap: 4, alignItems: 'center', gap: narrow ? 4 : 8, padding: '4px 8px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>   {/* 좁은 PC 창(반 화면)은 두 줄로 — 한 줄이면 칠판 이름·공유·KAIROS가 잘렸음(2026-10-27 저녁) */}
+      <div style={{ position: 'relative', display: phone ? 'none' : 'flex', flexWrap: narrow ? 'wrap' : 'nowrap', rowGap: 4, alignItems: 'center', gap: narrow ? 4 : 8, padding: '4px 8px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>   {/* 좁은 PC 창(반 화면)은 두 줄로 — 한 줄이면 칠판 이름·공유·KAIROS가 잘렸음(2026-10-27 저녁) */}
         {/* 칠판 이름 = 맨 왼쪽(2026-10-27 사용자 — Figma·Miro처럼 파일 이름은 왼쪽 위), 누르면 왼쪽 판 「칠판」 칸(새 칠판·최근 칠판·파일) */}
+        {/* 왼쪽 판이 위 막대 끝까지(2026-11-09 시안 C — 사용자: 판 끝선이 「저장·내보내기」에 걸쳐 있었음): 이름 칸 폭 = 판 폭, 도구는 판 끝선 오른쪽부터, 이름 밑 가로줄 없앰 */}
+        {headed && <><span aria-hidden data-testid="dock-head-cover" style={{ position: 'absolute', left: 0, bottom: -1, width: dockRight - 1, height: 1, background: C.bar }} /><span aria-hidden data-testid="dock-head-line" style={{ position: 'absolute', left: dockRight - 1, top: 0, bottom: 0, width: 1, background: C.line }} /></>}
         <button data-testid="board-title" onClick={() => setDockTab(dockTab === 'board' ? '' : 'board')} title={server ? `칠판 「${DOC_NAME}」 — 누르면 새 칠판·최근 칠판·파일` : '새 칠판·최근 칠판·파일'}
-          style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: narrow ? 110 : 180, padding: '4px 8px', borderRadius: 6, font: "700 14px 'Pretendard', sans-serif", color: C.ink, background: dockTab === 'board' ? 'rgba(218,119,86,.22)' : 'transparent' }}
-          onMouseEnter={e => { if (dockTab !== 'board') e.currentTarget.style.background = HOVER }} onMouseLeave={e => { e.currentTarget.style.background = dockTab === 'board' ? 'rgba(218,119,86,.22)' : 'transparent' }}>
+          style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, ...(headed ? { boxSizing: 'border-box', flex: 'none', width: dockRight - 14, marginRight: 6 } : { maxWidth: narrow ? 110 : 180 }), padding: '4px 8px', borderRadius: 6, font: "700 14px 'Pretendard', sans-serif", color: C.ink, background: titleBg }}
+          onMouseEnter={e => { if (dockTab !== 'board' || headed) e.currentTarget.style.background = HOVER }} onMouseLeave={e => { e.currentTarget.style.background = titleBg }}>
           <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{live ? title : 'Magic Board'}</span><span aria-hidden style={{ fontSize: 10, color: C.muted }}>▾</span></button>
         {live && team && <span data-testid="team-badge" title={team === '관리자' ? '관리자 — 모든 팀의 칠판이 보여요' : `「${team}」 칠판만 보여요 · KAIROS 크레딧도 ${team} 것`}
           style={{ flexShrink: 0, marginLeft: -4, padding: '2px 8px', borderRadius: 10, background: C.group, color: C.muted, font: "600 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap' }}>{team}</span>}

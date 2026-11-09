@@ -38,6 +38,7 @@
         const box = s => `<div style="position:absolute;box-sizing:border-box;${s}"></div>`, bar = 'background:var(--mb-bar);border:0 solid var(--mb-line);'
         document.getElementById('root').innerHTML = `<div style="position:relative;height:100%;background:var(--mb-board)">` + box(`${bar}left:0;top:0;right:0;height:${top}px;border-bottom-width:1px`)
           + box(`${bar}left:0;top:${top}px;bottom:0;width:${dock ? 41 + dw + 1 : 40}px;border-right-width:1px`) + (dock ? box(`left:40px;top:${top}px;bottom:0;border-left:1px solid var(--mb-line)`) : '')
+          + (dock && !narrow && 42 + dw <= W - 1180 ? box(`background:var(--mb-bar);left:0;top:${top - 1}px;width:${41 + dw}px;height:1px`) + box(`background:var(--mb-line);left:${41 + dw}px;top:0;width:1px;height:${top}px`) : '')   /* 왼쪽 판이 위 막대 끝까지(main.jsx headed) */
           + (chat ? (narrow ? box(`${bar}right:12px;top:${top + 12}px;bottom:12px;width:${cw + 2}px;border-width:1px;border-radius:12px`) : box(`${bar}right:0;top:${top}px;bottom:0;width:${cw + 1}px;border-left-width:1px`)) : '') + '</div>' }
     } catch { /* 못 그려도 앱은 그대로 */ }</script>
   <script type="module" src="/src/next/main.jsx"></script></body>

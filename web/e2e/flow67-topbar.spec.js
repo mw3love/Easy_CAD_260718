@@ -27,6 +27,25 @@ test('넓은 창 — 칠판 높이 그대로, 저장·내보내기는 위아래�
   expect(await btn(page, 'KAIROS').locator('span[aria-hidden]').evaluate(el => el.className)).toBe('')
 })
 
+test('왼쪽 판이 위 막대 끝까지(시안 C) — 도구는 판 끝선 오른쪽 · 판을 접으면 예전 자리 · 자리가 모자라면 예전 배치', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await openBoard(page, boardName('dockhead'))
+  if (!(await page.getByTestId('dock-panel').count())) await page.getByTestId('dock-shape').click()
+  const dock = await page.getByTestId('dock').boundingBox(), right = dock.x + dock.width
+  expect((await rect(page, '저장')).x).toBeGreaterThanOrEqual(right)
+  await expect(page.getByTestId('dock-head-cover')).toHaveCount(1)
+  expect((await page.getByTestId('board-title').boundingBox()).x + (await page.getByTestId('board-title').boundingBox()).width).toBeLessThanOrEqual(right)
+  await page.getByTestId('dock-shape').click()   // 판 접기
+  await expect(page.getByTestId('dock-head-cover')).toHaveCount(0)
+  expect((await rect(page, '저장')).x).toBeLessThan(right)
+  await page.getByTestId('dock-shape').click()
+  const h = await page.getByTestId('dock-resize').boundingBox()   // 400까지 넓힘 = 자리 모자람
+  await page.mouse.move(h.x + 4, h.y + 300); await page.mouse.down(); await page.mouse.move(h.x + 212, h.y + 300, { steps: 4 }); await page.mouse.up()
+  await expect(page.getByTestId('dock-head-cover')).toHaveCount(0)
+  const dark = await rect(page, '어둡게'), cmd = await page.getByTestId('cmd-open').boundingBox()
+  expect(dark.x + dark.width).toBeLessThanOrEqual(cmd.x)
+})
+
 test('좁은 창 — 2단 없이 아이콘 한 줄', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
   await openBoard(page, boardName('topnarrow'))
