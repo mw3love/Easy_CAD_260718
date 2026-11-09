@@ -70,7 +70,7 @@ test('⚙ 모델 설정 = 일마다 그 종류의 모델만, 고르면 요청에
   const box = page.getByPlaceholder('물어보세요', { exact: false })
   await box.click(); await page.keyboard.type('안녕'); await page.keyboard.press('Enter')
   await expect(page.getByText('계통도 고치기').first()).toBeVisible()
-  expect(seen[0].models).toEqual({ report: 'claude-sonnet-5-5', deep_plan: 'claude-sonnet-5-5', deep_write: 'claude-sonnet-5-5', slides: 'claude-sonnet-5-5', image: 'fal-ai/fast-sdxl' })   // 「만들기」 칸 = 서버 일 넷
+  expect(seen[0].models).toEqual({ report: 'claude-sonnet-5-5', slides: 'claude-sonnet-5-5', image: 'fal-ai/fast-sdxl' })   // 「만들기」 칸 = 서버 일 셋
   await page.reload()
   await page.getByTestId('model-settings').click()
   await expect(page.getByTestId('pick-make')).toHaveValue('claude-sonnet-5-5')

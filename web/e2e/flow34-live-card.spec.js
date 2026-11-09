@@ -2,7 +2,6 @@
 // 한 번 = 고르기(칸 안은 안 받음) · 두 번 = 조작 · 바깥 누르기 = 끝, 인터넷·저장소·칠판(부모 창)에 못 닿음, 새로고침해도 그대로,
 // 크게 보기 = 같은 틀(그 페이지엔 스크립트 없음), 보통 문서 크게 보기 = 스크립트 꺼짐(끌어 놓은 HTML 파일 구멍). 데스크톱 쪽은 tests/test_part74.
 import { test, expect } from '@playwright/test'
-import { readFileSync } from 'node:fs'
 import { boardName, openBoard, setCam, clickScene, liveDoc } from './helpers.js'
 
 // 칸(iframe)의 누르기 자리는 브라우저가 화면을 그린 뒤에야 바뀜 — 두 번 그릴 때까지 기다림
@@ -123,17 +122,4 @@ test('대화창 「움직여 볼 수 있게」 → 대화창에서 만져 보기
   await page.keyboard.type('막대를 더 크게'); await page.keyboard.press('Enter')
   await expect(page.getByTestId('answer-kind')).toHaveCount(2)
   expect(sent[1].prev_html).toBe(CARD); expect(sent[1].prev_kind).toBe('live')
-})
-
-test('딥모드 판의 원리 꼭지 = 움직이는 카드(카드 HTML 있을 때) · 없으면 설명 메모', async ({ page }) => {
-  const load = t => JSON.parse(readFileSync(new URL(`../test/fixtures/deep_${t}.json`, import.meta.url), 'utf-8'))
-  await openBoard(page, boardName('livedeep')); await setCam(page, { x: 100, y: 100, z: 0.4 })
-  await page.evaluate(p => window.__mb.ed.deepBoard(p, { x: 0, y: 0 }), load('real_tx'))
-  let docs = (await liveDoc(page)).items.filter(it => it.type === 'doc')
-  expect(docs.length).toBe(1); expect(docs[0].live).toBe(true); expect(docs[0].deep_sec).toBeGreaterThanOrEqual(0)
-  expect(docs[0].rect[2]).toBeGreaterThan(560)                                   // 조작 부품이 읽히는 폭(칸 5개 이상)
-  await page.evaluate(p => window.__mb.ed.deepBoard(p, { x: 0, y: 3000 }), load('tx'))   // 2단계 고정 계획 = 카드 HTML 없음
-  docs = (await liveDoc(page)).items.filter(it => it.type === 'doc')
-  expect(docs.length).toBe(1)
-  expect(JSON.stringify((await liveDoc(page)).items.filter(it => it.type === 'memo').map(it => it.lines))).toContain('인터랙티브 HTML을 못 만들었어요')
 })

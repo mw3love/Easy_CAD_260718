@@ -99,35 +99,6 @@ def test_make_cleans_fence_and_checks_whole_html():
     assert "[앞 카드]\n<html>앞</html>" in r.sent[0]["messages"][1]["content"]
 
 
-def test_plan_keeps_one_live_card_as_ai():
-    p = deep_mode.clean_plan({"sections": [{"title": "원리", "shape": "움직이는 카드", "source": "web", "query": "q"},
-                                           {"title": "또 원리", "shape": "움직이는 카드", "source": "ai"}]})
-    assert [(s["shape"], s["source"], s["query"]) for s in p["sections"]] == [("움직이는 카드", "ai", None), ("단계 카드", "ai", None)]
-    e0, e1 = deep_mode.estimate(deep_mode.clean_plan({"sections": [{"title": "a", "shape": "단계 카드"}]})), deep_mode.estimate(p)
-    assert e1["credits"][0] >= e0["credits"][0] + 40 and e1["seconds"][1] >= 120
-
-
-PLAN = {"title": "반도체", "headline": "가격과 물량", "sections": [
-    {"title": "숫자", "shape": "숫자 타일", "source": "web", "query": "반도체 수출"},
-    {"title": "가격 × 물량", "question": "왜 곱해지나", "shape": "움직이는 카드", "source": "ai"}]}
-BODIES = json.dumps({"sections": [{"title": "숫자", "body": {"tiles": [["603억 달러", "9월", 1]]}}, {"title": "가격 × 물량", "body": {"note": "막대를 끌면 넓이"}}]}, ensure_ascii=False)
-EXA = lambda q: ("9월 603억 달러 [1]", {"search_results": [{"title": "무역", "url": "https://a"}]})  # noqa: E731
-
-
-def test_build_makes_card_alongside_bodies():
-    c = FakeClient(by_model={deep_mode.WRITER_MODEL: BODIES, live_card.LIVE_MODEL: CARD})
-    out = deep_mode.build("k", c, "반도체", {"누구에게": "신입"}, deep_mode.clean_plan(PLAN), exa=EXA, kr=lambda q: [])
-    sec = out["plan"]["sections"][1]
-    assert sec["body"]["note"] == "막대를 끌면 넓이" and sec["body"]["html"] == CARD and sec["body"]["card_model"] == live_card.LIVE_MODEL
-    live = next(k for k in c.sent if k["model"] == live_card.LIVE_MODEL)
-    assert "독자: 신입" in live["messages"][0]["content"]
-    u = live["messages"][1]["content"]
-    assert "[이 카드 꼭지] 가격 × 물량" in u and "9월 603억 달러 [1]" in u and "[1] 무역 — https://a" in u   # 다른 꼭지 재료·출처 번호를 같이
-    bad = FakeClient(by_model={deep_mode.WRITER_MODEL: BODIES, live_card.LIVE_MODEL: RuntimeError("게이트웨이")})
-    out2 = deep_mode.build("k", bad, "반도체", {}, deep_mode.clean_plan(PLAN), exa=EXA, kr=lambda q: [])
-    assert "html" not in out2["plan"]["sections"][1]["body"] and any("움직이는 카드" in m for m in out2["missing"])   # 카드만 못 만들어도 판은 지음
-
-
 @pytest.fixture
 def server(tmp_path, monkeypatch):
     import server as srv

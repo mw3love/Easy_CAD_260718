@@ -259,4 +259,4 @@ def test_server_models_lists_by_kind_and_jobs_follow_retirement(server):
     llm, img = [m["id"] for m in out["choices"]["llm"]], [m["id"] for m in out["choices"]["image"]]
     assert "gpt-6.1-sol" in llm and "jev-1.14.0" not in llm and "gpt-image-2.5-flare" not in llm and "gpt-5.4-mini" not in llm   # 판단·그림·은퇴는 대화 칸에 없음
     assert img[0] == "gpt-image-2.5-flare" and next(m for m in out["choices"]["image"] if m["id"] == "gpt-image-2.5-flare")["price"] == "장당 약 10.41크레딧"
-    assert out["jobs"]["report"] == "claude-sonnet-5-5" and out["jobs"]["deep_write"] == srv.deep_mode.WRITER_MODEL   # 은퇴한 정리 문서 모델 = 지금 부르는 이름으로
+    assert out["jobs"]["report"] == "claude-sonnet-5-5" and "deep_write" not in out["jobs"]   # 은퇴한 정리 문서 모델 = 지금 부르는 이름으로

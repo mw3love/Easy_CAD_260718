@@ -135,12 +135,6 @@ def test_server_routes_pass_images(server, monkeypatch):
     assert got["slides"] == []   # 웹 검색만 쓰기로 했으면 고른 것도 안 실음
     _post(base, {"kind": "bubble", "board": "판", "item": {"type": "frame", "text": "x", "images": [sel, "javascript:x"]}, "messages": [{"role": "user", "content": "뭐야"}]})
     assert len(got["bubble"]) == 1
-    # 딥모드 — 「이 칠판」 꼭지가 있을 때만 칠판 그림
-    monkeypatch.setattr(srv.deep_mode, "build", lambda key, client, topic, brief, plan, **kw: got.update(deep=(kw["board"], kw["images"])) or {"plan": {"sources": []}, "model": "m", "elapsed": 0, "missing": []})
-    _post(base, {"kind": "deep", "board": "판", "deep": {"step": "build", "topic": "t", "plan": {"sections": [{"source": "board"}]}}, "messages": [{"role": "user", "content": "t"}]})
-    assert got["deep"][0] == "(글 없음 — 그림만)" and len(got["deep"][1]) == 2
-    _post(base, {"kind": "deep", "board": "판", "deep": {"step": "build", "topic": "t", "plan": {"sections": [{"source": "web"}]}}, "messages": [{"role": "user", "content": "t"}]})
-    assert got["deep"] == ("", [])
 
 
 def test_server_describe_switch(server, monkeypatch):

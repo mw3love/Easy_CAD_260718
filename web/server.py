@@ -55,7 +55,7 @@ import docblobs  # noqa: E402  (칠판 그림 따로 보내기 — web/docblobs.
 NAME_RE = re.compile(r"^[\w\-가-힣]{1,64}$")
 MAX_BYTES = 200 * 1024 * 1024   # 그림이 든 칠판도 넉넉히, 하지만 끝없이는 아니게
 _MODELS = {}                    # 키 지문 → (받은 시각, 모델 목록) — `/api/models`
-PICK_JOBS = ("image", "icon", "diagram", "report", "live", "deep_plan", "deep_write", "slides", "motion")   # 「모델 설정」으로 고를 수 있는 일(대화·회의 요약은 원래 `model`) — 2026-10-26 사용자: 고를 의미 있는 일만 · slides = 2026-11-04(칸이 빠져 있었음)
+PICK_JOBS = ("image", "icon", "diagram", "report", "live", "slides", "motion")   # 「모델 설정」으로 고를 수 있는 일(대화·회의 요약은 원래 `model`) — 2026-10-26 사용자: 고를 의미 있는 일만 · slides = 2026-11-04(칸이 빠져 있었음)
 # 그림 요청에 날짜 말이 있을 때만 오늘 날짜를 알려 줌(없는데 알려 주면 그림에 오늘 날짜를 써 넣음 — 2026-10-20 실측)
 DATE_WORDS = re.compile(r"오늘|내일|모레|어제|그제|날짜|요일|주말|이번\s*주|다음\s*주|지난\s*주|이번\s*달|다음\s*달|\d+\s*월\s*\d+\s*일")
 
@@ -150,8 +150,7 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:   # 목록을 못 받아도 대화는 기본 모델로 된다
                 return self._json(200, {"default": gw.FALLBACK_DEFAULT_MODEL, "featured": {}, "error": str(e)})
         # 일마다 정해 둔 모델 — 대화창 「생각 중」 줄이 고른 모델이 아니라 실제로 일하는 모델을 보이게(2026-10-20 사용자: 정돈인데 gpt로 보였음)
-        jobs = {"report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "diagram": board_diagram.DIAGRAM_MODEL, "deep": deep_mode.EDITOR_MODEL, "slides": slides.WRITER_MODEL, "live": live_card.LIVE_MODEL, "trace": board_trace.TRACE_MODEL, "motion": motion_slide.MOTION_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3), live = 「+ › 움직이는 카드」(4단계)
-        jobs.update(deep_plan=deep_mode.EDITOR_MODEL, deep_write=deep_mode.WRITER_MODEL)   # 「모델 설정」 칸(2026-10-26)
+        jobs = {"report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "diagram": board_diagram.DIAGRAM_MODEL, "slides": slides.WRITER_MODEL, "live": live_card.LIVE_MODEL, "trace": board_trace.TRACE_MODEL, "motion": motion_slide.MOTION_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3), live = 「+ › 움직이는 카드」(4단계)
         jobs = {k: model_pick.pick(v) for k, v in jobs.items()}   # 은퇴·없어져 갈아탄 것은 지금 부르는 이름으로
         return self._json(200, {**hit[1], "jobs": jobs, "choices": model_pick.choices(), "features": features.public()})   # features = KAIROS 기능 표(비용 안내, 2026-11-08)
 
@@ -312,46 +311,17 @@ class Handler(SimpleHTTPRequestHandler):
         return self._json(200, board_chat.split_svg(out))   # SVG 코드가 섞이면 그림 칸으로(2026-11-03 사용자 검토)
 
     def _deep(self, req: dict, key: str):
-        """딥모드 → step plan: {"kind": "deep", "plan"(본문 없이), "estimate", "model", "elapsed"} · step build: {"kind": "deep", "plan"(꼭지마다 body + sources), "model", "elapsed", "missing"}
-        · step section(5단계): {"kind": "deep", "step": "section", "sections": [{"i", …새 꼭지}], "sources"(판 전체), "model", "elapsed", "missing"}.
-        판은 칠판이 짓는다(`ed.deepBoard`). 재료 꼭지 board = 이 칠판의 저장된 글."""
+        """대화창 인포그래픽 질문지(옛 딥모드 입구) — step ask: 맞춤 질문 · step pic: 질문지 답 + 조사 → 그림 후보 둘.
+        지면 「한 판」(plan·build·section)은 2026-11-09 문서 통합 3단계에서 뺌(문서 블록 고치기가 맡음)."""
         d = req.get("deep") if isinstance(req.get("deep"), dict) else {}
         step, topic = d.get("step"), str(d.get("topic") or "")
         brief = d.get("brief") if isinstance(d.get("brief"), dict) else {}
         base = self._base()
-        b0 = self._balance(key, base)   # 쓴 크레딧 = 잔액 차이(대화 모델 답엔 credits_charged가 없음) — 같은 키를 동시에 쓰면 섞임(대화창이 「약」)
         if step == "ask":   # 맞춤 질문(2026-11-06) — 주제 글을 읽고 알아들은 것 + 질문 2~4개
-            return self._brief_ask("deep", topic, str(d.get("material") or ""), key, base, b0)
-        if step == "pic":   # 대화창 인포그래픽(2026-11-08 — 딥모드 「한 판」 대신 대화창에선 그림 한 장, 사용자 결정) = 질문지 답 + 조사 → 그림 후보 둘
+            return self._brief_ask("deep", topic, str(d.get("material") or ""), key, base, self._balance(key, base))
+        if step == "pic":   # 대화창 인포그래픽(2026-11-08 사용자 결정) = 질문지 답 + 조사 → 그림 후보 둘
             return self._infographic(str(req.get("board") or ""), topic, brief, str(d.get("material") or ""), key, base)
-        try:
-            if step == "plan":
-                prev = d.get("prev") if isinstance(d.get("prev"), dict) else None
-                out = self._with("deep_plan", deep_mode.EDITOR_MODEL, lambda m: deep_mode.make_plan(gw._client(key, base, timeout=300), topic, brief, prev=prev, fix=str(d.get("fix") or "") if prev else "", model=m))
-                sys.stderr.write("[딥모드 계획] %s %.1f초 꼭지 %d%s\n" % (out["model"], out["elapsed"], len(out["plan"]["sections"]), " (고치기)" if prev else ""))
-                return self._json(200, {"kind": "deep", **out, "credits": self._spent(key, base, b0)})
-            if step == "build":
-                plan = d.get("plan") if isinstance(d.get("plan"), dict) else {}
-                uses_board = any(isinstance(s, dict) and s.get("source") == "board" for s in plan.get("sections") or [])
-                material, pics = self._board_see(self._name(str(req.get("board") or ""))) if uses_board else ("", [])
-                out = self._with("deep_write", deep_mode.WRITER_MODEL, lambda m: deep_mode.build(key, gw._client(key, base, timeout=600), topic, brief, plan, base_url=base, board=material, image=self._deep_image(str(req.get("board") or ""), key, base), model=m, images=pics))
-                sys.stderr.write("[딥모드 만들기] %s %.1f초 출처 %d%s\n" % (out["model"], out["elapsed"], len(out["plan"]["sources"]), " 재료 없음: " + ", ".join(out["missing"]) if out["missing"] else ""))
-                for w in out.get("switched") or []:   # 공공 데이터 → 웹 검색으로 갈아탄 꼭지(숫자 없음·다른 품목 — 실사용에서 얼마나 걸리나 보려고)
-                    sys.stderr.write("[딥모드 웹으로] %s\n" % w)
-                return self._json(200, {"kind": "deep", **out, "credits": self._spent(key, base, b0)})
-            if step == "section":   # 판에서 고른 꼭지만 다시(5단계) — plan = 칠판 `deep_plan.plan`(꼭지마다 body + sources), 판은 칠판이 다시 지음
-                plan = d.get("plan") if isinstance(d.get("plan"), dict) else {}
-                idx = d.get("idx") if isinstance(d.get("idx"), list) else []
-                uses_board = any(isinstance(s, dict) and s.get("source") == "board" for j, s in enumerate(plan.get("sections") or []) if j in idx)
-                material, pics = self._board_see(self._name(str(req.get("board") or ""))) if uses_board else ("", [])
-                out = self._with("deep_write", deep_mode.WRITER_MODEL, lambda m: deep_mode.redo(key, gw._client(key, base, timeout=600), plan, idx, brief, str(d.get("ask") or ""), base_url=base, board=material, image=self._deep_image(str(req.get("board") or ""), key, base), model=m, images=pics))
-                sys.stderr.write("[딥모드 꼭지 다시] %s %.1f초 꼭지 %s%s\n" % (out["model"], out["elapsed"], [s["i"] for s in out["sections"]], " 못 씀: " + ", ".join(out["missing"]) if out["missing"] else ""))
-                return self._json(200, {"kind": "deep", "step": "section", **out, "credits": self._spent(key, base, b0)})
-        except ValueError as e:
-            return self._json(400, {"error": str(e)})
-        except Exception as e:
-            return self._json(502, {"error": f"딥모드 실패: {gw.friendly_error(e)}"})
-        return self._json(400, {"error": "딥모드 단계(plan·build·section)를 몰라요"})
+        return self._json(400, {"error": "취재 한 판(지면)은 이제 없어요 — 문서로 만들어 블록마다 고쳐 주세요"})
 
     def _deep_image(self, board: str, key: str, base: str):
         """딥모드 요약 그림 그리기 — 지시문 → 그림 한 장을 칠판 옆 `<이름>.img/`에 두고 {"img": 주소, "w", "h", "model"}(칠판이 받아 그림 칸으로). 칠판 이름이 없으면 None."""
@@ -467,6 +437,23 @@ class Handler(SimpleHTTPRequestHandler):
         return self._json(200, {"kind": "slides", **out, "credits": self._spent(key, base, b0)})
 
     _PIC_WORDS = re.compile(r"그림|이미지|일러스트|사진|삽화")
+    _LIVE_WORDS = re.compile(r"움직이게|움직여\s*볼|움직이는\s*(?:카드|그림|칸)|직접\s*(?:만져|눌러|조작|움직)|인터랙티브|시뮬레이션|애니메이션")
+
+    def _block_live(self, doc: str, bid: str, old: str, ask: str, key: str, base: str, b0, t0, prev: str = ""):
+        """블록 하나 → 움직이는 판 {"kind": "block_live", "live"(카드 HTML), "block", …} — 칠판이 문서 칸 `lives[bid]`에 둠(문서 HTML은 안 바꿈).
+        prev = 그 블록의 움직이는 판을 보면서 한 말 → 그 판 고치기."""
+        m = re.search(r"<title[^>]*>(.*?)</title>", doc, re.S | re.I)
+        material = (f"[문서 제목] {board_report.plain_text(m.group(1), 200).strip()}\n" if m else "") + f"[이 칸 내용 — 이것을 직접 만져 보게]\n{board_report.plain_text(old, 4000)}"
+        try:
+            out = self._with("live", live_card.LIVE_MODEL, lambda md: live_card.make(gw._client(key, base, timeout=600), ask, material, prev_html=prev, model=md))
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        except Exception as e:
+            return self._json(502, {"error": f"움직이게 만들기 실패: {gw.friendly_error(e)}"})
+        el = round(time.time() - t0, 1)
+        sys.stderr.write("[블록 움직이게] %s %s %.1f초 %d자%s\n" % (bid, out["model"], el, len(out["html"]), " (고치기)" if prev else ""))
+        return self._json(200, {"kind": "block_live", "content": ("말한 대로 고쳤어요" if prev else f"{bid}를 움직여 볼 수 있게 만들었어요") + " — 큰 창에서 ▶로 움직여 봐요. 인쇄·한글 파일엔 지금 모습 그대로 나가요.",
+                                "live": out["html"], "block": bid, "model": out["model"], "elapsed": el, "credits": self._spent(key, base, b0)})
 
     def _block(self, req: dict, key: str):
         """문서 블록 하나 — {"doc", "block", "messages"} → {"kind": "block", "content", "html"(고친 문서), "block", "model", "elapsed", "credits"}.
@@ -481,6 +468,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(400, {"error": f"문서에 {bid} 블록이 없어요 — 문서를 다시 열어 주세요"})
         base = self._base()
         b0, t0, img = self._balance(key, base), time.time(), ""
+        prev_live = str(req.get("live_html") or "")[:live_card.LIVE_MAX]
+        if req.get("live") or self._LIVE_WORDS.search(ask):   # 「이 블록 움직이게」(3단계 ②) — 문서 글은 그대로(인쇄·한글 = 멈춘 모습), 움직이는 판은 따로
+            return self._block_live(doc, bid, old, ask, key, base, b0, t0, prev_live if req.get("live") else "")
         if self._PIC_WORDS.search(ask):
             try:
                 words = board_report.plain_text(old, 600)

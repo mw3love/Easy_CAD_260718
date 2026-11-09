@@ -49,6 +49,70 @@ test('큰 창 — 블록 누르기 = 말 칸 → 그 블록만 바뀜 · 원래�
   await page.keyboard.press('Control+z'); await expect.poll(html).toContain('어려운 말로')
 })
 
+test('큰 창 — 두 번 누르기 = 글자 손으로 고치기 · 바깥 = 저장 · Esc = 취소 · 그래프는 안 됨 · Ctrl+Z', async ({ page }) => {
+  const seen = []
+  await openBoard(page, boardName('dochand'), { chat: false }); await setCam(page)
+  const card = await makeDoc(page, page1(HARD).replace('</main>', '<div data-block="b4" data-kind="chart"><svg width="200" height="80"><text x="10" y="40">그래프</text></svg></div></main>'), seen, HARD)
+  const at = await toPage(page, card.pos[0] + 100, card.pos[1] + 200)
+  await page.mouse.click(at.x, at.y, { button: 'right' }); await page.getByRole('button', { name: '크게 보기' }).click()
+  const doc = page.frameLocator('[data-testid="doc-frame"]'), html = async () => (await liveDoc(page)).items.find(it => it.type === 'doc').html
+  await doc.locator('[data-block="b3"]').dblclick()
+  await expect(page.getByTestId('doc-hint')).toContainText('글자 고치는 중')
+  await expect(page.getByTestId('block-bubble')).toHaveCount(0)                          // 두 번 누르기엔 말 칸이 안 뜸
+  await page.keyboard.press('End'); await page.keyboard.type(' 덧붙임')
+  await doc.locator('[data-block="b1"]').click()                                          // 바깥 누르기 = 저장
+  await expect.poll(html).toContain('끝 단락 덧붙임')
+  const h = await html(); expect(h).not.toContain('contenteditable'); expect(h).not.toContain('mb-'); expect(h).toContain('어려운 말로 쓴 단락')
+  expect(h.replace('끝 단락 덧붙임', '끝 단락')).toBe(page1(HARD).replace('</main>', '<div data-block="b4" data-kind="chart"><svg width="200" height="80"><text x="10" y="40">그래프</text></svg></div></main>'))   // 나머지 글은 한 글자도 그대로
+  await expect(page.getByTestId('block-bubble')).toHaveCount(0)                          // 저장한 누르기는 말 칸을 안 엶
+  await doc.locator('[data-block="b1"]').dblclick(); await page.keyboard.type('지움')
+  await page.keyboard.press('Escape')                                                     // Esc = 취소
+  await expect(page.getByTestId('doc-hint')).not.toContainText('고치는 중')
+  expect(await html()).toContain('결론 한 문장'); expect(await html()).not.toContain('지움')
+  await doc.locator('[data-block="b4"]').dblclick()                                       // 그래프는 손으로 안 고침
+  await expect(page.getByTestId('doc-hint')).not.toContainText('고치는 중')
+  await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await expect(page.getByTestId('doc-view')).toHaveCount(0)
+  await page.keyboard.press('Control+z'); await expect.poll(html).not.toContain('덧붙임')
+  expect(seen.filter(b => b.kind === 'block')).toHaveLength(0)                            // 크레딧 없음
+})
+
+test('큰 창 — 「움직이게」 = 문서 글은 그대로 · ▶ 그 블록 자리에서 움직임 · 고치기 · 빼기 · Ctrl+Z', async ({ page }) => {
+  const seen = [], LIVE = n => `<!doctype html><html><body><div id="x">멈춤</div><script>document.getElementById('x').textContent='돈다 ${n}'</script></body></html>`
+  await openBoard(page, boardName('doclive'), { chat: false }); await setCam(page)
+  await page.route('**/api/chat', async r => { const b = r.request().postDataJSON(); seen.push(b)
+    if (b.kind === 'block') return r.fulfill({ json: { kind: 'block_live', content: '움직여 볼 수 있게 만들었어요', live: LIVE(b.live ? 2 : 1), block: b.block, model: 'gpt-6.1-sol', credits: 5 } })
+    return r.fulfill({ json: { kind: 'report', content: '문서', title: '점검', html: page1(HARD), docs: [{ style: 'read', html: page1(HARD), title: '점검' }], page_w: 1000, model: 'claude-opus-5-5', elapsed: 3 } }) })
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
+  await page.getByRole('button', { name: '메모', exact: true }).click(); await page.keyboard.type('송신소 점검'); await clickScene(page, 1500, 900)
+  const m = (await liveDoc(page)).items.find(it => it.type === 'memo')
+  await clickScene(page, m.pos[0] + 40, m.pos[1] + 15)
+  await page.getByTestId('ai-chip').click(); await page.locator('[data-testid="ai-kind"][data-kind="doc"]').click(); await page.getByTestId('ai-input').press('Enter')
+  await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'doc').length).toBe(1)
+  const card = (await liveDoc(page)).items.find(it => it.type === 'doc'), docIt = async () => (await liveDoc(page)).items.find(it => it.type === 'doc')
+  const at = await toPage(page, card.pos[0] + 100, card.pos[1] + 200)
+  await page.mouse.click(at.x, at.y, { button: 'right' }); await page.getByRole('button', { name: '크게 보기' }).click()
+  const doc = page.frameLocator('[data-testid="doc-frame"]')
+  await doc.locator('[data-block="b2"]').click()
+  await page.getByTestId('block-input').fill('이 칸 움직이게 해 줘'); await page.getByTestId('block-input').press('Enter')
+  await expect(page.getByTestId('block-live')).toBeVisible()                                   // 바로 움직임
+  await expect(page.frameLocator('[data-testid="block-live"]').locator('#x')).toHaveText('돈다 1')   // 스크립트가 돎
+  expect((await docIt()).html).toBe(page1(HARD))                                              // 문서 글(인쇄·한글)은 그대로
+  expect((await docIt()).lives.b2).toContain("textContent='돈다 1'")
+  expect(seen.at(-1).live).toBeFalsy()
+  await page.screenshot({ path: 'test-results/doc-live.png' })
+  await page.keyboard.press('Escape')
+  await page.getByTestId('live-talk').click(); await page.getByTestId('block-input').fill('느리게'); await page.getByTestId('block-input').press('Enter')
+  await expect(page.frameLocator('[data-testid="block-live"]').locator('#x')).toHaveText('돈다 2')   // 그 판 고치기
+  expect(seen.at(-1).live).toBe(true); expect(seen.at(-1).live_html).toContain("textContent='돈다 1'")
+  await page.keyboard.press('Escape')
+  await page.getByTestId('live-play').click(); await expect(page.getByTestId('block-live')).toHaveCount(0)   // 멈춘 모습
+  await expect(page.getByTestId('live-play')).toHaveText('▶ 움직여 보기')
+  await page.getByTestId('live-drop').click(); await expect(page.getByTestId('live-bar')).toHaveCount(0)
+  expect((await docIt()).lives).toBeFalsy()
+  await page.keyboard.press('Escape'); await expect(page.getByTestId('doc-view')).toHaveCount(0)
+  await page.keyboard.press('Control+z'); await expect.poll(async () => (await docIt()).lives?.b2 || '').toContain('돈다 2')
+})
+
 test('새 문서에 넘치는 블록 = 그 블록만 저절로 한 번 고침(문제가 줄었을 때만)', async ({ page }) => {
   const seen = []
   await openBoard(page, boardName('docfix'), { chat: true }); await setCam(page)
