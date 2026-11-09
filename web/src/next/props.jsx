@@ -335,7 +335,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, con
     {(hlItems.length > 0 || edLive) && <div data-testid="props-fmt" style={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'space-between', background: C.seg, borderRadius: 8, padding: 2 }}><FmtButtons prefix="pfmt" w={20} st={fmtSt} act={fmtAct} /></div>}
   </>
 
-  return <div data-folded={folded || undefined} data-keep-edit={edLive ? '' : undefined} onPointerDown={e => e.stopPropagation()} onMouseDown={e => { if (edLive && e.target.tagName !== 'INPUT') e.preventDefault() }} style={{ position: 'absolute', right: 'calc(12px + var(--mb-right-inset, 0px))', top: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
+  return <div data-testid="props-card" data-folded={folded || undefined} data-keep-edit={edLive ? '' : undefined} onPointerDown={e => e.stopPropagation()} onMouseDown={e => { if (edLive && e.target.tagName !== 'INPUT') e.preventDefault() }} style={{ position: 'absolute', right: 'calc(12px + var(--mb-right-inset, 0px))', top: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
     padding: '8px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', maxHeight: 'calc(100% - 24px)', overflowY: 'auto' }}>   {/* 높이 = 칠판 끝까지(미니맵은 왼쪽 판으로 감 — 전엔 아래 180을 비워 일찍 스크롤) */}
     {/* 머리말 = 고른 것의 종류(2026-10-23 사용자 검토: 「속성」 제목과 「종류」 줄이 같은 말 — 한 줄로). 도형이면 눌러서 다른 도형으로 */}
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: folded ? 0 : 2 }}>

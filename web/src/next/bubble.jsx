@@ -28,15 +28,17 @@ async function pngOf(url) {
   return { data: cv.toDataURL('image/png').split(',')[1], aspect: im.naturalHeight / im.naturalWidth }
 }
 
-export function Bubble({ id, info, cam, size, thread = [], onThread, onClose, onEdit, onFields, onImage, onStatus }) {
+export function Bubble({ id, info, cam, size, thread = [], first, onThread, onClose, onEdit, onFields, onImage, onStatus }) {   // first = { q, n } — 열며 바로 보낼 말(AI 칩, 2026-11-09)
   const [draft, setDraft] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState('')
   const list = useRef(null), ta = useRef(null), swaps = useRef({})   // swaps = 답 번호 → 그림 { before, after }(이 창에만)
   useEffect(() => { ta.current?.focus() }, [])
+  const sentFirst = useRef(0)
+  useEffect(() => { if (first?.q && info && sentFirst.current !== first.n) { sentFirst.current = first.n; send(first.q) } }, [first?.n, !!info])   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { list.current?.scrollTo(0, list.current.scrollHeight) }, [thread.length, busy])
   if (!info) return null
   const pos = bubblePos(info.box, cam, size)
-  async function send() {
-    const q = draft.trim(); if (!q || busy) return
+  async function send(said) {
+    const q = (said ?? draft).trim(); if (!q || busy) return
     const mine = { role: 'user', content: q, at: Date.now() }, next = [...thread, mine]
     onThread(next); setDraft(''); setBusy(true); setErr('')
     try {

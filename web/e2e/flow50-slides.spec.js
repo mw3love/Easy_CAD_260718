@@ -1,7 +1,7 @@
 // 흐름 50 — 📽 발표 자료(§8 항목69, 2026-10-28 사용자: NotebookLM 슬라이드처럼 — 칠판 자료로 프레임 여러 장, 바로 발표).
 // 「+ › 발표 자료」 + 주제 = 질문지(고른 메모를 재료로 붙잡음) → 장 계획(× 빼기) → 「이대로 만들기」 = 16:9 프레임 N장 + 발표자 메모 + 출처 장. 진짜 KAIROS는 안 부름.
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, liveDoc, routeCall, askChat } from './helpers.js'
+import { boardName, openBoard, setCam, liveDoc, routeCall, askChat, aiMake } from './helpers.js'
 
 const PLAN = { title: '송신소 점검 공유', slides: [{ title: '표지', point: '', source: 'board' }, { title: '점검 결과', point: '', source: 'board' }, { title: '빼 볼 장', point: '', source: 'ai' }, { title: '연료 기준', point: '', source: 'web', query: '발전기 연료 기준' }, { title: '다음 할 일', point: '', source: 'board' }] }
 const DECK = { title: '송신소 점검 공유', sources: [{ n: 1, title: '연료 관리 지침', url: 'https://example.com/a' }],
@@ -70,8 +70,8 @@ test('발표 자료 3단계 — 고른 자료 우클릭 「발표 자료 만들�
   await expect.poll(async () => (await liveDoc(page)).items.length).toBe(1)
   const b = await page.locator('svg text', { hasText: '안테나 정상' }).first().boundingBox()
   await page.mouse.click(b.x + 4, b.y + b.height / 2, { button: 'right' })
-  await page.getByText('발표 자료 만들기 (KAIROS)').click()
-  const ask = page.getByTestId('deep-ask'); await expect(page.locator('aside[aria-label="KAIROS 대화"]')).toContainText('송신소 점검 — 발표 자료')   // 메모 = 맨 위 제목 줄이 주제(2026-11-02 — 전엔 「고른 자료로 발표 자료」)
+  await aiMake(page, 'slide')
+  const ask = page.getByTestId('deep-ask'); await expect(page.locator('aside[aria-label="KAIROS 대화"]')).toContainText('송신소 점검 — 슬라이드')   // 메모 = 맨 위 제목 줄이 주제(2026-11-02 — 전엔 「고른 자료로 발표 자료」)
   await expect(ask).toContainText('칠판에서 고른 것 1개를 재료로')
   await page.getByTestId('deep-plan-go').click(); await page.getByTestId('slides-build').click()
   await expect(page.getByTestId('slides-show')).toContainText('프레임 2장')

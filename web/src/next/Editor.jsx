@@ -50,6 +50,7 @@ import { MemoEditor } from './memoedit.jsx'
 import { htmlPlan, looksMarkdown, textKind, tsvRows } from './clipin.js'
 import { looksSvg, svgFits, svgItems } from './svgin.js'
 import { BoardSkeleton } from './skeleton.jsx'
+import { AiChip } from './aichip.jsx'
 import { applyDelta, itemDelta, mergeDelta } from './sync.js'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
@@ -684,6 +685,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     }
     commit(m.items.map(x => (x._id === t._id ? { ...t, cell_styles: styles } : x)), [t._id], label, merge ? merge + t._id : null)
   }
+  const [aiOpen, setAiOpen] = useState(false)   // ✨ AI 칩의 작은 창(aichip.jsx) — 고른 것이 바뀌면 닫음
+  useEffect(() => { setAiOpen(false) }, [sel.join()])   // eslint-disable-line react-hooks/exhaustive-deps
   const [menu, setMenu] = useState(null); R.current.menuOpen = !!menu   // 제자리 우클릭 메뉴 자리(편집 화면 안 px)
   // 번호표 다음 번호 = 칠판에 남은 가장 큰 번호 + 1(2026-10-20 사용자: 3을 지우면 다시 3 — 중간 빈 번호는 안 채움, 데스크톱 `next_badge_number`도 같게)
   const nextBadge = items => Math.max(0, ...items.filter(it => it.type === 'badge').map(it => it.number || 0)) + 1
@@ -910,6 +913,20 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // ── KAIROS 대화창 길목(chat.jsx) ──
   // 고른 것(보드면 안의 것까지)의 글 — 질문에 같이 보냄
+  // 고른 것의 주제 = 판·문서·프레임 이름, 메모면 맨 위 제목 줄(2026-11-02 실검증) — AI 칩이 대화창에 넘길 말에 씀
+  const selTopic = selIt => selIt.find(it => it.deep_plan)?.deep_plan?.plan?.title || selIt.find(it => it.type === 'doc')?.title || selIt.find(it => it.type === 'frame')?.name
+    || selIt.map(it => it.type === 'memo' && it.lines?.find(l => /^h[123]$/.test(l.k) && l.t.trim())?.t.trim()).find(Boolean) || ''
+  // ✨ AI 칩 실행(2026-11-09 — 클로드 아티팩트 넷): 문서 = 정리 문서 읽기용 한 장 → 칠판에 붙임 · 슬라이드 = 발표 자료 질문지 · 디자인 = 취재 한 판(재료 = 칠판 + 검색) · HTML = 움직이는 카드.
+  // 단추 없이 말만 = 하나면 그 물건 말풍선, 여럿이면 큰 대화창(고른 것이 맥락). 옛 우클릭 「정리 › 문서로 / 한 판으로」·「발표 자료 만들기」를 대신함
+  function aiRun(kind, text) {
+    const ids = R.current.sel, selIt = R.current.model.items.filter(it => ids.includes(it._id)), t0 = selTopic(selIt) || '고른 자료'
+    if (kind === 'doc') onAsk?.(`고른 것을 정리한 읽기용 문서 한 장으로 만들어 줘${text ? ` — ${text}` : ''}`, 'report', { pin: true })
+    else if (kind === 'slide') onAsk?.(`${t0} — 슬라이드${text ? `: ${text}` : ''}`, 'slides')
+    else if (kind === 'design') onAsk?.(text ? `${t0} — ${text}` : t0, 'deep')
+    else if (kind === 'html') onAsk?.(text || `${t0} — 직접 움직여 볼 수 있게`, 'live', { pin: true })
+    else if (ids.length === 1 && onBubble) onBubble(ids[0], text)
+    else onAsk?.(text, '')
+  }
   function selTexts() {
     const m = R.current.model, ids = new Set(withContents(R.current.sel))
     return m.items.filter(it => ids.has(it._id)).flatMap(itemTexts)
@@ -1008,10 +1025,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (anyBranch && i > 0) out.push(slideArrow(prevMain, main[0], 'right', z))   // 갈래가 있는 책 = 장끼리 → · 장 → 판 ↓(③ 화살표 발표 — 발표가 이 화살표를 따라감)
       prevMain = main[0]
     })
-    commit([...m.items, ...out], ids, '발표 자료')
+    commit([...m.items, ...out], ids, '슬라이드')
     bringIn({ x: at.x, y: at.y, w: BW, h: BH }); setTool('select')
     const np = pages.filter(s => s.layout === '그림' && ok(s.pic)).length, nb = pages.filter(branch).length
-    setStatus(`발표 자료 ${pages.length}장${np || nb ? `(${[np && `그림 장 ${np}`, nb && `아래 그림 판 ${nb}`].filter(Boolean).join(' · ')})` : ''} — 위 막대 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모`)
+    setStatus(`슬라이드 ${pages.length}장${np || nb ? `(${[np && `그림 장 ${np}`, nb && `아래 그림 판 ${nb}`].filter(Boolean).join(' · ')})` : ''} — 위 막대 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모`)
     return { ids, frames: ids.length, nos }
   }
   // 장 사이 화살표(작은 책 ③, 2026-11-04) — 프레임 테두리에 붙음(프레임을 옮기면 따라옴). right = 오른쪽 변 → 왼쪽 변(높이 450 — 3:2 그림 장과 16:9 글 장이 섞여도 곧게),
@@ -2714,13 +2731,12 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const menuEntries = menu => {
         const m = R.current.model, ids = R.current.sel, has = ids.length > 0, selIt = m.items.filter(it => ids.includes(it._id)), act = f => () => { setMenu(null); f() }
         const out = []
-        const tidyMenu = () => ['정리 (KAIROS)', '', null, [['문서로 — 정리 문서 한 장', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))],
-          ['취재 한 판으로 — 찾아 보태 신문 지면처럼', act(() => onAsk(selIt.find(it => it.type === 'doc')?.title || selIt.find(it => it.type === 'frame')?.name || selIt.map(it => it.type === 'memo' && it.lines?.find(l => /^h[123]$/.test(l.k) && l.t.trim())?.t.trim()).find(Boolean) || '고른 자료 정리', 'deep'))]]]
+        const aiMenu = () => ['AI로 만들기 (KAIROS)…', '', act(() => setAiOpen(true))]   // 문서·슬라이드·디자인·HTML = AI 칩 창(2026-11-09 — 옛 「정리 › 문서로 / 한 판으로」)
         const lockedSel = selIt.filter(it => it.locked && !layerLocked(it))   // 고른 것 중 잠긴 것 — 한 번에 풀기(2026-10-25 사용자, 잠긴 레이어의 것은 레이어 카드에서)
         if (lockedSel.length) { const uids = new Set(lockedSel.map(it => it._id)); out.push([`잠금 해제 (${lockedSel.length}개)`, '', act(() => commit(m.items.map(it => (uids.has(it._id) ? { ...it, locked: false } : it)), ids, '잠금 해제'))], '-') }
         if (has && lockedSel.length === selIt.length) {   // 잠긴 것만 고름 = 안 바뀌는 일만(복사·내보내기·정리 문서)
           out.push(['복사', 'Ctrl+C', act(copy)], ['잠금 전환', 'Ctrl+L', act(() => commit(toggleLock(m.items, ids), ids, '잠금'))], '-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
-          if (onAsk && (selTexts().length || selImages().length)) out.push(tidyMenu())
+          if (onAsk && (selTexts().length || selImages().length)) out.push(aiMenu())
           return out }
         const pin = menu.pdfIn && m.items.find(it => it._id === menu.pdfIn.id)
         if (pin) { const n = menu.pdfIn.page   // PDF 안쪽 = 내용 메뉴만(틀 메뉴·칠판 메뉴 안 섞음)
@@ -2774,10 +2790,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           out.push('-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
           if (onBubble && ids.length === 1) out.push(['AI 말풍선 (KAIROS)', '', act(() => onBubble(ids[0]))])   // 이 물건만의 작은 대화창(2026-10-28 사용자)
           else if (onBubble && !readOnly && selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame') && !inFrames) out.push(['프레임으로 감싸고 AI 말풍선 (KAIROS)', '', act(() => { const id = wrapFrame(true); if (id) onBubble(id) })])   // 여럿 = 대화가 붙을 자리(프레임)를 먼저 — 발표엔 안 나옴
-          if (onAsk && (selTexts().length || selImages().length)) {   // 📽 발표 자료(§8 항목69 3단계) — 고른 것(딥모드 판·정리 문서·메모…)이 재료, 주제 = 판·문서 제목
-            const t0 = selIt.find(it => it.deep_plan)?.deep_plan?.plan?.title || selIt.find(it => it.type === 'doc')?.title || selIt.find(it => it.type === 'frame')?.name || selIt.map(it => it.type === 'memo' && it.lines?.find(l => /^h[123]$/.test(l.k) && l.t.trim())?.t.trim()).find(Boolean) || ''   // 메모 = 맨 위 제목 줄(2026-11-02 실검증 — 전엔 「고른 자료로 발표 자료」)
-            out.push(['발표 자료 만들기 (KAIROS)', '', act(() => onAsk(t0 ? `${t0} — 발표 자료` : '고른 자료로 발표 자료', 'slides'))]) }
-          if (onAsk && (selTexts().length || selImages().length)) out.push(tidyMenu())   // 「정리해 줘」 ① 문서로 · 딥모드 「한 판」(2026-11-08 — 대화창에선 그림 한 장으로만, 사용자 결정) — 고른 것이 재료
+          if (onAsk && (selTexts().length || selImages().length)) out.push(aiMenu())   // 슬라이드(옛 「발표 자료 만들기」)·문서·디자인·HTML — 고른 것이 재료
         }
         // 빈 곳 = 붙여넣기만(2026-10-25 사용자: 빈 곳 메뉴는 없어도 됨 — 전체 선택은 Ctrl+A, 칠판 전체 정리 문서는 전체 선택 뒤 우클릭, 도움말은 왼쪽 「?」).
         // 우클릭한 그 자리에 붙는 것이 Ctrl+V와 다른 쓸모라 남김. 붙일 것도 없으면 메뉴를 안 띄움(항목 0개 = ContextMenu가 안 그림)
@@ -2913,6 +2926,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         return <TextEditor key={ed.id} spec={{ ...s, onReady: setLiveEd, at: ed.at, onPan: startPan, onWheel: wheelZoom, armed: !!ed.armed, fresh: !!ed.fresh,
           onArm: () => { const ne = { id: ed.id, kind: ed.kind, ...(ed.i != null ? { i: ed.i } : {}), fresh: true }; R.current.editing = ne; setEditing(ne) } }} onDone={finishEdit} /> })(editing ? (editing.kind !== 'cell' && editing.kind !== 'memo' ? editing : null) : (t => (t?.kind === 'memo' ? null : t))(armTarget()))}   {/* 메모 대기는 위 MemoEditor가 받음(둘이 같이 뜨면 이 편집기가 첫 글자를 가로챘음) */}
       {editing && liveEd && <FormatBar ed={liveEd} />}   {/* 드래그 꾸미기 막대(2026-10-19 — 옛 오른쪽 위 「글자」 카드 대신) */}
+      {selItems.length > 0 && onAsk && !readOnly && !phone && !live && !(editing && !editing.armed) && present == null && !menu && (selTexts().length || selImages().length) > 0 && (() => {   // ✨ AI 칩 — 끄는 중·글 고치는 중엔 숨김
+        const b = unionBox(selItems.map(it => sceneBox(it, textBox)))
+        return <AiChip box={{ x: b.x * cam.z + cam.x, y: b.y * cam.z + cam.y, w: b.w * cam.z, h: b.h * cam.z }} size={size} n={selItems.length} open={aiOpen} setOpen={setAiOpen} onRun={aiRun} /> })()}
       {selItems.length > 0 && <Props deep={deepProps()} liveEd={editing && !editing.armed && editing.kind !== 'memo' ? liveEd : null} align={selItems.length >= 2 ? { n: alignTargets().length, align: alignSel, dist: a => distributeSel(a) } : null} items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} convert={selItems.length === 1 ? convertTargets(selItems[0]) : []} onConvert={to => convertItem(selItems[0]._id, to)} dark={dark} onLegend={legendEdit} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}
         onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
     </div>

@@ -8,8 +8,8 @@ test('빈 칠판 안내 — 버튼은 대화창 입력 칸으로 · 도형을 �
   await openBoard(page, boardName('guide'), { guide: true }); await setCam(page)
   const g = page.getByTestId('empty-guide')
   await expect(g).toBeVisible()
-  await g.getByTestId('empty-guide-발표 자료 만들기').click()
-  await expect(page.locator('aside[aria-label="KAIROS 대화"] textarea')).toHaveValue('발표 자료 만들어 줘 — 주제: ')   // 길 고르기가 알아듣는 말을 미리
+  await g.getByTestId('empty-guide-슬라이드 만들기').click()
+  await expect(page.locator('aside[aria-label="KAIROS 대화"] textarea')).toHaveValue('슬라이드 만들어 줘 — 주제: ')   // 길 고르기가 알아듣는 말을 미리
   await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe('TEXTAREA')
   await g.getByTestId('empty-guide-KAIROS에게 묻기').click()
   await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe('TEXTAREA')

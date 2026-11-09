@@ -1,7 +1,7 @@
 // 흐름 39 — 10-26 실검증 손질: 스타일 복사 Alt+C/V(Ctrl+Alt+C = 윈도 Copilot) · 발표 레이저(끌면 빨간 자취·글 선택 안 잡힘, 도구를 켜면 그 커서) ·
 // 대화창 「취소」 한 줄(긴 진행 글에 눌려 세로였음) · 창을 닫으면 접속자 이름이 바로 빠짐(전엔 20초쯤 남음) · 선을 고르고 우클릭 「범례 넣기」(10-27)
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, clickScene, pickShape, dragScene, liveDoc, toPage } from './helpers.js'
+import { boardName, openBoard, setCam, clickScene, pickShape, dragScene, liveDoc, toPage, aiMake } from './helpers.js'
 
 const menuBtns = page => page.locator('div[style*="z-index: 30"] > div > button').allInnerTexts()
 
@@ -48,7 +48,7 @@ test('기다리는 동안 「취소」는 한 줄(진행 글이 길어도 — �
   await openBoard(page, boardName('stopwrap'), { chat: true })
   await page.evaluate(t => { const dt = new DataTransfer(); dt.setData('text/plain', t); window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })) }, '# 진자 운동\n- 주기')
   await page.keyboard.press('Control+a'); const m0 = (await page.evaluate(() => window.__mb.toEcad())).items[0], q = await toPage(page, m0.pos[0] + 20, m0.pos[1] + 10)
-  await page.mouse.click(q.x, q.y, { button: 'right' }); await page.getByRole('button', { name: '정리 (KAIROS)' }).click(); await page.getByRole('button', { name: /문서로/ }).click()
+  await page.mouse.click(q.x, q.y, { button: 'right' }); await aiMake(page, 'doc')
   const stop = page.getByTestId('chat-stop'); await expect(stop).toBeVisible()
   await expect(page.getByTestId('chat-busy')).toContainText(LONG)
   const b = await stop.boundingBox()

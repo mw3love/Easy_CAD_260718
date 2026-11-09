@@ -1,7 +1,7 @@
 // 흐름 21 — 10-20 사용자 검토: 번호 = 남은 가장 큰 수 + 1 · 미니맵 % = 100% · Alt+Z 고른 것만 · 펜은 끌기 없음 ·
 // 대화창 「다시 ▾」 셋 · 새 대화·지난 대화 · 🔑 내 키(머리말로만). 진짜 KAIROS는 안 부름(flow3처럼 가짜 답).
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, toPage, clickScene, liveDoc, waitSaved, pinCandidate } from './helpers.js'
+import { boardName, openBoard, setCam, toPage, clickScene, liveDoc, waitSaved, pinCandidate, aiMake } from './helpers.js'
 
 const btn = (page, name) => page.getByRole('button', { name, exact: true })
 
@@ -101,7 +101,7 @@ test('칠판 전체 정리 문서 = 칠판 위 「📄 정리 문서 만드는 �
   await page.keyboard.press('Control+a')                                   // 칠판 전체 = 전체 선택 뒤 우클릭(2026-10-25 — 빈 곳 메뉴는 없앰)
   const m0 = (await liveDoc(page)).items.find(it => it.type === 'memo'), q = await toPage(page, m0.pos[0] + 10, m0.pos[1] + 10)
   await page.mouse.click(q.x, q.y, { button: 'right' })
-  await page.getByRole('button', { name: '정리 (KAIROS)' }).click(); await page.getByRole('button', { name: /문서로/ }).click()
+  await aiMake(page, 'doc')
   await expect(page.getByTestId('ai-busy')).toContainText('정리 문서 만드는 중 · claude-opus-5-5')
   await expect(page.getByTestId('chat-busy')).toContainText('정리 문서 만드는 중 · claude-opus-5-5')   // 고른 대화 모델(fake-model)이 아니라
   await expect(page.getByTestId('ai-busy')).toHaveCount(0)

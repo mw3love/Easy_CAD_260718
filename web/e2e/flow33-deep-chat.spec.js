@@ -3,7 +3,7 @@
 // KAIROS·서버는 가짜(/api/chat) — 진짜 서버 길은 3-3. 서버가 딥모드를 못 하면(/api/models `jobs.deep` 없음) 「+」에 안 보임
 import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
-import { boardName, openBoard, setCam, liveDoc, toPage } from './helpers.js'
+import { boardName, openBoard, setCam, liveDoc, toPage, aiMake } from './helpers.js'
 import { overlaps } from '../src/next/deep.js'
 
 const load = t => JSON.parse(readFileSync(new URL(`../test/fixtures/deep_${t}.json`, import.meta.url), 'utf-8'))
@@ -34,7 +34,7 @@ test('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 
   await expect.poll(async () => (await liveDoc(page)).items.length).toBe(1)
   const memo = (await liveDoc(page)).items[0], at = await toPage(page, memo.pos[0] + 30, memo.pos[1] + 12)
   await page.mouse.click(at.x, at.y, { button: 'right' })
-  await page.getByRole('button', { name: '정리 (KAIROS)' }).click(); await page.getByRole('button', { name: /한 판으로/ }).click()   // 주제 = 메모 맨 위 제목
+  await aiMake(page, 'design')   // 주제 = 메모 맨 위 제목
   const ask = page.getByTestId('deep-ask')
   await expect(ask).toBeVisible()
   expect(sent).toHaveLength(0)                                                       // 질문지는 서버를 안 부름
@@ -54,7 +54,7 @@ test('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 
   await expect(plan1).toBeVisible()
   expect(sent[0].kind).toBe('deep')
   expect(sent[0].deep).toEqual({ step: 'plan', topic: '어텐션이 뭐야? 신입 교육용으로',
-    brief: { 누구에게: '처음 보는 사람', 무엇에: '공부·교육', 깊이: '알아서', '꼭 넣을 것': ['숫자·그래프'], 재료: '이 칠판', 더: '그림은 빼 줘' } })   // 우클릭 = 재료 「이 칠판」을 미리 고름
+    brief: { 누구에게: '처음 보는 사람', 무엇에: '공부·교육', 깊이: '알아서', '꼭 넣을 것': ['숫자·그래프'], 재료: '둘 다', 더: '그림은 빼 줘' } })   // AI 칩 「디자인」 = 재료 「둘 다」를 미리 고름(2026-11-09)
   await expect(ask.locator('[data-v]')).toHaveCount(0); await expect(ask).toContainText('지면 계획을 짰어요')   // 질문지는 잠김 = 고른 답 요약만(2026-11-07)
   const N = FULL.sections.length
   await expect(plan1.getByTestId('deep-sec')).toHaveCount(N)

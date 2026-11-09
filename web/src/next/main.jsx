@@ -618,7 +618,8 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
   const setThread = (id, msgs) => { const next = { ...threadsRef.current, [id]: msgs }; threadsRef.current = next; setThreads(next)
     if (server) fetch(THREADS_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [id]: msgs }) })
       .then(r => (r.ok ? r.json() : Promise.reject(r))).then(d => takeThreads(d.threads)).catch(() => setStatus('말풍선 대화를 저장하지 못했어요')) }
-  const openBubble = id => { pullThreads(); setBubbles(bs => (bs.includes(id) ? bs : [...bs, id])) }
+  const [bubbleFirst, setBubbleFirst] = useState({})   // 말풍선을 열며 바로 보낼 첫 말(AI 칩에서 단추 없이 말만 — 2026-11-09)
+  const openBubble = (id, first) => { pullThreads(); if (first) setBubbleFirst(f => ({ ...f, [id]: { q: first, n: Date.now() } })); setBubbles(bs => (bs.includes(id) ? bs : [...bs, id])) }
   // 서버 답 전(첫 0.1초)에도 서버 있는 모습으로 그림 — 「Magic Board」·흐린 공유·동그라미 없음 → 바뀌며 위 막대가 좌우로 밀렸음(2026-10-28 사용자 「새 칠판 누르면 살짝 깜빡」)
   const live = server || !srvKnown
   const [me, setMe] = useState(() => { try { return localStorage.getItem('mb.name') || '' } catch { return '' } }), [others, setOthers] = useState([]), [shareOpen, setShareOpen] = useState(false)
@@ -803,7 +804,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
       { name: '발표', group: '칠판', words: ['프레젠테이션', '슬라이드쇼'], run: () => ed.current?.startPresent() },
       ...(server ? [{ name: '공유…', group: '칠판', words: ['링크', 'qr', '보내기'], run: () => setShareOpen(true) }] : []),
       ...(server ? [{ name: 'KAIROS에게 묻기', group: 'AI', words: ['대화', '질문', '채팅'], run: () => { setChatOpen(true); setChatFocus({ id: Date.now() }) } },
-        { name: '발표 자료 만들기', group: 'AI', words: ['슬라이드', 'ppt'], run: () => { setChatOpen(true); setChatFocus({ id: Date.now(), draft: '발표 자료 만들어 줘 — 주제: ' }) } },
+        { name: '슬라이드 만들기', group: 'AI', words: ['발표 자료', 'ppt'], run: () => { setChatOpen(true); setChatFocus({ id: Date.now(), draft: '슬라이드 만들어 줘 — 주제: ' }) } },
         { name: '예시 칠판 열기', group: 'AI', words: ['샘플', '보기'], run: () => openExample() }] : []),
       { name: '다 보기', group: '보기', keys: 'Z', words: ['맞춤', '전체 보기'], run: () => keyAct.current.fit() },
       { name: '100%', group: '보기', keys: 'Ctrl+0', words: ['원래 크기', '배율'], run: () => keyAct.current.zoom100() },
@@ -928,7 +929,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
         <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} phone={phone} keepTool={keepTool} onKeepTool={toggleKeep} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onAddSymbol={(items, name, folder) => setSymAdd({ items, name, folder })} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onBubble={phone ? undefined : openBubble} onAsk={(text, kind, extra) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind, extra }) }} />
         {!phone && Object.entries(threads).filter(([id, t]) => t?.length && !bubbles.includes(id)).map(([id, t]) => { const info = ed.current?.bubbleInfo(id)
           return info && <BubbleBadge key={'bb' + id} id={id} info={info} cam={cam} count={t.filter(m => m.role === 'user').length} onOpen={() => openBubble(id)} /> })}
-        {!phone && bubbles.map(id => <Bubble key={'b' + id} id={id} info={ed.current?.bubbleInfo(id)} cam={cam} size={size} thread={threads[id] || []} onThread={msgs => setThread(id, msgs)}
+        {!phone && bubbles.map(id => <Bubble key={'b' + id} id={id} info={ed.current?.bubbleInfo(id)} cam={cam} size={size} thread={threads[id] || []} first={bubbleFirst[id]} onThread={msgs => setThread(id, msgs)}
           onClose={() => setBubbles(bs => bs.filter(x => x !== id))} onEdit={md => ed.current?.bubbleEdit(id, md)} onFields={patch => ed.current?.setFields(id, patch)} onImage={(data, aspect) => ed.current?.setImage(id, data, aspect)} onStatus={setStatus} />)}
         {gone && <div data-testid="gone-banner" style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 25, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 10, background: '#d44c47', color: '#fff', font: "600 13px 'Pretendard', sans-serif", boxShadow: '0 4px 14px rgba(0,0,0,.2)' }}>
           이 칠판은 다른 창에서 지워졌어요 — 고친 것은 저장되지 않아요
@@ -948,7 +949,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
         {symAdd && <SymAddForm init={symAdd} folders={mySyms.folders} onClose={() => setSymAdd(null)} onOk={(name, folder) => {
           const ok = myApi.addSymbol(name, folder, symAdd.items); setSymAdd(null)
           if (ok) { setDockTab('shape'); setStatus(`「${name}」을 내 심볼 「${folder}」에 넣었어요 — 이 브라우저에 저장`) } else setStatus('이 브라우저 저장 공간이 모자라요 — 그림이 든 것은 클 수 있어요') }} />}
-        {!model.items.length && !meetSt && !aiBusy && <EmptyGuide phone={phone} onExample={() => openExample()} onAsk={() => { setChatOpen(true); setChatFocus({ id: Date.now() }) }} onDeep={() => { setChatOpen(true); setChatFocus({ id: Date.now(), draft: '발표 자료 만들어 줘 — 주제: ' }) }}
+        {!model.items.length && !meetSt && !aiBusy && <EmptyGuide phone={phone} onExample={() => openExample()} onAsk={() => { setChatOpen(true); setChatFocus({ id: Date.now() }) }} onDeep={() => { setChatOpen(true); setChatFocus({ id: Date.now(), draft: '슬라이드 만들어 줘 — 주제: ' }) }}
           onMeet={() => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : ed.current?.meetStart())} />}
         <span data-testid="save-note" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{saveNote}</span>
         {status && <div data-testid="status-toast" role="status" title={status} style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 6, maxWidth: 'min(640px, max(240px, calc(100% - 480px)))', padding: '6px 14px', borderRadius: 99,

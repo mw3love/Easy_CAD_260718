@@ -13,7 +13,7 @@ export const DEEP_QS = [
 ]
 export const AUTO = '알아서'
 // Deep Mode 모양(2026-11-04 입구 합치기) — [메시지 kind, 이름, 설명]
-export const SHAPES = [['deep', '📰 한 판', '신문 지면처럼 한 화면에 — 읽는 자료'], ['slides', '📖 여러 장', '작은 책·발표 자료 — 글 장·그림 장을 한 장씩']]
+export const SHAPES = [['deep', '📰 한 판', '신문 지면처럼 한 화면에 — 읽는 자료'], ['slides', '📖 여러 장', '작은 책·슬라이드 — 글 장·그림 장을 한 장씩']]
 // 📽 발표 자료(§8 항목69, 2026-10-28) 질문지 — 같은 카드(`DeepAsk qs=`), 답은 서버 `slides.make_plan`이 그대로 지시문에
 export const SLIDES_QS = [
   ['내용', ['설명', '이야기']],   // 이야기 = 동화처럼 장면이 이어지는 책 — 그림 장이 첫 그림을 참고로 같은 인물·장소(작은 책 ⑤, 서버 `slides.is_story` — 그림 값 약 2배)

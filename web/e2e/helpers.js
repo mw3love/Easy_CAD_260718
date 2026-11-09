@@ -14,6 +14,13 @@ export const boardName = tag => `e2e_${tag}_${Date.now().toString(36)}${n++}`
 // 2026-11-08 「+」 창 없앰 — 발표 자료·인포그래픽처럼 질문지가 먼저인 길은 말로: 진짜 서버는 길 고르기 요청(kind·deep·slides 없음)에 `{ kind: 'go', to }`로 답함.
 // 가짜 /api/chat은 `if (routeCall(b)) return r.fulfill({ json: { kind: 'go', to: 'slides' } })`로 흉내(이 요청은 크레딧이 안 들어 `seen`에 안 넣음)
 export const routeCall = b => !b.kind && !b.deep && !b.slides
+// ✨ AI 칩 창(2026-11-09) — 우클릭 메뉴가 열린 상태에서 「AI로 만들기」 → 단추(doc·slide·design·html) → 보내기
+export async function aiMake(page, kind, text = '') {
+  await page.getByRole('button', { name: /AI로 만들기/ }).click()
+  if (kind) await page.locator(`[data-testid="ai-kind"][data-kind="${kind}"]`).click()
+  if (text) await page.getByTestId('ai-input').fill(text)
+  await page.getByTestId('ai-send').click()
+}
 export async function askChat(page, text) { const box = page.getByPlaceholder('물어보세요', { exact: false }); await box.fill(text); await box.press('Enter') }
 
 export async function openBoard(page, name, { chat = false, who = '시험', guide = false, briefAsk = false } = {}) {   // briefAsk = 딥모드 맞춤 질문(서버 한 번 더 — 기본은 끔, flow62만 켬)   // guide = 빈 칠판 첫 안내(가운데를 덮어 다른 시험의 누르기를 막으니 기본은 끔 — flow37만 켬)
