@@ -10,7 +10,7 @@ import { Spinner, shrinkImage } from './chat.jsx'
 const F = "'Pretendard', sans-serif"
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', seg: 'var(--mb-seg)' }
 export const BUBBLE_W = 300
-const KIND = { memo: '메모', image: '그림', text: '글', table: '표', pdf: 'PDF', doc: '정리 문서', web: '웹 카드', frame: '프레임', titleblock: '프레임' }
+const KIND = { memo: '메모', image: '그림', text: '글', table: '표', pdf: 'PDF', doc: '문서', web: '웹 카드', frame: '프레임', titleblock: '프레임' }
 const HINT = { memo: '이 메모를 어떻게 할까요? 예: 할 일만 뽑아 아래에 · 쉬운 말로', table: '이 표를 어떻게 할까요? 예: 합계 줄 더해 줘', text: '이 글을 어떻게 할까요? 예: 더 짧게 · 영어로', label: '이 글을 어떻게 할까요? 예: 더 짧게', image: '묻거나 고쳐 달라고 하세요 — 예: 배경을 밝게', slide: '이 장을 어떻게 할까요? 예: 더 짧게 · 숫자 칸으로', frame: '이 프레임 안의 것에 대해 물어보세요' }
 export const bubbleKind = t => KIND[t] || '도형'
 

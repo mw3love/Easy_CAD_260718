@@ -1,5 +1,5 @@
 // ✨ AI 칩(2026-11-09 사용자 — 클로드 아티팩트 넷을 따라감, 시안 A + E1: Artifact `EFU8UFuHfTtSTDGC4V2vny`)
-// 칠판에서 물건을 고르면 고른 것 오른쪽 위에 작은 「AI」 칩 → 누르면 작은 창: 큰 단추 넷(문서·슬라이드·디자인·HTML) + 입력 칸.
+// 칠판에서 물건을 고르면 고른 것 오른쪽 위에 작은 「AI」 칩 → 누르면 작은 창: 큰 단추 둘(문서·슬라이드 — 2026-11-09 문서 통합 1단계: 디자인·HTML은 문서로 합침) + 입력 칸.
 // 단추 한 번 = 고르기만(회색 채움), Enter·보내기 = 실행 — 두 번 누르기로 바로 실행은 안 함(실수로 크레딧이 듦).
 // 단추 없이 말만 = 물건 하나면 그 물건의 💬 말풍선, 여럿이면 큰 대화창 질문. 실제 일은 Editor가 `onRun(kind, text)`로 대화창에 넘김.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -10,11 +10,9 @@ const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line
 const P = {
   doc: 'M213.66,82.34l-56-56A8,8,0,0,0,152,24H56A16,16,0,0,0,40,40V216a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V88A8,8,0,0,0,213.66,82.34ZM160,51.31,188.69,80H160ZM200,216H56V40h88V88a8,8,0,0,0,8,8h48V216Zm-32-80a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,136Zm0,32a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,168Z',
   slide: 'M216,40H136V24a8,8,0,0,0-16,0V40H40A16,16,0,0,0,24,56V176a16,16,0,0,0,16,16H79.36L57.75,219a8,8,0,0,0,12.5,10l29.59-37h56.32l29.59,37a8,8,0,1,0,12.5-10l-21.61-27H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40Zm0,136H40V56H216V176Z',
-  design: 'M200.77,53.89A103.27,103.27,0,0,0,128,24h-1.07A104,104,0,0,0,24,128c0,43,26.58,79.06,69.36,94.17A32,32,0,0,0,136,192a16,16,0,0,1,16-16h46.21a31.81,31.81,0,0,0,31.2-24.88,104.43,104.43,0,0,0,2.59-24A103.28,103.28,0,0,0,200.77,53.89Zm13,93.71A15.89,15.89,0,0,1,198.21,160H152a32,32,0,0,0-32,32,16,16,0,0,1-21.31,15.07C62.49,194.3,40,164,40,128a88,88,0,0,1,87.09-88h.9a88.35,88.35,0,0,1,88,87.25A88.86,88.86,0,0,1,213.81,147.6ZM140,76a12,12,0,1,1-12-12A12,12,0,0,1,140,76ZM96,100A12,12,0,1,1,84,88,12,12,0,0,1,96,100Zm0,56a12,12,0,1,1-12-12A12,12,0,0,1,96,156Zm88-56a12,12,0,1,1-12-12A12,12,0,0,1,184,100Z',
-  html: 'M69.12,94.15,28.5,128l40.62,33.85a8,8,0,1,1-10.24,12.29l-48-40a8,8,0,0,1,0-12.29l48-40a8,8,0,0,1,10.24,12.3Zm176,27.7-48-40a8,8,0,1,0-10.24,12.3L227.5,128l-40.62,33.85a8,8,0,1,0,10.24,12.29l48-40a8,8,0,0,0,0-12.29ZM162.73,32.48a8,8,0,0,0-10.25,4.79l-64,176a8,8,0,0,0,4.79,10.26A8.14,8.14,0,0,0,96,224a8,8,0,0,0,7.52-5.27l64-176A8,8,0,0,0,162.73,32.48Z',
   ai: 'M197.58,129.06,146,110l-19-51.62a15.92,15.92,0,0,0-29.88,0L78,110l-51.62,19a15.92,15.92,0,0,0,0,29.88L78,178l19,51.62a15.92,15.92,0,0,0,29.88,0L146,178l51.62-19a15.92,15.92,0,0,0,0-29.88ZM137,164.22a8,8,0,0,0-4.74,4.74L112,223.85,91.78,169A8,8,0,0,0,87,164.22L32.15,144,87,123.78A8,8,0,0,0,91.78,119L112,64.15,132.22,119a8,8,0,0,0,4.74,4.74L191.85,144ZM144,40a8,8,0,0,1,8-8h16V16a8,8,0,0,1,16,0V32h16a8,8,0,0,1,0,16H184V64a8,8,0,0,1-16,0V48H152A8,8,0,0,1,144,40ZM248,88a8,8,0,0,1-8,8h-8v8a8,8,0,0,1-16,0V96h-8a8,8,0,0,1,0-16h8V72a8,8,0,0,1,16,0v8h8A8,8,0,0,1,248,88Z',
 }
-export const AI_KINDS = [['doc', '문서'], ['slide', '슬라이드'], ['design', '디자인'], ['html', 'HTML']]
+export const AI_KINDS = [['doc', '문서'], ['slide', '슬라이드']]
 const NAME = Object.fromEntries(AI_KINDS)
 const Icon = ({ k, s = 16 }) => <svg viewBox="0 0 256 256" width={s} height={s} aria-hidden="true" style={{ flex: 'none', fill: 'currentColor', color: C.acc }}><path d={P[k]} /></svg>
 const CHIP_W = 52, WIN_W = 340
@@ -46,7 +44,7 @@ export function AiChip({ box, size, n, open, setOpen, onRun }) {
       <b style={{ fontSize: 13 }}>고른 것 {n}개</b>
       <button data-testid="ai-close" title="닫기(Esc)" onClick={() => setOpen(false)} style={{ all: 'unset', marginLeft: 'auto', cursor: 'pointer', color: C.muted, fontSize: 14, padding: '0 6px', borderRadius: 6 }}>✕</button>
     </div>
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 6, padding: '10px 10px 4px' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${AI_KINDS.length},1fr)`, gap: 6, padding: '10px 10px 4px' }}>
       {AI_KINDS.map(([k, name]) => <button key={k} data-testid="ai-kind" data-kind={k} aria-pressed={kind === k} onClick={() => pick(k)} className="mb-ai-kind"
         style={{ all: 'unset', cursor: 'pointer', boxSizing: 'border-box', height: 56, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3, borderRadius: 8,
           border: `1px solid ${kind === k ? 'transparent' : C.line}`, background: kind === k ? C.pick : 'transparent', font: `${kind === k ? 700 : 500} 12.5px ${F}`, color: C.ink }}><Icon k={k} s={20} />{name}</button>)}

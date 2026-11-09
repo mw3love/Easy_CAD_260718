@@ -359,14 +359,15 @@ function chartPrim(p, k) {
   return <text key={k} x={p.x} y={p.y} textAnchor={p.a} dominantBaseline="central" fontSize={p.fs} fontWeight={p.b ? 700 : 400} fontFamily={APP_FONT} fill={p.c} style={{ whiteSpace: 'pre' }}>{p.s}</text>
 }
 // 카드 속 페이지(iframe) — 칠판 안(foreignObject)과 휴대폰 위층(Editor `phoneCards`, 아이폰 Safari는 SVG 안 iframe에 칠판 배율을 안 먹임 — 2026-10-27)이 같이 씀
-export function docFrame(it, bh, web) { const lv = isLive(it), k = it.rect[2] / (lv ? LIVE_W : 794)
+export const docPageW = it => it.page_w || 794   // 문서가 짜인 폭 — 옛 문서 A4 794, 2026-11-09부터 1000(서버 `board_report.PAGE_W`)
+export function docFrame(it, bh, web) { const lv = isLive(it), k = it.rect[2] / (lv ? LIVE_W : docPageW(it))
   if (isMotion(it)) return <iframe data-docid={it._id} data-liveid={it._id} data-motion={it._id} data-motion-of={it.motion_of || ''} srcDoc={motionSrc(it.html)} title={it.title || '움직이는 장'} sandbox="allow-scripts" csp={LIVE_CSP} scrolling="no"
     style={{ border: 0, width: it.rect[2], height: it.rect[3], display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} />   // 움직이는 장 = 프레임 크기 그대로(머리 띠 없음, 배율 1)
   return lv
     ? <iframe data-docid={it._id} data-liveid={it._id} srcDoc={liveSrc(it.html)} title={it.title || '인터랙티브 HTML'} sandbox="allow-scripts" csp={LIVE_CSP} scrolling="no"
         style={{ border: 0, width: LIVE_W, height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} />
-    : <iframe data-docid={it._id} srcDoc={it.html} title={it.title || '정리 문서'} sandbox="" scrolling="no"
-        style={{ border: 0, width: 794, height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: 'none' }} /> }
+    : <iframe data-docid={it._id} srcDoc={it.html} title={it.title || '문서'} sandbox="" scrolling="no"
+        style={{ border: 0, width: docPageW(it), height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: 'none' }} /> }
 export const webZoom = (it, fsScale) => (!isYoutube(it) && it.zoom > 0 && it.zoom < 1 ? it.zoom : isYoutube(it) && fsScale > 1 ? 1 / fsScale : 1)
 export function webFrame(it, web, noFs, fsScale) { const zm = webZoom(it, fsScale)
   return <iframe data-webid={it._id} src={frameSrc(it, noFs)} title={it.title || it.url} allow="autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
@@ -510,7 +511,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
           {web === 'on' && <rect x={x} y={y} width={w} height={h} fill="none" stroke="#da7756" strokeWidth={3} />}
         </g> }
       const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'dc-' + (it._id || idx), ob = openBtnRect(it), tw = w - ob.w - 26
-      const lv = isLive(it), fits = liveFits(it), k = w / (lv ? LIVE_W : 794)
+      const lv = isLive(it), fits = liveFits(it), k = w / (lv ? LIVE_W : docPageW(it))
       const live = (web === 'on' || web === 'view') && bh > 4 && it.html && (!lv || fits)
       return <g transform={T} data-doc-box={`${x},${y + H},${w},${bh}`} data-live-src={lv && fits && !web ? liveSrc(it.html) : undefined}>
         <clipPath id={cid}><rect x={x} y={y} width={w} height={h} rx={6} ry={6} /></clipPath>
@@ -525,8 +526,8 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         </g>
         {bh > 0 && <path d={`M${x},${y + H} H${x + w}`} stroke="#ddd6fe" strokeWidth={1} />}
         <rect x={x} y={y} width={w} height={h} rx={6} ry={6} fill="none" stroke={web === 'on' ? '#da7756' : '#a78bfa'} strokeWidth={web === 'on' ? 2 : 1} />
-        <text x={x + 10} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis((lv ? '▶ ' : '📄 ') + (it.title || (lv ? '인터랙티브 HTML' : '정리 문서')), 13, 700, tw)}</text>
-        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(it.file ? `HTML 파일 · ${it.file}` : `${lv ? '인터랙티브 HTML' : '정리 문서'} · KAIROS ${it.model || ''}`, 10, 400, tw)}</text>
+        <text x={x + 10} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis((lv ? '▶ ' : '📄 ') + (it.title || (lv ? '인터랙티브 HTML' : '문서')), 13, 700, tw)}</text>
+        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(it.file ? `HTML 파일 · ${it.file}` : `${lv ? '인터랙티브 HTML' : '문서'} · KAIROS ${it.model || ''}`, 10, 400, tw)}</text>
         <g><title>크게 보기 · 인쇄</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
           <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
       </g>

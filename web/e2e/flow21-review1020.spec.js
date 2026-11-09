@@ -102,8 +102,8 @@ test('칠판 전체 정리 문서 = 칠판 위 「📄 정리 문서 만드는 �
   const m0 = (await liveDoc(page)).items.find(it => it.type === 'memo'), q = await toPage(page, m0.pos[0] + 10, m0.pos[1] + 10)
   await page.mouse.click(q.x, q.y, { button: 'right' })
   await aiMake(page, 'doc')
-  await expect(page.getByTestId('ai-busy')).toContainText('정리 문서 만드는 중 · claude-opus-5-5')
-  await expect(page.getByTestId('chat-busy')).toContainText('정리 문서 만드는 중 · claude-opus-5-5')   // 고른 대화 모델(fake-model)이 아니라
+  await expect(page.getByTestId('ai-busy')).toContainText('문서 만드는 중 · claude-opus-5-5')
+  await expect(page.getByTestId('chat-busy')).toContainText('문서 만드는 중 · claude-opus-5-5')   // 고른 대화 모델(fake-model)이 아니라
   await expect(page.getByTestId('ai-busy')).toHaveCount(0)
   await expect(page.getByText('시험 — 일부러 실패')).toBeVisible()
 })

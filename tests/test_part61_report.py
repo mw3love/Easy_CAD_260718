@@ -62,7 +62,7 @@ def test_tone_same_as_deep_board_and_picked_by_name():
     assert got == {k: (t["name"], t["accent"]) for k, t in board_report.TONES.items()}
     assert board_report.tone_of("신문 톤으로 해 줘") == "news" and board_report.tone_of("파랑으로") == "info" and board_report.tone_of("표로") == ""
     c = FakeClient()
-    out = board_report.make(c, "(메모) 송신기 이상", "")
+    out = board_report.make(c, "(메모) 송신기 이상", "", style="present")
     assert out["tone"] == "calm" and "「차분」 톤" in c.seen[0]["messages"][1]["content"] and "#b4532f" in c.seen[0]["messages"][1]["content"]
     out = board_report.make(c, "", "더 짧게", prev_html="<html>앞</html>")
     assert out["tone"] == "" and "톤" not in c.seen[1]["messages"][1]["content"]   # 고칠 땐 톤을 말했을 때만 바꿈
@@ -113,13 +113,13 @@ def _post(url, body):
 def test_server_report_material_whole_board_selection_and_revise(server):
     base, seen = server
     out = _post(base + "/api/chat", {"board": "공부", "messages": [{"role": "user", "content": "이 칠판 정리해 줘"}]})
-    assert out["kind"] == "report" and out["html"].startswith("<html>") and "「T present」" in out["content"] and "「T read」" in out["content"]
+    assert out["kind"] == "report" and out["html"].startswith("<html>") and "「T read」" in out["content"] and "「T present」" not in out["content"]   # 2026-11-09 기본 = 문서 한 장
     assert "(메모) 송신기 이상 보고" in seen[-1]["material"] and "(상자) UHD 회의" in seen[-1]["material"]   # 고른 것이 없으면 칠판 전체
     _post(base + "/api/chat", {"board": "공부", "messages": [{"role": "user", "content": "보고서로", "context": "- 고른 메모"}]})
     assert seen[-1]["material"] == "- 고른 메모"
     _post(base + "/api/chat", {"board": "공부", "prev_html": "<html>앞</html>", "messages": [{"role": "user", "content": "더 짧게"}]})
     assert seen[-1]["prev"] == "<html>앞</html>" and seen[-1]["ask"] == "더 짧게" and seen[-1]["style"] == "present"   # 「더 짧게」 = 앞 문서 고치기(옛 한 장 = 발표용으로)
-    out = _post(base + "/api/chat", {"board": "공부", "messages": [{"role": "user", "content": "합계까지 보고서로", "context": "- 고른 메모"}]})
+    out = _post(base + "/api/chat", {"board": "공부", "messages": [{"role": "user", "content": "발표용으로 합계까지 보고서로", "context": "- 고른 메모"}]})
     assert "차분 톤" in out["content"] and "그대로 찾지 못한 숫자: 4,800" in out["content"]   # 숫자 검사는 답 글에 알림(막지 않음)
 
 
@@ -132,7 +132,7 @@ def test_unchecked_numbers_skips_times_and_dates_written_differently():
 
 
 def test_two_styles_present_and_read():
-    """2026-11-05 사용자 — 발표용(지금 지시문 + 지어 넣지 않기)·읽기용(/pic A/B 「C」) 두 장을 같이 만들어 써 보고 정함."""
+    """2026-11-05 두 장 → 2026-11-09 문서 통합 1단계: 기본 = 읽기용 한 장(A/B에서 고른 edu식, 1000px), 발표용은 말했을 때만."""
     assert board_report.STYLES == {"present": "발표용", "read": "읽기용"}
     assert board_report.style_of("발표용으로만 만들어 줘") == "present" and board_report.style_of("읽기용으로") == "read" and board_report.style_of("차분하게 정리") == "read"
     assert board_report.style_of("정리해 줘") == "" and board_report.style_of("발표용이랑 읽기용 둘 다") == ""
@@ -146,19 +146,26 @@ def test_two_styles_present_and_read():
     assert "톤" not in c.seen[0]["messages"][1]["content"]                            # 읽기용 색은 모델이 — 톤은 말했을 때만
     out = board_report.make(c, "(메모) 송신기 이상", "신문 톤으로", style="read")
     assert out["tone"] == "news" and "「신문」 톤" in c.seen[1]["messages"][1]["content"]
+    out = board_report.make(c, "(메모) 송신기 이상", "", style="present")
+    assert out["style"] == "present" and out["tone"] == "calm" and c.seen[2]["messages"][0]["content"] == board_report.SYSTEM and out["page_w"] == 794
     out = board_report.make(c, "(메모) 송신기 이상", "")
-    assert out["style"] == "present" and out["tone"] == "calm" and c.seen[2]["messages"][0]["content"] == board_report.SYSTEM
+    assert out["style"] == "read" and out["page_w"] == 1000                                     # 기본 = 문서(읽기용)
+    for rule in ("핵심 의견", "1000px", "세로축 둘", "점선 아님", "줄이지 않는다"):
+        assert rule in board_report.SYSTEM_READ, rule
+    assert "1~2쪽" not in board_report.SYSTEM_READ                                            # 분량을 줄이라고 하지 않음(사용자)
 
 
 def test_server_report_two_docs_pick_one_and_revise_each(server):
     base, seen = server
-    out = _post(base + "/api/chat", {"board": "공부", "messages": [{"role": "user", "content": "정리해 줘", "context": "- 고른 메모"}]})
-    assert [d["style"] for d in out["docs"]] == ["present", "read"] and [d["label"] for d in out["docs"]] == ["발표용", "읽기용"]
-    assert out["html"] == out["docs"][0]["html"] and "두 장" in out["content"]
-    assert sorted(x["style"] for x in seen[-2:]) == ["present", "read"] and all(x["material"] == "- 고른 메모" for x in seen[-2:])
     n = len(seen)
-    out = _post(base + "/api/chat", {"board": "공부", "messages": [{"role": "user", "content": "읽기용으로만 정리해 줘", "context": "- 고른 메모"}]})
-    assert len(seen) == n + 1 and seen[-1]["style"] == "read" and [d["style"] for d in out["docs"]] == ["read"] and "두 장" not in out["content"]
+    out = _post(base + "/api/chat", {"board": "공부", "messages": [{"role": "user", "content": "정리해 줘", "context": "- 고른 메모"}]})
+    assert len(seen) == n + 1 and seen[-1]["style"] == "read" and [d["style"] for d in out["docs"]] == ["read"] and "두 장" not in out["content"]   # 기본 = 한 장
+    n = len(seen)
+    out = _post(base + "/api/chat", {"board": "공부", "messages": [{"role": "user", "content": "발표용으로 정리해 줘", "context": "- 고른 메모"}]})
+    assert len(seen) == n + 1 and seen[-1]["style"] == "present" and [d["style"] for d in out["docs"]] == ["present"]
+    n = len(seen)
+    _post(base + "/api/chat", {"board": "공부", "prev_html": "<html>읽기</html>", "prev_style": "read", "messages": [{"role": "user", "content": "더 짧게"}]})
+    assert len(seen) == n + 1 and seen[-1]["style"] == "read" and seen[-1]["prev"] == "<html>읽기</html>"   # 앞 문서 모양 그대로 고쳐 씀
     prev = [{"style": "present", "html": "<html>발표</html>"}, {"style": "read", "html": "<html>읽기</html>"}]
     n = len(seen)
     out = _post(base + "/api/chat", {"board": "공부", "prev_docs": prev, "messages": [{"role": "user", "content": "더 짧게"}]})
@@ -220,3 +227,25 @@ def test_server_report_looks_up_only_for_new_docs(server, monkeypatch):
     assert "찾아 보탰어요(찾아본 질문 1개)" in out["content"]
     _post(base + "/api/chat", {"board": "공부", "kind": "report", "prev_html": "<html>앞</html>", "messages": [{"role": "user", "content": "더 짧게"}]})
     assert len(asked) == 1 and fakes[-1] is None                                          # 고쳐 쓰기 = 찾지 않음
+
+
+def test_ensure_blocks_numbers_top_chunks_and_keeps_model_blocks():
+    """블록(2026-11-09 문서 통합 1단계) — 모델이 안 달면 본문 맨 위 덩어리마다 b1…·종류, 감싼 상자는 벗기고 셈, 모델이 단 것은 그대로."""
+    d = ('<!doctype html><html><head><title>x</title><style>p{}</style></head><body><main class="page"><div class="wrap"><h1>결론</h1><p>설명</p>'
+         '<section><h2>추이</h2><svg viewBox="0 0 10 10"><path d="M0 0"/></svg></section><table><tr><td>1</td></tr></table><figure><img src="a"></figure><br>'
+         '<div class="note">아직 못 찾은 것</div></div></main></body></html>')
+    out = board_report.ensure_blocks(d)
+    import re
+    got = re.findall(r'<(\w+)[^>]*data-block="(b\d+)" data-kind="(\w+)"', out)
+    assert got == [("h1", "b1", "text"), ("p", "b2", "text"), ("section", "b3", "chart"), ("table", "b4", "table"), ("figure", "b5", "image"), ("div", "b6", "box")]
+    assert board_report.plain_text(out) == board_report.plain_text(d)                      # 글은 그대로
+    mine = '<html><body><div data-block="b1" data-kind="text">가</div><div data-block="b2" data-kind="box">나</div></body></html>'
+    assert board_report.ensure_blocks(mine) == mine                                        # 모델이 단 블록은 손대지 않음
+    assert board_report.ensure_blocks("<html><body><p>하나뿐</p></body></html>") == "<html><body><p>하나뿐</p></body></html>"
+    assert "[블록" in board_report.SYSTEM and "[블록" in board_report.SYSTEM_READ and "data-block" in board_report.REVISE
+
+
+def test_make_adds_blocks_and_counts_them():
+    c = _Said('<!doctype html><html><head><title>T</title></head><body><h1>결론</h1><p>가</p><ul><li>나</li></ul></body></html>')
+    out = board_report.make(c, "(메모) 가", "읽기용으로", style="read")
+    assert out["blocks"] == 3 and 'data-block="b3" data-kind="text"' in out["html"]

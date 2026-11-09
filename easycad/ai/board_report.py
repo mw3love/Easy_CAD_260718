@@ -27,28 +27,127 @@ SYSTEM = """너는 칠판에 흩어진 메모·검색 결과·회의록·표를 
 - 칠판에 없는 연결·담당·계산 표를 그림이나 표에도 지어 넣지 않는다(흐름도의 담당 칸, 자료에 없는 값으로 만든 표 등 — 비어 있으면 비어 있다고 쓴다).
 - 마지막에 짧은 「핵심 의견」 한 칸은 넣어도 되지만 작성자 의견임을 밝힌다. 출처 주소가 있으면 각주처럼 작게 남긴다."""
 
-# 「읽기용」(2026-11-05 사용자 — /pic A/B의 「C」): 모양은 모델이 고르고 지시문엔 놓이는 자리 규칙만 + 결론 맨 위·용어 풀이·구조는 그림으로.
-# 위 SYSTEM = 「발표용」(화려·전문적 — 발표하기 좋음), 이쪽 = 정돈·차분(혼자 읽기 좋음). 당분간 둘 다 만들어 써 보고 하나로 합칠지 정한다(남긴 쪽 세기 `python web/usage.py`).
-# ⚠ 좋은 디자인의 모양을 여기 베껴 적지 말 것 — 그날 모양으로 굳는다(/pic 교훈). A/B 경위: docs/history/2026-11.md
-SYSTEM_READ = """너는 칠판에 흩어진 메모·검색 결과·회의록·표를 읽고, 읽는 사람이 바로 이해하도록 정리한 문서 한 장을 만든다.
+# 「문서」 = 읽기용 한 장(2026-11-09 문서 통합 1단계 — A/B에서 사용자가 B 「edu식」을 고름: 「단정하고 중요한 부분은 글자 크기·포인트 색으로 구분」).
+# 아티팩트 디자인 지침(Claude Code 2.1.319 기준)의 원칙을 우리 말로 줄임 — 원문은 베끼지 않음. 그래프 규칙 = Claude Code 번들 `dataviz` 요약.
+# ⚠ 분량을 줄이라고 하지 않는다(사용자 — 「분량이 풍부할수록 이해를 돕는다」, 인쇄 쪽수 상한 없음). 지침이 바뀐 것 같으면 계획서 §8 「문서 지시문 다시 맞추기」 순서로.
+# 옛 읽기용(2026-11-05 /pic A/B의 「C」, A4 폭·1~2쪽)은 git에 있음. A/B 경위: docs/history/2026-11.md
+SYSTEM_READ = """너는 칠판에 흩어진 메모·검색 결과·회의록·표를 읽고, 처음 보는 사람이 한 번에 이해하도록 정리한 문서 한 장을 만드는 편집 디자이너다.
 출력은 완결된 HTML 문서 하나뿐이다(설명·코드펜스 없이 <!doctype html>로 시작). <title>에 문서 제목을 쓴다.
-디자인(배치·색·글꼴 크기·형식)은 이 자료에 가장 알맞게 네가 정한다. 아래는 이 문서가 놓이는 자리 때문에 꼭 지킬 것뿐이다.
 
-[놓이는 자리]
-- 칠판 위 카드(스크립트가 돌지 않는 틀)로 보이고, 크게 열어 A4 세로로 인쇄·PDF로 저장한다. @page { size: A4; margin: 14mm }, 화면에서도 A4 폭 안에. 1~2쪽 안에.
-- 스크립트·외부 파일·외부 글꼴·외부 그림을 쓰지 않는다(인터넷 없이 열려야 함). 글꼴은 한글이 있는 것만 — 목록 끝에 'Malgun Gothic','Apple SD Gothic Neo',sans-serif.
-- 정지된 문서다: 버튼·탭·접기·마우스 올리기처럼 누르거나 움직이는 것을 쓰지 않고, 누르는 것처럼 보이는 모양도 그리지 않는다. 숨길 내용은 펼쳐서 보인다.
-- 인쇄하는 문서라 넓은 면을 진한 색으로 채우지 않는다.
-- body에 word-break: keep-all(한글이 낱말 중간에서 줄바꿈되지 않게). 칸 높이를 고정하지 않는다(글이 넘쳐 겹치지 않게 내용만큼 늘게).
+[디자인 — 네가 정하되 이 원칙으로]
+- 이 자료가 속한 분야의 실제 재료·말에서 색과 모양을 고른다. 비슷한 다른 문서에도 똑같이 나올 모양이면 다시 고른다.
+- 흔한 AI 디자인을 피한다: 크림색 바탕 + 명조 제목 + 주황 강조, 보라·파랑 그라데이션 머리, 이모지 소제목, 모든 것 가운데 정렬, 모든 칸에 같은 둥근 모서리·그림자.
+- 색은 4~6개로 정해 일관되게. 회색도 강조색 쪽으로 살짝 기운 것을 고른다. 강조색은 중요한 곳에만.
+- 글꼴은 한글이 있는 것만 — 목록 끝에 'Malgun Gothic','Apple SD Gothic Neo',sans-serif. 제목·본문·숫자 크기를 단계로 정해 지킨다. 중요한 부분은 글자 크기·굵기·포인트 색으로 구분한다.
+- 테두리·채움·그림자는 따로 떼어 보여야 할 것에만. 같은 종류가 반복되면 같은 여백·같은 기준선.
+- 꾸미려고 넣는 요소는 쓰지 않는다. 번호·구분선·이름표는 뜻이 있을 때만(진짜 순서일 때만 번호).
+
+[그래프·표]
+- 이야기가 숫자 하나면 그래프 대신 큰 숫자로. 막대 하나짜리 그래프·두 조각 원은 쓰지 않는다. 몇 개 안 되는 숫자는 숫자 그대로.
+- 비슷한 값끼리 비교는 원·도넛 대신 막대나 숫자로. 원·도넛은 전체 중 몫을 볼 때만, 6조각까지.
+- 세로축 둘을 한 그래프에 겹치지 않는다(두 그래프로 나누거나 같은 기준 = 100으로 맞춤).
+- 한 계열 = 한 색. 순서 없는 항목을 크기에 따라 진하게 칠하지 않는다. 하나를 강조하려면 그것만 색, 나머지는 회색. 색 구분은 8개까지(넘으면 「그 밖」으로 묶음).
+- 좋음·나쁨을 뜻하는 색은 그 뜻일 때만 쓴다.
+- 표시는 얇게, 격자·축은 가는 실선(점선 아님), 여백은 넉넉히. 모든 점에 숫자를 달지 않는다 — 끝점·최고값처럼 중요한 것만, 계열이 둘 이상이면 범례.
+- 한 눈금에 맞춰 그리고, 눈금 글자는 실제로 닿는 값만. 글자·표시가 서로 겹치거나 칸 밖으로 나가지 않게 둔다(인라인 SVG는 viewBox에 바깥 글자 자리를 남긴다).
 
 [내용]
-- 이 문서의 결론(가장 중요한 한 문장)을 맨 위에, 문서에서 가장 눈에 띄게 둔다.
-- 처음 보는 사람이 모를 용어는 그 자리에서 한 줄로 풀어 쓴다.
-- 흐름·단계·시간 순서·추이·갈래·비교처럼 구조가 있는 내용은 글이나 표 대신 그 구조를 그대로 그린다(흐름도·타임라인·그래프·나란한 칸 — 인라인 SVG나 HTML로). 읽는 사람이 글을 따라가지 않고 한눈에 보게. 몇 개 안 되는 숫자는 숫자 그대로 쓰고, 꾸미려고 넣는 그림은 쓰지 않는다. 칠판에 없는 연결·담당은 그림에도 지어 넣지 않는다.
-- 한국어. 칠판에 없는 사실은 지어내지 않는다. 계산한 값(합계·비율)은 자료에서 계산했다고 작게 밝힌다. 값을 옮기거나 계산할 때 그 값의 뜻(무엇의 평균인지 등)이 결론과 맞는지 확인한다.
-- 마지막에 짧은 「핵심 의견」 한 칸은 넣어도 되지만 작성자 의견임을 밝힌다. 출처 주소가 있으면 각주처럼 작게 남긴다."""
+- 이 문서의 결론(가장 중요한 한 문장)을 맨 위에, 문서에서 가장 눈에 띄게.
+- 내용마다 모양 하나: 숫자 = 큰 숫자·막대, 순서 = 단계, 비교 = 나란한 칸, 구조 = 갈래·상자와 선(인라인 SVG나 HTML). 구조가 있으면 목록 대신 구조를 그린다.
+- 처음 보는 용어는 그 자리에서 한 줄로 풀어 쓴다. 내용이 많아도 줄이지 않는다(칸을 나란히 놓아 담는다).
+- 확인된 것과 아직인 것(자료에 없는 것)을 나눠 보인다.
+- 마지막에 짧은 「핵심 의견」 칸을 둔다 — 이 자료로 무엇을 하면 좋을지 작성자 의견임을 밝히고 쓴다.
+- 한국어. 칠판에 없는 사실은 지어내지 않는다. 계산한 값은 자료에서 계산했다고 작게 밝힌다. 출처 주소가 있으면 각주처럼 작게.
 
-STYLES = {"present": "발표용", "read": "읽기용"}   # 차례 = 칠판에 놓는 차례(왼쪽부터)
+[놓이는 자리]
+- 칠판 위 카드(스크립트가 돌지 않는 틀)로 보이고, 크게 열어 인쇄·PDF로 저장한다. 화면 폭 1000px 기준으로 짜고 가운데에 둔다.
+  인쇄(@media print)에선 A4 세로 폭에 맞게 줄어들게(@page { size: A4; margin: 12mm }). 쪽수는 내용만큼.
+- 스크립트·외부 파일·외부 글꼴·외부 그림을 쓰지 않는다(인터넷 없이 열려야 함).
+- 정지된 문서다: 버튼·탭·접기·마우스 올리기·애니메이션 없이, 숨길 내용은 펼쳐서 보인다. 넓은 면을 진한 색으로 채우지 않는다(인쇄).
+- body에 word-break: keep-all. 칸 높이를 고정하지 않는다(내용만큼 늘게)."""
+
+# 블록(2026-11-09 문서 통합 1단계 — 2단계 「블록 골라 AI로 고치기」의 바탕): 덩어리마다 data-block 번호 + data-kind.
+# 모델이 빠뜨리거나 하나만 달면 `ensure_blocks`가 본문 맨 위 덩어리마다 붙임(감싼 상자가 하나뿐이면 한 겹 안으로).
+BLOCK_RULE = """
+[블록 — 나중에 「이 부분만」 고치려고 다는 표시, 화면엔 안 보임]
+- 본문의 덩어리(결론 문장·단락·목록·표·그래프·그림·강조 상자·카드 묶음)마다, 그 덩어리를 감싼 바깥 요소에 data-block="b1", "b2"…(위에서부터 차례로)와
+  data-kind="text|table|chart|image|box" 중 하나를 단다(글 = text, 표 = table, 그래프·도표 = chart, 그림 = image, 강조 상자·카드 묶음 = box).
+- 덩어리는 사람이 「이 부분」이라고 가리킬 만한 크기다. 글줄마다 나누지 않고, 문서 전체를 하나로 묶지도 않는다. 블록 안에 블록을 넣지 않는다."""
+BLOCK_KINDS = ("text", "table", "chart", "image", "box")
+_VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+
+
+def _children(doc: str, start: int, end: int) -> list:
+    """doc[start:end] 안의 바로 아래 요소들 [(태그, 여는 태그 시작, 여는 태그 끝, 닫는 태그 끝)] — 정규식 짝 맞추기(주석·문자열은 무시하지 않는 단순판)."""
+    out, depth, cur = [], 0, None
+    for m in re.finditer(r"<(/?)([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*?(/?)>", doc[start:end]):
+        close, tag, selfc = m.group(1), m.group(2).lower(), m.group(3)
+        a, b = start + m.start(), start + m.end()
+        if tag in _VOID or selfc:
+            if depth == 0:
+                out.append((tag, a, b, b))
+            continue
+        if not close:
+            if depth == 0:
+                cur = (tag, a, b)
+            depth += 1
+        elif depth > 0:
+            depth -= 1
+            if depth == 0 and cur:
+                out.append((cur[0], cur[1], cur[2], b))
+                cur = None
+    return out
+
+
+def _kind_of(chunk: str, tag: str) -> str:
+    low = chunk.lower()
+    if tag == "table" or ("<table" in low and "<svg" not in low):
+        return "table"
+    if "<svg" in low:
+        return "chart"
+    if tag in ("img", "figure", "picture") or "<img" in low:
+        return "image"
+    return "text" if tag in ("p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote", "header") else "box"
+
+
+def ensure_blocks(doc: str) -> str:
+    """모델이 단 블록이 둘 이상이면 그대로, 아니면 본문 맨 위 덩어리마다 data-block="bN"·data-kind를 붙임.
+    감싼 상자(main·div 하나)뿐이면 한 겹씩 안으로 들어가 셈. style·script·빈 태그는 블록이 아님."""
+    if len(re.findall(r"\sdata-block\s*=", doc or "")) >= 2:
+        return doc
+    m = re.search(r"<body\b[^>]*>", doc or "", re.I)
+    a = m.end() if m else 0
+    e = (doc or "").lower().rfind("</body>")
+    b = e if e > a else len(doc or "")
+    for _ in range(4):   # 감싼 상자 벗기기(최대 네 겹)
+        kids = [k for k in _children(doc, a, b) if k[0] not in _VOID and k[0] not in ("style", "script", "link", "meta", "title")]
+        if len(kids) == 1 and kids[0][0] in ("main", "div", "article", "section"):
+            tag, s0, s1, s2 = kids[0]
+            a, b = s1, doc.rfind("</", s1, s2)
+            continue
+        break
+    else:
+        kids = []
+    if len(kids) < 2:
+        return doc
+    out, last = [], 0
+    for n, (tag, s0, s1, s2) in enumerate(kids, 1):
+        head = re.sub(r"\sdata-(?:block|kind)\s*=\s*(\"[^\"]*\"|'[^']*'|\S+)", "", doc[s0:s1])
+        close = "/>" if head.endswith("/>") else ">"
+        head = head[: -len(close)].rstrip() + f' data-block="b{n}" data-kind="{_kind_of(doc[s0:s2], tag)}"' + close
+        out.append(doc[last:s0] + head)
+        last = s1
+    return "".join(out) + doc[last:]
+
+
+def block_count(doc: str) -> int:
+    return len(re.findall(r"\sdata-block\s*=", doc or ""))
+
+SYSTEM += BLOCK_RULE
+SYSTEM_READ += BLOCK_RULE
+
+STYLES = {"present": "발표용", "read": "읽기용"}   # 기본 = read(「문서」 한 장), present는 「발표용으로」라고 말할 때만
+PAGE_W = {"present": 794, "read": 1000}   # 문서가 짜인 폭(칠판 카드가 이 폭을 기준으로 줄여 보임 — 웹 `docPageW`)
 _STYLE_WORDS = {"present": r"발표용|발표\s*(?:자료\s*)?(?:느낌|스타일)", "read": r"읽기용|읽기\s*(?:좋|느낌|스타일)|차분하게"}
 
 
@@ -98,6 +197,7 @@ def found_text(found: dict | None) -> str:
 
 
 REVISE = """아래는 앞서 만든 정리 문서다. 사용자의 요청대로 고친 완결된 HTML 문서 하나만 다시 출력한다(같은 규칙 — 스크립트·외부 파일 없음, A4 인쇄).
+블록 표시(data-block·data-kind)는 그대로 두고, 새로 생긴 덩어리엔 이어지는 번호를 단다.
 
 [앞 문서]
 {prev}
@@ -211,12 +311,12 @@ def unchecked_numbers(doc: str, material: str, limit: int = 8) -> list:
     return out[:limit]
 
 
-def make(client, material: str, ask: str = "", *, prev_html: str = "", model: str = REPORT_MODEL, images=None, style: str = "present", found: dict | None = None) -> dict:
+def make(client, material: str, ask: str = "", *, prev_html: str = "", model: str = REPORT_MODEL, images=None, style: str = "read", found: dict | None = None) -> dict:
     """칠판 자료(+요청) → {"html", "title", "model", "elapsed", "tone", "unchecked", "style"}. `prev_html`이 있으면 그 문서를 `ask`대로 고쳐 씀(톤은 말했을 때만 바꿈).
     unchecked = 자료에서 그대로 못 찾은 숫자(`unchecked_numbers` — 서버가 답 글에 알림). images = 칠판 그림(`see` — 새로 쓸 때만, 고쳐 쓰기는 앞 문서가 재료).
     style = "present"(발표용 — 기본 톤 차분) / "read"(읽기용 — 색은 모델이 고르고 톤은 말했을 때만).
     found = 서버가 찾아 보탠 자료 {"text", "sources": [{n, title, url}]}(새로 쓸 때만 — `find_gaps` → `deep_mode.gather`)."""
-    style = style if style in STYLES else "present"
+    style = style if style in STYLES else "read"
     tone = tone_of(ask)
     images = [] if prev_html else list(images or [])
     if prev_html:
@@ -228,7 +328,7 @@ def make(client, material: str, ask: str = "", *, prev_html: str = "", model: st
                 + "위 자료를 정리한 문서 한 장을 만들어 줘.")
     t0 = time.time()
     r = client.chat.completions.create(model=model, max_tokens=MAX_TOKENS, messages=see.attach([{"role": "system", "content": SYSTEM_READ if style == "read" else SYSTEM}, {"role": "user", "content": user}], images))
-    doc = clean_html(r.choices[0].message.content or "")
+    doc = ensure_blocks(clean_html(r.choices[0].message.content or ""))
     if "<" not in doc:
         raise RuntimeError("정리 문서를 만들지 못했어요(HTML이 아닌 답)")
-    return {"html": doc, "title": title_of(doc), "model": model, "elapsed": round(time.time() - t0, 1), "tone": tone, "unchecked": unchecked_numbers(doc, material + ("\n" + found["text"] if not prev_html and found and found.get("text") else "")), "style": style}
+    return {"html": doc, "title": title_of(doc), "model": model, "elapsed": round(time.time() - t0, 1), "tone": tone, "unchecked": unchecked_numbers(doc, material + ("\n" + found["text"] if not prev_html and found and found.get("text") else "")), "style": style, "blocks": block_count(doc), "page_w": PAGE_W[style]}

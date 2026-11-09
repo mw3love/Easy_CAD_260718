@@ -19,7 +19,7 @@ test('정리해 줘 → 📄 미리보기 → 문서 카드 → 더 짧게 = 고
 
   await page.getByPlaceholder('물어보세요', { exact: false }).click()
   await page.keyboard.type('이거 정리해 줘'); await page.keyboard.press('Enter')
-  await expect(page.getByTestId('answer-kind')).toHaveText('📄 정리 문서')
+  await expect(page.getByTestId('answer-kind')).toHaveText('📄 문서')
   await expect(page.getByTestId('answer-doc').locator('iframe')).toHaveAttribute('srcdoc', /회의 브리핑/)
   expect(JSON.stringify(seen[0].messages.at(-1).context || '')).toContain('송신기 이상 보고')
   expect(seen[0].prev_html).toBeUndefined()
@@ -34,7 +34,7 @@ test('정리해 줘 → 📄 미리보기 → 문서 카드 → 더 짧게 = 고
 
   await page.getByPlaceholder('물어보세요', { exact: false }).click()
   await page.keyboard.type('더 짧게'); await page.keyboard.press('Enter')
-  await expect(page.getByTestId('answer-kind').last()).toHaveText('📄 정리 문서')
+  await expect(page.getByTestId('answer-kind').last()).toHaveText('📄 문서')
   expect(seen[1].prev_html).toContain('<h1>회의 브리핑</h1>')                       // 바로 앞 문서를 바탕으로
 
   await clickScene(page, 1500, 900)

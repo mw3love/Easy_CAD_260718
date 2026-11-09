@@ -17,7 +17,7 @@ test('AI 칩 — 고르면 뜸 · 단추 한 번은 고르기만 · Enter = 문�
   const name = boardName('aichip'), seen = []
   await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
   await page.route('**/api/chat', async r => { const b = r.request().postDataJSON(); seen.push(b)
-    await r.fulfill({ json: { kind: 'report', content: '정리 문서', title: '점검 정리', html: html('점검 정리'), docs: [{ style: 'read', html: html('점검 정리'), title: '점검 정리' }], model: 'claude-opus-5-5', elapsed: 3 } }) })
+    await r.fulfill({ json: { kind: 'report', content: '정리 문서', title: '점검 정리', html: html('점검 정리'), docs: [{ style: 'read', html: html('점검 정리'), title: '점검 정리' }], page_w: 1000, model: 'claude-opus-5-5', elapsed: 3 } }) })
   await openBoard(page, name, { chat: false }); await setCam(page)
   await expect(page.getByTestId('ai-chip')).toHaveCount(0)                          // 아무것도 안 고름 = 칩 없음
   const memos = await twoMemos(page)
@@ -25,6 +25,7 @@ test('AI 칩 — 고르면 뜸 · 단추 한 번은 고르기만 · Enter = 문�
   const chip = page.getByTestId('ai-chip'); await expect(chip).toBeVisible()
   await chip.click()
   const panel = page.getByTestId('ai-panel'); await expect(panel).toContainText('고른 것 2개')
+  await expect(panel.getByTestId('ai-kind')).toHaveText(['문서', '슬라이드'])   // 2026-11-09 문서 통합 1단계 — 디자인·HTML은 문서로 합침
   await panel.locator('[data-kind="doc"]').click()
   await expect(panel.locator('[data-kind="doc"]')).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByTestId('ai-input')).toHaveAttribute('placeholder', /문서 — 바라는 점/)
@@ -32,9 +33,12 @@ test('AI 칩 — 고르면 뜸 · 단추 한 번은 고르기만 · Enter = 문�
   await page.getByTestId('ai-input').press('Enter')
   await expect.poll(() => seen.length).toBe(1)
   expect(seen[0].kind).toBe('report')
-  expect(seen[0].messages.at(-1).content).toContain('읽기용')                          // 서버 `style_of` = 읽기용 한 장만
+  expect(seen[0].messages.at(-1).content).toContain('문서 한 장')                       // 서버 기본 = 문서(읽기용) 한 장
   expect(JSON.stringify(seen[0].messages.at(-1).context || '')).toContain('예비 송신기 시험')   // 고른 것이 재료
   await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'doc').length).toBe(1)   // 칠판에 바로 붙음
+  const card = (await liveDoc(page)).items.find(it => it.type === 'doc')
+  expect(card.page_w).toBe(1000); expect(card.rect[2]).toBe(500)                          // 1000px 문서 = 카드 폭 500(옛 A4 794 = 397)
+  await expect(page.locator(`iframe[data-docid="${card._id || card.uid}"]`)).toHaveCSS('width', '1000px')
   expect(memos).toHaveLength(2)
   await page.screenshot({ path: 'test-results/ai-chip-doc.png' })
 })

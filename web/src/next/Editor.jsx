@@ -916,14 +916,12 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 고른 것의 주제 = 판·문서·프레임 이름, 메모면 맨 위 제목 줄(2026-11-02 실검증) — AI 칩이 대화창에 넘길 말에 씀
   const selTopic = selIt => selIt.find(it => it.deep_plan)?.deep_plan?.plan?.title || selIt.find(it => it.type === 'doc')?.title || selIt.find(it => it.type === 'frame')?.name
     || selIt.map(it => it.type === 'memo' && it.lines?.find(l => /^h[123]$/.test(l.k) && l.t.trim())?.t.trim()).find(Boolean) || ''
-  // ✨ AI 칩 실행(2026-11-09 — 클로드 아티팩트 넷): 문서 = 정리 문서 읽기용 한 장 → 칠판에 붙임 · 슬라이드 = 발표 자료 질문지 · 디자인 = 취재 한 판(재료 = 칠판 + 검색) · HTML = 움직이는 카드.
+  // ✨ AI 칩 실행(2026-11-09): 문서 = 읽기용 한 장(블록·찾아 보태기) → 칠판에 붙임 · 슬라이드 = 발표 자료 질문지(문서 통합 1단계 — 디자인·HTML 단추는 문서로 합침).
   // 단추 없이 말만 = 하나면 그 물건 말풍선, 여럿이면 큰 대화창(고른 것이 맥락). 옛 우클릭 「정리 › 문서로 / 한 판으로」·「발표 자료 만들기」를 대신함
   function aiRun(kind, text) {
     const ids = R.current.sel, selIt = R.current.model.items.filter(it => ids.includes(it._id)), t0 = selTopic(selIt) || '고른 자료'
-    if (kind === 'doc') onAsk?.(`고른 것을 정리한 읽기용 문서 한 장으로 만들어 줘${text ? ` — ${text}` : ''}`, 'report', { pin: true })
+    if (kind === 'doc') onAsk?.(`고른 것을 문서 한 장으로 만들어 줘${text ? ` — ${text}` : ''}`, 'report', { pin: true })
     else if (kind === 'slide') onAsk?.(`${t0} — 슬라이드${text ? `: ${text}` : ''}`, 'slides')
-    else if (kind === 'design') onAsk?.(text ? `${t0} — ${text}` : t0, 'deep')
-    else if (kind === 'html') onAsk?.(text || `${t0} — 직접 움직여 볼 수 있게`, 'live', { pin: true })
     else if (ids.length === 1 && onBubble) onBubble(ids[0], text)
     else onAsk?.(text, '')
   }
@@ -1563,11 +1561,12 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       download(await r.blob(), name + '.hwpx'); setStatus(`${name}.hwpx 내려받음 — 모양은 빼고 글·표만 옮겼어요(그래프는 [그림] 글로)`)
     } catch { setStatus('한글 파일로 못 바꿨어요 — 서버 연결을 확인해 주세요') }
   }
-  const DOC_W = 397
+  const DOC_W = 397   // 옛 A4 문서(794의 절반) — 새 문서는 쪽 폭(`page_w` 1000)의 절반
   const LIVE_DOC_W = 480   // 움직이는 카드(§8 항목66 4단계) — 기준 칸 720×480을 2/3로(높이 = 띠 + 같은 비율)
   function docItem(msg, x, y, z) {
     if (msg.live || msg.kind === 'live') return base([x, y], { type: 'doc', live: true, rect: [0, 0, LIVE_DOC_W, WEB_HEAD + Math.round(LIVE_DOC_W * LIVE_H / LIVE_W)], title: msg.title || '인터랙티브 HTML', html: msg.html, model: msg.model || '', chat_at: msg.at, z })
-    return base([x, y], { type: 'doc', rect: [0, 0, DOC_W, WEB_HEAD + Math.round(DOC_W * 1.414)], title: msg.title || '정리 문서', html: msg.html, model: msg.model || '', chat_at: msg.at, ...(msg.style ? { style: msg.style } : {}), z })   // style = 발표용·읽기용(남긴 쪽 세기 `web/usage.py`)
+    const dw = msg.page_w ? Math.round(msg.page_w / 2) : DOC_W
+    return base([x, y], { type: 'doc', rect: [0, 0, dw, WEB_HEAD + Math.round(dw * 1.414)], ...(msg.page_w ? { page_w: msg.page_w } : {}), title: msg.title || '문서', html: msg.html, model: msg.model || '', chat_at: msg.at, ...(msg.style ? { style: msg.style } : {}), z })   // style = 발표용·읽기용(남긴 쪽 세기 `web/usage.py`)
   }
   // 「칠판에서」 답(§8 항목61 ③-2) = 메모 + 근거가 된 칠판 도형으로 가는 점선 화살표(메모 쪽 변 → 근거 쪽 변, 가까운 포트끼리). 근거 도형은 제자리 그대로 — 메모와 화살표만 한 묶음
   function boardRefItems(memo, refs, z) {
@@ -1632,7 +1631,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const cut = s => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > 24 ? s.slice(0, 23) + '…' : s }
     const one = it => {
       if (it.type === 'web') return ['웹', it.title]
-      if (it.type === 'doc') return [it.live ? '인터랙티브 HTML' : '정리 문서', it.title]
+      if (it.type === 'doc') return [it.live ? '인터랙티브 HTML' : '문서', it.title]
       if (it.type === 'pdf') return ['PDF', it.name]
       if (it.type === 'image') return ['이미지', it.alt]
       if (it.type === 'memo') return ['메모', (it.lines || []).map(l => (typeof l?.t === 'string' ? l.t : '')).find(t => t.trim())]

@@ -20,7 +20,9 @@ test('「+」 창 없음 — 입력 칸 옆엔 📎·🎤·⚙만(2026-11-08 「
   await expect(page.getByTestId('plus')).toHaveCount(0); await expect(page.getByTestId('tool-chip')).toHaveCount(0)
 })
 
-test('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 다시 열어도 그대로', async ({ page }) => {
+// ⏸ 2026-11-09 문서 통합 1단계: 취재 한 판을 새로 만드는 입구가 없어짐(칩 「디자인」 → 문서로 합침, 질문지 「한 판 / 여러 장」 전환은 11-08부터 켜는 곳 없음).
+// 엔진·예전 지면 고치기는 남김 — 2·3단계(블록 고치기)에서 흡수할지 정할 때 이 시험도 정리.
+test.skip('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 다시 열어도 그대로', async ({ page }) => {
   const sent = []
   await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { deep: 'claude-opus-5-5' } } }))
   await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); sent.push(b); const d = b.deep || {}
@@ -34,7 +36,8 @@ test('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 
   await expect.poll(async () => (await liveDoc(page)).items.length).toBe(1)
   const memo = (await liveDoc(page)).items[0], at = await toPage(page, memo.pos[0] + 30, memo.pos[1] + 12)
   await page.mouse.click(at.x, at.y, { button: 'right' })
-  await aiMake(page, 'design')   // 주제 = 메모 맨 위 제목
+  await aiMake(page, 'slide')   // 주제 = 메모 맨 위 제목 — 2026-11-09 칩 「디자인」을 문서로 합침: 한 판은 질문지 맨 위 「📰 한 판」으로
+  await page.getByTestId('deep-shape').locator('[data-v="deep"]').click()
   const ask = page.getByTestId('deep-ask')
   await expect(ask).toBeVisible()
   expect(sent).toHaveLength(0)                                                       // 질문지는 서버를 안 부름
@@ -53,8 +56,8 @@ test('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 
   const plan1 = page.getByTestId('deep-plan').first()
   await expect(plan1).toBeVisible()
   expect(sent[0].kind).toBe('deep')
-  expect(sent[0].deep).toEqual({ step: 'plan', topic: '어텐션이 뭐야? 신입 교육용으로',
-    brief: { 누구에게: '처음 보는 사람', 무엇에: '공부·교육', 깊이: '알아서', '꼭 넣을 것': ['숫자·그래프'], 재료: '둘 다', 더: '그림은 빼 줘' } })   // AI 칩 「디자인」 = 재료 「둘 다」를 미리 고름(2026-11-09)
+  expect(sent[0].deep).toMatchObject({ step: 'plan', brief: { 누구에게: '처음 보는 사람', 무엇에: '공부·교육', 깊이: '알아서', '꼭 넣을 것': ['숫자·그래프'], 더: '그림은 빼 줘' } })
+  expect(sent[0].deep.topic).toContain('어텐션이 뭐야? 신입 교육용으로')
   await expect(ask.locator('[data-v]')).toHaveCount(0); await expect(ask).toContainText('지면 계획을 짰어요')   // 질문지는 잠김 = 고른 답 요약만(2026-11-07)
   const N = FULL.sections.length
   await expect(plan1.getByTestId('deep-sec')).toHaveCount(N)

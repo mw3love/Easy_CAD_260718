@@ -258,7 +258,7 @@ class Handler(SimpleHTTPRequestHandler):
             if kind == "live":
                 return self._live(str(last.get("content", "")), ctx or str(last.get("context") or ""), key, prev_html if req.get("prev_kind") == "live" else "", see.clean(bimgs))
             if kind == "report":   # 「정리해 줘」 ① — 고른 것(없으면 칠판 전체)을 정리 문서 한 장으로(§8 항목61)
-                return self._report(self._name(str(req.get("board") or "")), str(last.get("content", "")), ctx or str(last.get("context") or ""), prev_html, key, see.clean(bimgs), prev_docs)
+                return self._report(self._name(str(req.get("board") or "")), str(last.get("content", "")), ctx or str(last.get("context") or ""), prev_html, key, see.clean(bimgs), prev_docs, str(req.get("prev_style") or ""))
             if kind == "image":   # 「○○ 그려줘」 — 그림 후보(§8 항목61 ③-4): 칠판 옆 폴더에 두고 주소만 대화 기록에(기록이 그림으로 불지 않게)
                 name, prompt = self._name(str(req.get("board") or "")), str(last.get("content", ""))
                 if req.get("infographic"):   # 정리 문서의 「🎨 그림으로도」 — 같은 자료(고른 것, 없으면 칠판 전체)로 인포그래픽
@@ -561,7 +561,7 @@ class Handler(SimpleHTTPRequestHandler):
         tip = "칠판에 놓았어요. 상자를 옮기면 화살표가 따라와요 · 「○○ 추가해 줘」처럼 말하면 이 도형을 고쳐요"
         return self._json(200, {"kind": "diagram", "content": f"{head}\n\n{tip}", **out, "fixed": bool(base_spec), "credits": self._spent(key, base, b0)})
 
-    def _report(self, name: str, ask: str, material: str, prev_html: str, key: str, images=None, prev_docs=None):
+    def _report(self, name: str, ask: str, material: str, prev_html: str, key: str, images=None, prev_docs=None, prev_style: str = ""):
         """정리 문서 → {"kind": "report", "content", "title", "html", "model", "elapsed"} — 자료 = 고른 것의 글·그림, 없으면 이 칠판 전체 글·그림(`see`)."""
         images = list(images or [])
         prev_docs = [d for d in (prev_docs or []) if isinstance(d, dict)][:2]
@@ -575,9 +575,9 @@ class Handler(SimpleHTTPRequestHandler):
         if prev_docs:
             jobs = [(d["style"], d["html"]) for d in prev_docs if d.get("style") in board_report.STYLES and d.get("html") and (not pick or d["style"] == pick)] or [(d["style"], d["html"]) for d in prev_docs[:1]]
         elif prev_html:
-            jobs = [("present", prev_html)]
+            jobs = [(prev_style if prev_style in board_report.STYLES else "present", prev_html)]   # 앞 문서의 모양 그대로(옛 한 장 = 발표용)
         else:
-            jobs = [(s, "") for s in ([pick] if pick else board_report.STYLES)]
+            jobs = [(pick or "read", "")]   # 2026-11-09 문서 통합 1단계: 한 장(「문서」 = 읽기용), 「발표용으로」라고 하면 그쪽
         client = gw._client(key, self._base(), timeout=600)
         found = None   # 찾아 보태기(2026-11-09) — 새로 쓸 때만, 칠판 자료가 빈약한 사실만(`find_gaps`), 찾기는 취재 한 판 재료 모으기 그대로
         if not prev_html and not prev_docs:
@@ -611,7 +611,7 @@ class Handler(SimpleHTTPRequestHandler):
         note = f"\n\n숫자는 {why}. 문서에서 한 번 확인해 주세요" if any(o.get("unchecked") for o in docs) else ""
         fail = f"\n\n한 장은 못 만들었어요: {gw.friendly_error(errs[0])}" if errs else ""
         fail += f"\n\n칠판에 없던 것을 찾아 보탰어요(찾아본 질문 {found['asked']}개) — 쓴 출처는 문서 끝에" if found else ""   # 출처 수 = 검색 결과 전부라 부풀려짐(실측 24곳, 문서엔 9곳)
-        head = "정리 문서 두 장 — 발표용(화려)·읽기용(차분), 칠판에 나란히 붙여요. 안 쓸 쪽은 지우면 돼요" if len(docs) > 1 else "정리 문서 — 칠판에 붙이면 인쇄용 문서 카드가 돼요"
+        head = "정리 문서 두 장 — 발표용(화려)·읽기용(차분), 칠판에 나란히 붙여요. 안 쓸 쪽은 지우면 돼요" if len(docs) > 1 else "문서 — 칠판에 붙이면 인쇄용 문서 카드가 돼요"
         body = "\n".join(("· " if len(docs) > 1 else "") + ln for ln in lines)
         return self._json(200, {"kind": "report", "content": f"{head}\n\n{body}{note}{fail}", **docs[0],
                                 "docs": [{**d, "label": board_report.STYLES[d["style"]]} for d in docs]})
