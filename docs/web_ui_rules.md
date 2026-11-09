@@ -9,6 +9,8 @@
 - **색**: 코랄은 CSS 변수 `--mb-accent`(`web/index.html`) 하나다. 화면 코드에서는 `var(--mb-accent)`로 쓴다.
   예외는 SVG 그리기 속성(`fill=`·`stroke=`)이다 — 거기엔 CSS 변수가 안 먹으니 `#da7756` 그대로 둔다(`render.jsx`·`skeleton.jsx`·레이어 연필 아이콘). 칠판에 저장되는 물건의 색(번호표 등)도 값 그대로다.
 - **아이콘 포인트 파랑**(2026-11-08): 위 막대·왼쪽 판 아이콘의 채운 부분만 `--mb-icon-acc`(`web/index.html` `.mb-btn-icon`). 코랄과 달리 상태를 뜻하지 않는다 — 켜짐 표시는 그대로 코랄 바탕.
+- **글자 색은 두 화면에서 4.5 이상**: 링크 = `var(--mb-link)`. 밝게/어둡게 값이 다른 이름표·상태 글은 `light-dark(밝은 화면, 어두운 화면)`로 쓴다(`chat.jsx` `KINDS`, 2026-11-09). 코랄 글자만 예외(사용자 결정).
+- **글 칸 초점**: 글 칸은 `className="mb-field"` — 초점이면 테두리 파랑. **끌어서 폭 조절**은 `role="separator"` + `tabIndex={0}` + ← → 글쇠를 같이 단다.
 - **빨간 글**: 오류·경고 글자는 `var(--mb-danger-ink)`(라이트·다크 따로 — 대비 4.5 이상). `ui.jsx` `DANGER`(#d44c47)는 흰 글을 얹는 단추 바탕용이다(2026-11-09).
 - **초점 표시**: 단추가 `all: 'unset'`이어도 글쇠 초점 테두리는 `index.html`의 전역 `:focus-visible` 규칙이 그린다(파랑 `--mb-icon-acc`). 제 테두리를 직접 그리는 단추만 `data-own-ring`을 단다(확인 창). `outline: 'none'`으로 지우지 않는다(2026-11-09).
 - **메뉴**: `ctxmenu.jsx`의 `ContextMenu`(칠판 위)·`FloatMenu`(판 위) 하나뿐이다. 바깥 누르기·Esc로 닫힌다.

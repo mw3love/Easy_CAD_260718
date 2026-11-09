@@ -88,7 +88,7 @@ test('🔑 내 키 — 넣으면 물을 때 머리말로만, 지우면 서버 �
   await ask(page, '키 시험'); await expect(page.getByText('답 1')).toBeVisible()
   expect(seen[0].headers['x-kairos-key']).toBe('my-own-key-1234')
   expect(JSON.stringify(seen[0].body)).not.toContain('my-own-key-1234')
-  await page.getByRole('button', { name: /내 키/ }).click(); await page.getByTestId('key-box').getByRole('button', { name: '지우기' }).click()
+  await page.getByRole('button', { name: /내 키/ }).click(); await page.getByTestId('key-box').getByRole('button', { name: '지우기' }).click(); await page.getByTestId('key-delete-ok').click()
   await ask(page, '다시'); await expect(page.getByText('답 2')).toBeVisible()
   expect(seen[1].headers['x-kairos-key']).toBeUndefined()
 })

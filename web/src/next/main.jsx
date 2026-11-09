@@ -410,7 +410,8 @@ function Dock({ tab, setTab, panes, mini, width, setWidth, help, onHelp }) {   /
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>{panes[tab]}</div>
       {mini(width - 16)}
       {/* 폭 조절 — 오른쪽 경계 끌기(192~400), 두 번 누르면 192 */}
-      <div data-testid="dock-resize" title="끌어서 판 폭 조절 · 두 번 누르면 기본 폭" onDoubleClick={() => setWidth(DOCK_W)}
+      <div data-testid="dock-resize" role="separator" aria-orientation="vertical" aria-label="왼쪽 판 폭 조절" aria-valuenow={width} aria-valuemin={DOCK_W} aria-valuemax={DOCK_MAX} tabIndex={0} title="끌어서 판 폭 조절(글쇠 ← →) · 두 번 누르면 기본 폭" onDoubleClick={() => setWidth(DOCK_W)}
+        onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); setWidth(Math.max(DOCK_W, Math.min(DOCK_MAX, width + (e.key === 'ArrowRight' ? 16 : -16)))) } }}
         onPointerDown={e => { e.preventDefault(); const x0 = e.clientX, w0 = width, el = e.currentTarget; el.setPointerCapture(e.pointerId)
           const mv = ev => setWidth(Math.max(DOCK_W, Math.min(DOCK_MAX, Math.round(w0 + ev.clientX - x0)))), up = () => { el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up) }
           el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up) }}
