@@ -15,7 +15,7 @@
 - **초점 표시**: 단추가 `all: 'unset'`이어도 글쇠 초점 테두리는 `index.html`의 전역 `:focus-visible` 규칙이 그린다(파랑 `--mb-icon-acc`). 제 테두리를 직접 그리는 단추만 `data-own-ring`을 단다(확인 창). `outline: 'none'`으로 지우지 않는다(2026-11-09).
 - **메뉴**: `ctxmenu.jsx`의 `ContextMenu`(칠판 위)·`FloatMenu`(판 위) 하나뿐이다. 바깥 누르기·Esc로 닫힌다.
   ⋯ 단추로 열 때는 `ui.jsx`의 `menuBelow(e)`로 자리를 잡는다 — 그 단추를 `anchor`로 기억해서, 같은 ⋯를 다시 누르면 닫힌다.
-- **확인 창·단추·마우스 올림**: `ui.jsx`의 `Confirm`·`btnPrimary`·`btnSecondary`·`btnHead`·`moreBtn`·`hoverBg`. `Confirm`은 `<dialog>`(showModal — 뒤 막힘·Tab은 창 안), 메뉴 항목에서 열면 `returnTo`에 메뉴를 연 단추를 준다. 작은 단추(⋯·▾)는 겉모양 그대로 `className="mb-hit"` + `position: 'relative'`(`--hit`로 넓힐 둘레)로 누르는 자리를 24px 이상(2026-11-09).
+- **확인 창·단추·마우스 올림**: `ui.jsx`의 `Confirm`·`btnPrimary`·`btnSecondary`·`btnHead`·`moreBtn`·`hoverBg`. `Confirm`은 `<dialog>`(showModal — 뒤 막힘·Tab은 창 안), 메뉴 항목에서 열면 `returnTo`에 메뉴를 연 단추를 준다. 새 큰 창도 `useModalDialog`로 같은 방식(`chat.jsx` `BigModal`). 작은 단추(⋯·▾)는 겉모양 그대로 `className="mb-hit"` + `position: 'relative'`(`--hit`로 넓힐 둘레)로 누르는 자리를 24px 이상(2026-11-09).
 
 - **위 막대와 왼쪽 판**(2026-11-09 시안 C): 판이 열린 넓은 창에서는 위 막대 왼쪽이 판의 머리다 — 이름 칸 폭 = 판 폭, 도구는 판 끝선 오른쪽부터, 이름 밑 가로줄 없음(`main.jsx` `headed`). 도구가 들어갈 자리가 없으면 예전 배치. 위 막대에 버튼을 많이 더해 도구 줄이 길어지면 `TOOLS_ROOM`도 다시 잰다.
 

@@ -36,14 +36,20 @@ export const menuBelow = (e, extra = {}) => { const r = e.currentTarget.getBound
 
 // 규칙 ⑥ — 되돌릴 수 없는 지우기만 묻는 앱 안 확인 창(브라우저 confirm은 칠판 조작을 막음).
 // Enter = 확인(초점 테두리로 Enter가 누를 단추를 보여 줌) · Esc·바깥 = 취소. danger = 빨간 단추(지우기), 아니면 코랄(되돌리기 등)
+// <dialog> 열고 닫기(2026-11-09 — 확인 창·그림 크게 보기): 열면 showModal + 처음 초점(focus), 닫히면 초점이 연 자리로. 지울 때 정리는 창이 아직 떠 있을 때 돌아서(뒤가 막혀 초점이 안 감) 먼저 close
+// 숨은 ⋯(마우스 올림 때만)처럼 초점을 못 받으면 그 줄(tabindex 있는 부모)로
+export function useModalDialog(dlg, returnTo, focus) {
+  const [back] = useState(() => returnTo || document.activeElement)
+  useLayoutEffect(() => { const d = dlg.current; if (!d.open) d.showModal(); focus?.(d)
+    return () => { if (d.open) d.close(); if (!back?.isConnected) return
+      back.focus?.(); if (document.activeElement !== back) back.parentElement?.closest('[tabindex]')?.focus() } }, [])   // eslint-disable-line react-hooks/exhaustive-deps
+}
+
 // 진짜 창(<dialog> + showModal, 2026-11-09 better-interface 점검 — 그냥 div라 화면 읽기 프로그램이 창인 줄 몰랐고 Tab이 창 밖 칠판으로 나갔음):
 // 뒤는 못 누르고 Tab은 창 안에서만, 닫으면 초점이 연 자리로 돌아감
 export function Confirm({ title, children, okLabel = '지우기', danger = true, onOk, onClose, testid, okTestid, returnTo }) {   // returnTo = 닫으면 초점을 줄 곳(창을 연 메뉴 항목은 이미 사라졌을 때 — 메뉴를 연 ⋯)
   const box = useRef(null), dlg = useRef(null), okRef = useRef(null), col = danger ? DANGER : ACCENT
-  const [back] = useState(() => returnTo || document.activeElement)
-  useLayoutEffect(() => { const d = dlg.current; if (!d.open) d.showModal(); okRef.current?.focus()
-    return () => { if (d.open) d.close(); if (!back?.isConnected) return;   // 창이 아직 떠 있으면(이 정리는 지우기 전에 돎) 뒤가 막혀 초점이 안 감 — 먼저 닫음
-      back.focus?.(); if (document.activeElement !== back) back.parentElement?.closest('[tabindex]')?.focus() } }, [])   // 숨은 ⋯(마우스 올림 때만)는 초점을 못 받음 → 그 줄로   // eslint-disable-line react-hooks/exhaustive-deps
+  useModalDialog(dlg, returnTo, () => okRef.current?.focus())
   useEffect(() => { const key = e => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }; window.addEventListener('keydown', key, true); return () => window.removeEventListener('keydown', key, true) }, [onClose])
   const ring = c => ({ onFocus: e => { e.currentTarget.style.outline = `2px solid ${c}` }, onBlur: e => { e.currentTarget.style.outline = 'none' } })   // all: unset이 초점 테두리를 지움
   return <dialog ref={dlg} className="mb-dlg" aria-labelledby="mb-confirm-title" onCancel={e => e.preventDefault() /* Esc는 위 글쇠 듣기가 닫음 */}
