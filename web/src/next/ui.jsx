@@ -44,7 +44,7 @@ export function Confirm({ title, children, okLabel = '지우기', danger = true,
       <div style={{ font: `700 15px ${F}` }}>{title}</div>
       {children && <div style={{ color: C.muted, fontSize: 12, lineHeight: 1.55 }}>{children}</div>}
       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-        <button onClick={onClose} {...ring(col)} style={{ all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 6, border: `1px solid ${C.line}`, outlineOffset: 2 }}>취소</button>
-        <button data-testid={okTestid} autoFocus onClick={() => { onClose(); onOk() }} {...ring(col)} style={{ all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 6, background: col, color: '#fff', fontWeight: 600, outline: `2px solid ${col}`, outlineOffset: 2 }}>{okLabel}</button>
+        <button data-own-ring onClick={onClose} {...ring(col)} style={{ all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 6, border: `1px solid ${C.line}`, outlineOffset: 2 }}>취소</button>
+        <button data-own-ring data-testid={okTestid} autoFocus onClick={() => { onClose(); onOk() }} {...ring(col)} style={{ all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 6, background: col, color: '#fff', fontWeight: 600, outline: `2px solid ${col}`, outlineOffset: 2 }}>{okLabel}</button>
       </div></div></div>
 }
