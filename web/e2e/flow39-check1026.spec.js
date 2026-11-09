@@ -52,8 +52,8 @@ test('기다리는 동안 「취소」는 한 줄(진행 글이 길어도 — �
   const stop = page.getByTestId('chat-stop'); await expect(stop).toBeVisible()
   await expect(page.getByTestId('chat-busy')).toContainText(LONG)
   const b = await stop.boundingBox()
-  expect(b.width).toBeGreaterThan(b.height)                                                  // 세로로 「취/소」가 아님
-  expect(b.height).toBeLessThan(30)
+  expect(Math.abs(b.width - b.height)).toBeLessThan(1)   // 긴 모델 이름에도 찌그러지지 않음(2026-11-09부터 입력부 ■)
+  expect(b.height).toBeLessThan(32)
 })
 
 test('창을 닫으면 접속자 이름이 바로 빠짐', async ({ browser }) => {

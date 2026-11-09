@@ -3,6 +3,7 @@
 // 단추 한 번 = 고르기만(회색 채움), Enter·보내기 = 실행 — 두 번 누르기로 바로 실행은 안 함(실수로 크레딧이 듦).
 // 단추 없이 말만 = 물건 하나면 그 물건의 💬 말풍선, 여럿이면 큰 대화창 질문. 실제 일은 Editor가 `onRun(kind, text)`로 대화창에 넘김.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Composer } from './composer.jsx'
 
 const F = "'Pretendard', sans-serif"
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', seg: 'var(--mb-seg)', pick: 'var(--mb-pick)', acc: 'var(--mb-icon-acc)' }
@@ -31,11 +32,11 @@ export function AiChip({ box, size, n, open, setOpen, onRun }) {
   })
   const cx = dodge ?? cx0
   const stop = e => e.stopPropagation()
-  if (!open) return <button ref={me} data-testid="ai-chip" title="고른 것으로 만들기 — 문서·슬라이드·디자인·HTML (KAIROS)" onPointerDown={stop} onClick={() => setOpen(true)}
+  if (!open) return <button ref={me} data-testid="ai-chip" title="고른 것으로 만들기 — 문서·슬라이드 (KAIROS)" onPointerDown={stop} onClick={() => setOpen(true)}
     style={{ all: 'unset', position: 'absolute', left: cx, top: cy, zIndex: 7, height: 24, padding: '0 9px 0 7px', display: 'flex', alignItems: 'center', gap: 4, borderRadius: 99, cursor: 'pointer', boxSizing: 'border-box',
       background: C.card, border: `1px solid ${C.line}`, boxShadow: '0 1px 4px rgba(0,0,0,.18)', font: `600 12px ${F}`, color: C.ink }}><Icon k="ai" s={14} />AI</button>
   const right = box.x + box.w + 12, wx = right + WIN_W <= size.w - 8 ? right : box.x - 12 - WIN_W >= 8 ? box.x - 12 - WIN_W : Math.max(8, size.w - WIN_W - 8)
-  const wy = Math.max(8, Math.min(cy, size.h - 200))
+  const wy = Math.max(8, Math.min(cy, size.h - 264))   // 264 = 입력 칸이 6줄까지 늘어났을 때의 창 높이
   const run = () => { const t = draft.trim(); if (!kind && !t) { ta.current?.focus(); return } onRun(kind, t); setOpen(false) }
   const pick = k => { setKind(kind === k ? null : k); ta.current?.focus() }
   return <div data-testid="ai-panel" role="dialog" aria-label="고른 것으로 만들기" onPointerDown={stop} onWheel={stop} onKeyDown={e => { stop(e); if (e.key === 'Escape') setOpen(false) }}
@@ -49,11 +50,9 @@ export function AiChip({ box, size, n, open, setOpen, onRun }) {
         style={{ all: 'unset', cursor: 'pointer', boxSizing: 'border-box', height: 56, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3, borderRadius: 8,
           border: `1px solid ${kind === k ? 'transparent' : C.line}`, background: kind === k ? C.pick : 'transparent', font: `${kind === k ? 700 : 500} 12.5px ${F}`, color: C.ink }}><Icon k={k} s={20} />{name}</button>)}
     </div>
-    <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', padding: '6px 10px 10px' }}>
-      <textarea ref={ta} data-testid="ai-input" rows={2} value={draft} placeholder={kind ? `${NAME[kind]} — 바라는 점 (없으면 Enter)` : '무엇을 할까요? 물어봐도 돼요'} onChange={e => setDraft(e.target.value)}
-        onKeyDown={e => { stop(e); if (e.key === 'Escape') { setOpen(false); return } if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); run() } }}
-        style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', resize: 'none', border: `1px solid ${C.line}`, borderRadius: 8, padding: '6px 8px', font: `400 13px/1.5 ${F}`, background: 'transparent', color: C.ink, outline: 'none' }} />
-      <button data-testid="ai-send" onClick={run} style={{ all: 'unset', cursor: 'pointer', flex: 'none', height: 30, padding: '0 12px', display: 'flex', alignItems: 'center', borderRadius: 7, background: 'var(--mb-accent)', color: '#fff', font: `700 12.5px ${F}` }}>보내기</button>
+    <div style={{ padding: '6px 10px 10px' }}>
+      <Composer inputRef={ta} inputId="ai-input" sendId="ai-send" label="고른 것으로 만들기" value={draft} placeholder={kind ? `${NAME[kind]} — 바라는 점 (없으면 Enter)` : '무엇을 할까요? 물어봐도 돼요'} onChange={e => setDraft(e.target.value)}
+        canSend={!!kind || !!draft.trim()} onSend={run} onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); setOpen(false) } }} />
     </div>
   </div>
 }

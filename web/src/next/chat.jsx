@@ -18,7 +18,9 @@ import { siteOf } from './webcard.js'
 import { getKairosKey, KEY_RE, keyHeaders, setKairosKey } from './kairosKey.js'
 import { startMic } from './mic.js'
 import { svgPreview } from './svgin.js'
-import { Confirm, useModalDialog } from './ui.jsx'
+import { Confirm, hoverBg, isPhone, useModalDialog } from './ui.jsx'
+import { Composer } from './composer.jsx'
+import ICONS from './icons.json' with { type: 'json' }
 import { DeepAsk, SlidesPlan, askBrief, keptSlides, nextPic, picOf } from './deepchat.jsx'
 import { LIVE_CSP, LIVE_H, LIVE_W, bigPage, liveSrc } from './livecard.js'
 import { checkCard, problemLines } from './cardcheck.js'
@@ -101,6 +103,9 @@ const JOB_PICK = { 'slides-plan': 'slides', 'slides-build': 'slides' }   // 기�
 const F = "'Pretendard', sans-serif"
 const DONE = '#16a34a'   // 칠판에 붙임(끝남) = 초록 — 코랄은 할 수 있는 일 버튼(2026-10-20 사용자)
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', bar: 'var(--mb-bar)', seg: 'var(--mb-seg)' }
+// 입력부 아이콘(2026-11-09 — 이모지 📎·🎤 대신): 마이크 = 앱 손그림, 클립은 세트에 없어 같은 선 굵기 1.6으로
+const CLIP = '<svg viewBox="0 0 24 24"><path d="M20 11.5 12.6 19a4.8 4.8 0 0 1-6.8-6.8l7.9-7.9a3.2 3.2 0 0 1 4.5 4.5l-7.9 7.9a1.6 1.6 0 0 1-2.3-2.3l7.2-7.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+const Glyph = ({ svg, s = 18 }) => <span aria-hidden="true" style={{ width: s, height: s, display: 'inline-block', flex: 'none' }} dangerouslySetInnerHTML={{ __html: svg.replace('<svg ', `<svg width="${s}" height="${s}" `) }} />
 const css = {
   float: { position: 'absolute', right: 12, top: 12, bottom: 12, zIndex: 5, maxWidth: 'calc(100% - 24px)', border: `1px solid ${C.line}`, borderRadius: 10, overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,.12)' },
   panel: { width: CHAT_W, flex: 'none', position: 'relative', display: 'flex', flexDirection: 'column', background: C.bar, borderLeft: `1px solid ${C.line}`, font: `400 13.5px/1.55 ${F}`, color: C.ink, minHeight: 0 },
@@ -648,6 +653,8 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
   useEffect(() => { onBusy?.(busy && BOARD_JOBS.has(busyJob) ? busyLine : '') }, [busyLine])   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => onBusy?.(''), [])   // eslint-disable-line react-hooks/exhaustive-deps
   const lastM = msgs.filter(m => m.role !== 'error').at(-1)
+  const canSend = !!draft.trim() || ((lastM?.kind === 'deep' || lastM?.kind === 'slides') && lastM.step === 'ask' && !lastM.done && !lastM.asking)   // 질문지 = 빈 칸 그대로 보내도 시작(Enter와 같게)
+  const tool = (s => ({ all: 'unset', width: s, height: s, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 8, cursor: 'pointer', color: C.muted, boxSizing: 'border-box' }))(isPhone() ? 44 : 30)
   const ta = useRef(null)
   // 첨부(2026-10-28 사용자) — 대화창에 놓기·붙여넣기·입력 칸 옆 📎(2026-11-08 전엔 「+ › 파일 올리기…」) = 칠판 빈자리에 놓고 고른 채(`ed.attachFiles`), 자료는 칠판에 남음
   const fileIn = useRef(null), [dropIn, setDropIn] = useState(false)
@@ -827,36 +834,37 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
                 <span data-testid="answer-model" style={{ ...css.meta, marginLeft: 'auto' }} title={m.swap ? `원래 모델 ${m.swap.from}이 KAIROS에서 ${m.swap.why === '은퇴' ? '은퇴해서' : '없어져서'} ${m.swap.to}로 했어요` : undefined}>{m.model}{m.swap ? ' (대신)' : ''}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · ${Math.round(m.credits)}크레딧` : ''}</span>
               </div>}
             </div>)}
-        {busy && <div data-testid="chat-busy" style={{ ...css.ai, color: C.muted }}><div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Spinner />{busyLine}<button data-testid="chat-stop" style={{ ...css.ghost, marginLeft: 'auto', flex: 'none', whiteSpace: 'nowrap' }} title="이 답 기다리기를 그만둬요(서버에서 이미 시작한 일은 끝까지 가서 크레딧이 들 수 있어요)" onClick={() => stopRef.current?.abort()}>취소</button></div><ChatSkeleton kind={busyJob} /></div>}
+        {busy && <div data-testid="chat-busy" style={{ ...css.ai, color: C.muted }}><div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Spinner />{busyLine}</div><ChatSkeleton kind={busyJob} /></div>}
       </div>
       <div style={css.foot}>
         {replyTo != null && <button data-testid="reply-chip" style={{ ...css.chip, color: 'var(--mb-accent)', background: 'rgba(218,119,86,.14)', cursor: 'pointer', border: 0 }} onClick={() => setReplyTo(null)} title="누르면 이어 묻기 취소">
           ↩ 「{replyLabel(replyTo)}」에 이어서 ✕</button>}
         {selN > 0 && (sel.length > 0 || selImgs.length > 0) && <span data-testid="sel-chip" style={css.chip} >{selN}개 선택됨</span>}{/* 2026-10-21 사용자: 글·그림 칩 둘 + 사용법 문장 → 한 칩(사용법은 설명 페이지로) */}
-        <textarea ref={ta} className="mb-field" aria-label="KAIROS에게 물어보기" style={css.input} rows={Math.min(8, Math.max(2, draft.split('\n').length))} value={draft} placeholder={(lastM?.kind === 'ask' ? '버튼을 누르거나, 원하는 걸 직접 적어 주세요'
+        <Composer inputRef={ta} label="KAIROS에게 물어보기" sendId="chat-send" fs={13.5} maxRows={12} value={draft} canSend={canSend} busy={!!busy} onStop={() => stopRef.current?.abort()}
+          stopTitle="이 답 기다리기를 그만둬요(서버에서 이미 시작한 일은 끝까지 가서 크레딧이 들 수 있어요)"
+          placeholder={(lastM?.kind === 'ask' ? '버튼을 누르거나, 원하는 걸 직접 적어 주세요'
             : lastM?.kind === 'deep' && lastM.step === 'ask' && !lastM.done ? '꼭 넣을 것·바라는 점(비워도 돼요) — Enter = 그림 그리기'
             : lastM?.kind === 'slides' && lastM.step === 'ask' && !lastM.done ? '꼭 넣을 것·바라는 점(비워도 돼요) — Enter = 장 계획 짜기'
             : lastM?.kind === 'slides' && lastM.step === 'plan' && !lastM.built && !lastM.stale ? '계획을 고칠 점을 말하면 다시 짜요 — 예: 사례 장을 하나 더'
             : '물어보세요 (Enter 보내기 · Shift+Enter 줄바꿈)')}
           onChange={e => { if (mic === 'listen') micStop.current?.(); setDraft(e.target.value) }}
-          onPaste={e => { const fs = [...(e.clipboardData?.files || [])]; if (fs.length && !e.clipboardData.getData('text/plain').trim()) { e.preventDefault(); attach(fs) } }}   // 그림 복사 → Ctrl+V = 첨부(글이 있으면 글 붙여넣기)
-          onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>   {/* 모델 고르기 = 입력 칸 옆(2026-10-20 사용자 — Gemini·Claude·ChatGPT처럼 묻는 자리에서) */}
-          <button data-testid="attach" aria-label="파일 올리기" style={{ ...css.ghost, padding: '2px 8px' }} onClick={() => fileIn.current?.click()}
-            title="파일 올리기 — 칠판 빈자리에 놓고 골라 둬요(그림·PDF·녹음·md·txt·HTML). 대화창에 끌어 놓거나 붙여 넣어도 돼요">📎</button>
-          <input ref={fileIn} data-testid="attach-input" type="file" multiple hidden onChange={e => { const fs = [...e.target.files]; e.target.value = ''; attach(fs) }} />
-          <button data-testid="mic" aria-label={mic === 'off' ? '말로 입력' : undefined} onClick={toggleMic} disabled={!server || mic === 'wait' || mic === 'stopping'} aria-pressed={mic === 'listen'}
-            title={mic === 'listen' ? '듣는 중 — 다시 누르면 멈춰요(보내도 멈춤)' : '말로 입력 — 말하는 동안 글자가 바로 떠요(KAIROS 실시간 받아쓰기, 말한 1분에 약 2크레딧)'}
-            style={{ ...css.ghost, padding: '2px 8px', ...(mic === 'listen' ? { color: '#fff', background: '#dc2626', borderColor: '#dc2626' } : null) }}>
-            {mic === 'listen' ? '● 듣는 중' : mic === 'wait' ? '🎤 …' : mic === 'stopping' ? '🎤 마무리…' : '🎤'}</button>
-          <span data-testid="chat-foot-note" style={{ ...css.meta, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', ...(micErr ? { color: 'var(--mb-danger-ink)' } : null) }} title={micErr || (server ? `대화 기록은 이 칠판(「${DOC_NAME}」)에 함께 저장돼요` : '')}>{micErr || (server ? '' : '서버가 꺼져 있어요 — python web/server.py 를 켜야 물을 수 있어요.')}</span>{/* 평소 글 「기록은 이 칠판에 저장」은 뺌 — 대화창 폭에선 「기」 한 글자로 잘려 보였음(2026-11-03 UX 검토, 같은 말은 마우스 올림에 남김) */}
-          {/* 대화 모델 고르기(입력 칸 옆 「기본 · gpt-… $2 / 10」)는 ⚙ 「모델 설정」의 「대화 · 회의 요약」 줄과 같은 일이라 뺌 — 처음 온 사람에겐 모델·값이 낯선 말(2026-11-03 UX 검토, 10-16 「입력 칸 옆」을 뒤집음) */}
-          <span data-model-set style={{ position: 'relative' }}>
-            <button data-testid="model-settings" style={{ ...css.ghost, padding: '2px 7px', ...(cfgOpen || Object.keys(picks).length ? { color: 'var(--mb-accent)', borderColor: 'var(--mb-accent)' } : null) }} aria-expanded={cfgOpen} onClick={() => setCfgOpen(o => !o)}
+          onPaste={e => { const fs = [...(e.clipboardData?.files || [])]; if (fs.length && !e.clipboardData.getData('text/plain').trim()) { e.preventDefault(); attach(fs) } }}
+          onSend={() => send()}
+          tools={<>
+            <button data-testid="attach" aria-label="파일 올리기" {...hoverBg} style={tool} onClick={() => fileIn.current?.click()}
+              title="파일 올리기 — 칠판 빈자리에 놓고 골라 둬요(그림·PDF·녹음·md·txt·HTML). 대화창에 끌어 놓거나 붙여 넣어도 돼요"><Glyph svg={CLIP} /></button>
+            <input ref={fileIn} data-testid="attach-input" type="file" multiple hidden onChange={e => { const fs = [...e.target.files]; e.target.value = ''; attach(fs) }} />
+            <button data-testid="mic" aria-label={mic === 'off' ? '말로 입력' : undefined} {...(mic === 'off' ? hoverBg : null)} onClick={toggleMic} disabled={!server || mic === 'wait' || mic === 'stopping'} aria-pressed={mic === 'listen'}
+              title={mic === 'listen' ? '듣는 중 — 다시 누르면 멈춰요(보내도 멈춤)' : '말로 입력 — 말하는 동안 글자가 바로 떠요(KAIROS 실시간 받아쓰기, 말한 1분에 약 2크레딧)'}
+              style={{ ...tool, ...(mic === 'off' ? null : { width: 'auto', padding: '0 8px', gap: 3, display: 'flex', alignItems: 'center', font: `500 12px ${F}` }), ...(mic === 'listen' ? { color: '#fff', background: '#dc2626' } : null) }}>
+              {mic === 'listen' ? '● 듣는 중' : mic === 'wait' ? <><Glyph svg={ICONS.mic} />…</> : mic === 'stopping' ? <><Glyph svg={ICONS.mic} />마무리…</> : <Glyph svg={ICONS.mic} />}</button>
+            <span data-testid="chat-foot-note" style={{ ...css.meta, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', ...(micErr ? { color: 'var(--mb-danger-ink)' } : null) }} title={micErr || (server ? `대화 기록은 이 칠판(「${DOC_NAME}」)에 함께 저장돼요` : '')}>{micErr || (server ? '' : '서버가 꺼져 있어요 — python web/server.py 를 켜야 물을 수 있어요.')}</span>
+            <span data-model-set style={{ position: 'relative' }}>
+            <button data-testid="model-settings" {...hoverBg} style={{ ...css.ghost, padding: '4px 7px', borderColor: 'transparent', ...(cfgOpen || Object.keys(picks).length ? { color: 'var(--mb-accent)', borderColor: 'var(--mb-accent)' } : null) }} aria-expanded={cfgOpen} onClick={() => setCfgOpen(o => !o)}
               title="모델 설정 — 일마다 쓸 모델(안 고르면 자동: 앱이 재 보고 고른 모델, 은퇴·없어지면 KAIROS 대체로 저절로)">⚙ 모델</button>
             {cfgOpen && <ModelSettings onClose={() => setCfgOpen(false)} models={models} picks={{ ...picks, ...(model ? { chat: model } : {}) }} setPick={setPick} />}
           </span>
-        </div>
+          </>} />
       </div>
     </aside>
   )

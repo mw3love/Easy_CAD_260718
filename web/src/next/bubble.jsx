@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { DOC_NAME } from './doc.js'
 import { keyHeaders } from './kairosKey.js'
 import { Spinner, shrinkImage } from './chat.jsx'
+import { Composer } from './composer.jsx'
 
 const F = "'Pretendard', sans-serif"
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', seg: 'var(--mb-seg)' }
@@ -103,9 +104,8 @@ export function Bubble({ id, info, cam, size, thread = [], first, onThread, onCl
       {err && <div data-testid="bubble-err" style={{ color: '#dc2626', fontSize: 12.5 }}>{err}</div>}
     </div>
     <div style={{ padding: 8, borderTop: `1px solid ${C.line}` }}>
-      <textarea ref={ta} data-testid="bubble-input" rows={2} value={draft} placeholder={HINT[info.edit] || HINT[info.type] || '이것에 대해 물어보세요'} onChange={e => setDraft(e.target.value)}
-        onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') { onClose(); return } if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }}
-        style={{ width: '100%', boxSizing: 'border-box', resize: 'none', border: `1px solid ${C.line}`, borderRadius: 8, padding: '5px 8px', font: `400 13px/1.5 ${F}`, background: 'transparent', color: C.ink, outline: 'none' }} />
+      <Composer inputRef={ta} inputId="bubble-input" sendId="bubble-send" label="이 물건에 대해 묻기" value={draft} placeholder={HINT[info.edit] || HINT[info.type] || '이것에 대해 물어보세요'} onChange={e => setDraft(e.target.value)}
+        canSend={!!draft.trim() && !busy} onSend={() => send()} onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }} />
     </div>
   </div>
 }

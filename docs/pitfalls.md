@@ -1781,3 +1781,4 @@
 - ⚠ 웹 e2e(`npm run e2e`)는 빌드된 `web/dist`를 쓴다 — 고친 뒤 `npm run build` 없이 돌리면 옛 코드를 시험한다(2026-11-09 한 번 헛돌림).
 - ⚠ 웹 `<dialog>` + React: `autoFocus`는 showModal 전이라 안 먹음(ref로 직접 focus), 지울 때 정리 함수가 dialog가 떠 있는 동안 돌아 뒤로 초점을 못 줌 → 먼저 `close()`(2026-11-09 `ui.jsx` Confirm).
 - ⚠ 감시 PC(`DESKTOP-HSTUOHH`)에서 `npm run build`는 곧 공개 칠판 반영이다 — `web/dist`를 서버가 그대로 내보냄. 시안·중간 빌드를 공개에 안 내보내려면 `dist` 사본을 따로 서버로 띄운다(2026-11-09).
+- ⚠ 웹 세로 flex 안 `textarea`에 `flex: 1`을 주면 `style.height`가 무시되어 자동 높이가 안 먹는다 — 세로 줄일 땐 `flex: none`(`composer.jsx`, 2026-11-09).
