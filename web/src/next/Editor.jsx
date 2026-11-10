@@ -40,13 +40,13 @@ import { ContextMenu } from './ctxmenu.jsx'
 import { Confirm, btnSecondary } from './ui.jsx'
 import { pdfGoPage, pdfLayout, pdfPageAt, pdfScroll, pdfSelectedText } from './pdfcard.jsx'
 import { aiError, answerTable, freeSpot, nearSpot, sourceLine } from '../chatFormat.js'
-import { LIVE_H, LIVE_W, bigPage, isLive, liveFits } from './livecard.js'
-import { DOC_SLEEP_PX, WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
+import { LIVE_H, LIVE_W, bigPage, isLive, isMotion, liveFits } from './livecard.js'
+import { DOC_SLEEP_PX, WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { isLegendLine, legendEntries, restyleLegendRow, syncLegends } from './legend.js'
 import { HANDLE_MIN_Z, LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoMarkdown, memoText, moveLines, pickLines, shiftLines, splitRunLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
 import { keyLabel } from './keylabel.js'
-import { MEMO_FOLD_N } from './render.jsx'
+import { CAPTION_INK, MEMO_FOLD_N } from './render.jsx'
 import { htmlPlan, looksMarkdown, textKind, tsvRows } from './clipin.js'
 import { looksSvg, svgFits, svgItems } from './svgin.js'
 import { BoardSkeleton } from './skeleton.jsx'
@@ -301,6 +301,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (touches.current.size >= 2) { const k = st.current.kind
         if (!k || k === 'pan' || k === 'rubber' || k === 'pinch' || (k === 'move' && !st.current.moved)) { setOverlay(o => ({ ...o, rubber: null })); touchStart() }
         return } }
+    if (e.button === 0 && !R.current.editing) { const lp = livePlayAt(toSceneP(e)); if (lp) { if (R.current.webOn === lp._id) { setWebOn(null); setStatus('움직이는 카드를 멈췄어요 — 멈춘 모습') } else webActivate(lp); return } }   // 움직이는 카드 ▶ 움직이기 / ■ 멈추기(2026-11-10 7단계 — 보기 링크에서도)
     if (readOnly) { svg.current.setPointerCapture(e.pointerId); st.current = { ...st.current, kind: 'pan', right: false, sx: e.clientX, sy: e.clientY, cam: R.current.cam }; setCursor('grabbing'); return }   // 보기 전용 = 끌면 화면 이동
     if (R.current.editing && e.button === 0) return   // 고치는 중에도 휠·오른쪽 끌기 = 화면 이동(입력은 그대로 — 2026-10-18 사용자)
     if (R.current.webOn && !(e.button === 2 && pdfBodyAt(toSceneP(e))?._id === R.current.webOn)) setWebOn(null)   // 웹 카드 조작 중 바깥을 누름 = 끝(칸 안 누르기는 페이지가 받아 여기 안 옴). 넘겨 보는 PDF 안 우클릭 = 안쪽 메뉴(끝내지 않음)
@@ -559,7 +560,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (s.symOver !== undefined) { const d = symDropAt(e); window.dispatchEvent(new CustomEvent('mb-symdrag', { detail: null })); if (d && s.moved) { setLive(null); addToMySymbols(d.folder); return } }   // 도형 칸에 놓음 = 제자리 + 추가 창
       if (!s.moved && s.cellPick) { const { id, r, c, extend } = s.cellPick; setCellSel(cs => (extend && cs?.id === id ? { ...cs, r1: r, c1: c } : { id, r0: r, c0: c, r1: r, c1: c })) }
       if (!s.moved && s.webPick) webActivate(s.webPick)
-      else if (!s.moved && s.pdfTap && R.current.webOn !== s.pdfTap._id) setStatus(s.pdfTap.type === 'doc' ? '인터랙티브 HTML — 두 번 누르면 움직여 보기' : 'PDF — 두 번 누르면 넘겨 보기(휠로 쪽 넘김)')
+      else if (!s.moved && s.pdfTap && R.current.webOn !== s.pdfTap._id) setStatus(s.pdfTap.type === 'doc' ? '움직이는 카드 — ▶ 움직이기나 두 번 누르면 움직여 보기' : 'PDF — 두 번 누르면 넘겨 보기(휠로 쪽 넘김)')
       if (s.moved && live) commit(live.filter(it => it), s.sel, '옮김'); else setLive(null); return }
     if (s.kind === 'rubber') {
       setOverlay(o => ({ ...o, rubber: null }))
@@ -742,7 +743,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (!single && R.current.sel.length > 1) { const mb = multiBoxNow(); if (mb) { const cs = [[mb.x, mb.y, 'nwse-resize'], [mb.x + mb.w, mb.y, 'nesw-resize'], [mb.x + mb.w, mb.y + mb.h, 'nwse-resize'], [mb.x, mb.y + mb.h, 'nesw-resize']]
       const c = cs.find(([cx, cy]) => Math.hypot(cx - p.x, cy - p.y) * R.current.cam.z <= HANDLE * 0.75); if (c) { setHp(null); setCursor(c[2]); return } } }
     const h = handleAt(p); setHoverKey(h?.key || null); if (h) { setHp(null); setSegPrev(null); setCursor(h.cursor); return }
-    if (webOpenAt(p)) { setHp(null); setSegPrev(null); setCursor('pointer'); return }   // 카드 ↗ = 누르는 단추(2026-10-21 사용자: 이동 커서였음 — 포트점보다 먼저)
+    if (webOpenAt(p) || livePlayAt(p)) { setHp(null); setSegPrev(null); setCursor('pointer'); return }   // 카드 ↗ = 누르는 단추(2026-10-21 사용자: 이동 커서였음 — 포트점보다 먼저)
     const sg = segAt(p)
     if (sg) {   // 직각 화살표 구간 위 — 알약이 아니면 나눠 끌 자리에 속 빈 알약 미리보기(`_draw_segment_preview_pill`)
       const it = single, a = it.pts[sg.i], b = it.pts[sg.i + 1], horizontal = Math.abs(b[1] - a[1]) <= Math.abs(b[0] - a[0])
@@ -2105,7 +2106,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 그 부분 글은 그림의 보이지 않는 설명(찾기·대화 재료 — 우클릭 「그림 속 글 읽기」도 이것을 씀)
   async function clipPdf({ id, page, r, top, key }) {
     const tell = (ok, msg) => window.dispatchEvent(new CustomEvent('mb-pdf-clipped', { detail: { key, ok, msg } }))   // 카드의 오린 자리에 결과(2026-10-22 사용자: PDF를 크게 보면 칠판이 안 보임)
-    const card = R.current.model.items.find(it => it._id === id); if (!card) { tell(false, '✗ 오려 오기 실패 — 카드를 못 찾음'); return }
+    const card = R.current.model.items.find(it => it._id === id); if (!card) { tell(false, '✗ 못 오려 왔어요 — PDF 카드가 지워졌어요'); return }
     const q = `${card.url}/${'%s'}/${page}?r=${r.map(v => v.toFixed(4)).join(',')}`
     setStatus('오려 오는 중…')
     try {
@@ -2115,7 +2116,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const data = cv.toDataURL('image/png').split(',')[1]
       const cb = sceneBox(card, textBox), k = (card.scale || 1), w = card.rect[2] * k * (r[2] - r[0]), h = w * bm.height / bm.width, z = topZ(R.current.model.items) + 1
       const label = `${card.name || 'PDF'} · ${page + 1}쪽`, s = +(1 / R.current.cam.z).toPrecision(2)
-      const cap = base([0, 0], { type: 'text', text: label, color: '#ff8a8f98', font: 9, bg: null, scale: s, z }), capH = sceneBox(cap, textBox).h
+      const cap = base([0, 0], { type: 'text', text: label, color: CAPTION_INK, font: 9, bg: null, scale: s, z }), capH = sceneBox(cap, textBox).h
       const ty = toSceneP({ clientX: 0, clientY: top }).y
       // 놓을 자리 = 쪽마다 한 줄(2026-10-23 사용자 — 전엔 카드 오른쪽 한 단): 같은 쪽을 이어 오리면 앞 그림 오른쪽, 다른 쪽이면 앞서 오린 것들 아래에 새 줄(왼쪽 끝 맞춤).
       // 줄 순서 = 오린 순서. 앞 그림 = 이 카드에서 오려 온 그림(설명 첫 줄 = 「파일 · N쪽」). 첫 그림은 오린 높이, 막히면 오른쪽으로 비켜 줄 시작을 정함. 겹치면 바로 아래로
@@ -2139,7 +2140,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       // 화살표는 없음(2026-10-22 사용자: 그림마다 화살표 = 여럿이면 엉켜 지저분) — 출처는 밑 글 「파일 · N쪽」, Ctrl+클릭·우클릭 = PDF 그 쪽으로
       commit([...R.current.model.items, img, capd], [img._id], 'PDF에서 오려 옴')
       setStatus(`${label} 오려 옴 — Ctrl+클릭 = PDF 그 쪽으로`); tell(true, `✓ 오려 옴 · ${page + 1}쪽`)
-    } catch (err) { setStatus(`오려 오기 실패 — ${err.message || err}`); tell(false, `✗ 오려 오기 실패 — ${err.message || err}`) }
+    } catch (err) {   // 쉬운 말(2026-11-10 화면 검사 7단계 — 「서버 응답 500」 원문이었음), 카드 위 표시는 다음 누르기까지 남음(pdfcard.jsx)
+      const why = /failed to fetch|networkerror|load failed|서버 응답 50[234]$/i.test(String(err.message || err)) ? '서버에 연결이 안 돼요' : '이 부분을 그림으로 못 만들었어요'
+      setStatus(`PDF에서 못 오려 왔어요 — ${why}`); tell(false, `✗ 못 오려 왔어요 — ${why}. 다시 ${keyLabel('Alt+끌기')} 해 보세요`) }
   }
   // 오려 온 그림의 출처 — 설명 첫 줄 「파일 · N쪽」(밑 글도 같은 묶음). 같은 이름 PDF 카드가 여럿이면 가장 가까운 것
   function clipOf(it) {
@@ -2424,11 +2427,13 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function webActivate(it) {
     setSel([it._id]); setWebOn(it._id)
     if (isYoutube(it)) playYoutube(it._id)
-    setStatus(it.type === 'pdf' ? 'PDF 보는 중 · Alt+끌기 = 그림으로 오려 오기' : it.type === 'doc' ? '인터랙티브 HTML 조작 중 — 바깥을 누르거나 Esc = 끝' : isYoutube(it) ? '재생 — 영상을 누르면 멈춤, 바깥을 누르면 끝' : '웹 카드 안을 조작하는 중 — 바깥을 누르면 끝')
+    setStatus(it.type === 'pdf' ? `PDF 보는 중 · ${keyLabel('Alt+끌기')} = 그림으로 오려 오기` : it.type === 'doc' ? '움직이는 카드 조작 중 — ■ 멈추기·바깥 누르기·Esc = 끝' : isYoutube(it) ? '재생 — 영상을 누르면 멈춤, 바깥을 누르면 끝' : '웹 카드 안을 조작하는 중 — 바깥을 누르면 끝')
   }
   // 점 p가 놓인 PDF 카드 몸통(위 띠 빼고) — 맨 위 것. 우클릭 메뉴가 「안쪽」인지 가르는 데
   const pdfBodyAt = p => { for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'pdf' || !it.url) continue
     const q = toLocal(it, p); if (q.x >= it.rect[0] && q.x <= it.rect[0] + it.rect[2] && q.y >= it.rect[1] + WEB_HEAD && q.y <= it.rect[1] + it.rect[3]) return it } return null }
+  const livePlayAt = p => { const z = R.current.cam.z; for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (!liveFits(it) || isMotion(it) || it.rect[3] < WEB_HEAD || cardMode(it) === 'sleep') continue   // 움직이는 카드 위 띠 「▶ 움직이기」
+    const q = toLocal(it, p), b = playBtnRect(it), pad = 2 / z; if (q.x >= b.x - pad && q.x <= b.x + b.w + pad && q.y >= b.y - pad && q.y <= b.y + b.h + pad) return it } return null }
   const webOpenAt = p => { const z = R.current.cam.z; for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'web' && it.type !== 'doc' && it.type !== 'pdf') continue
     const q = toLocal(it, p), b = openBtnRect(it), pad = 2 / z; if (q.x >= b.x - pad && q.x <= b.x + b.w + pad && q.y >= b.y - pad && q.y <= b.y + b.h + pad) return it } return null }
   // 범례(2026-10-19 사용자: 표 모양 · 자동 갱신 · 「표」 버튼 안) — 줄은 commit이 도면에서 다시 모음, 사람이 적는 건 이름뿐
@@ -2600,7 +2605,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const cardMode = it => { if (it.type !== 'web' && it.type !== 'pdf' && it.type !== 'doc') return undefined
     const px = it.rect[2] * (it.scale || 1) * cam.z, far = px < (it.type === 'doc' && !isLive(it) ? DOC_SLEEP_PX : WEB_SLEEP_PX)
     if (phone) return it.type === 'pdf' || far || (it.type === 'web' && !it.frameable) ? 'sleep' : 'shell'   // 휴대폰 = 페이지는 위층(아이폰 Safari — SVG 안 iframe이 확대하면 밖으로 쏟아짐), PDF는 첫 쪽 그림
-    return webOn === it._id ? 'on' : far ? 'sleep' : 'view' }
+    return webOn === it._id ? 'on' : far ? 'sleep' : isLive(it) && !isMotion(it) ? 'still' : 'view' }   // 'still' = 움직이는 카드 멈춘 모습(누를 때만 돎 — 2026-11-10 화면 검사 7단계)
   // 휴대폰 위층 — 칠판 위 HTML 판에 카드 속 페이지만, 칠판과 같은 배율로(CSS transform은 아이폰도 맞게 그림). 화면 밖 카드는 안 그림. 누르기는 칠판이 받음(톡 = 새 탭)
   const phoneCards = phone ? order.filter(([it]) => cardMode(it) === 'shell' && (b => b.x < (size.w - cam.x) / cam.z && b.x + b.w > -cam.x / cam.z && b.y < (size.h - cam.y) / cam.z && b.y + b.h > -cam.y / cam.z)(sceneBox(it, textBox))).map(([it]) => it) : []
   const cssT = t => t.replace(/translate\(([-\d.e]+),([-\d.e]+)\)/g, 'translate($1px,$2px)').replace(/rotate\(([-\d.e]+)\)/g, 'rotate($1deg)')   // itemTransform(SVG 글) → CSS
@@ -2626,7 +2631,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         if (card?.type === 'pdf' && card.url) out.push(['넘겨 보기', '', act(() => webActivate(card))], ['새 탭에서 보기', '', act(() => window.open(`${card.url}#page=${pdfPageAt(card, 0) + 1}`, '_blank', 'noopener'))], '-')
         else if (selIt.length === 1 && selIt[0].type === 'image' && selIt[0].data) out.push(['그림 속 글 읽기', '', act(() => ocrImage(selIt[0]._id))], ['도면으로 베끼기 (KAIROS)', '', act(() => traceImage(selIt[0]._id))], '-')   // OCR → 옆에 메모 · 베끼기 → 옆에 도형 묶음
         else if (card?.type === 'web' && card.url) out.push(['새 탭에서 열기', '', act(() => window.open(card.url, '_blank', 'noopener'))], '-')
-        else if (card?.type === 'doc') out.push(['크게 보기', '', act(() => openDoc(card))], ...(card.live ? [] : [['한글 파일로 내려받기 (.hwpx)', '', act(() => saveHwpx(card))]]), '-')   // 움직이는 카드는 글 문서가 아님
+        else if (card?.type === 'doc') out.push(['크게 보기…', '', act(() => openDoc(card))], ...(liveFits(card) && !isMotion(card) ? [R.current.webOn === card._id ? ['멈추기', 'Esc', act(() => setWebOn(null))] : ['움직여 보기', '', act(() => webActivate(card))]] : []), ...(card.live ? [] : [['한글 파일로 내려받기 (.hwpx)', '', act(() => saveHwpx(card))]]), '-')   // 움직이는 카드는 글 문서가 아님 · 움직이기는 누를 때만(2026-11-10 7단계)   // 움직이는 카드는 글 문서가 아님
         // 2026-10-27 사용자 전수조사(「상식적으로 이상한 것」): 하는 일이 없는 항목은 숨기고, 프레임엔 프레임에만 있는 일
         const frame1 = selIt.length === 1 && selIt[0].type === 'frame' ? selIt[0] : null
         if (frame1) out.push(['이 장부터 발표', '', act(() => startPresent(frame1._id))], ['이름 바꾸기', '', act(() => setTagEdit(frame1._id))], '-')

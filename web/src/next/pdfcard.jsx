@@ -80,9 +80,10 @@ export function PdfPages({ it, w, h, on }) {
     const T = []
     const got = e => { const { key, ok, msg } = e.detail || {}
       setMarks(ms => ms.map(m => (m.key === key ? { ...m, st: ok ? 'ok' : 'fail', msg } : m)))
-      T.push(setTimeout(() => setMarks(ms => ms.filter(m => m.key !== key)), ok ? 1500 : 2500)) }   // 1.5초 — 대화창 「추가됨」과 같은 길이, 실패는 이유를 읽게 조금 더
-    window.addEventListener('mb-pdf-clipped', got)
-    return () => { window.removeEventListener('mb-pdf-clipped', got); T.forEach(clearTimeout) }
+      if (ok) T.push(setTimeout(() => setMarks(ms => ms.filter(m => m.key !== key)), 1500)) }   // 1.5초 — 대화창 「추가됨」과 같은 길이. 실패는 다음 누르기까지 남김(2026-11-10 화면 검사 7단계 — 2.5초면 못 읽었음)
+    const clear = () => setMarks(ms => (ms.some(m => m.st === 'fail') ? ms.filter(m => m.st !== 'fail') : ms))
+    window.addEventListener('mb-pdf-clipped', got); window.addEventListener('pointerdown', clear, true)
+    return () => { window.removeEventListener('mb-pdf-clipped', got); window.removeEventListener('pointerdown', clear, true); T.forEach(clearTimeout) }
   }, [])
   useEffect(() => {   // Alt 누름 상태 — 켜졌을 때만(창을 떠나면 끔)
     if (!on) { setAlt(false); return }
@@ -138,13 +139,13 @@ export function PdfPages({ it, w, h, on }) {
           : <img key={i} alt={`${i + 1}쪽`} draggable={false} src={`${it.url}/page/${i}?w=${px}`} style={{ position: 'absolute', left: 0, top: py, width: w, height: ph, background: '#fff', display: 'block', userSelect: 'none' }} />))}
         {on && lay.map(([py, ph], i) => (py + ph < top - h || py > top + 2 * h ? null : <PageText key={'t' + i} it={it} i={i} w={w} top={py} ph={ph} />))}
         {rect && <div style={{ position: 'absolute', ...rect, border: '1.5px solid #da7756', background: 'rgba(218,119,86,.12)', pointerEvents: 'none' }} />}
-        {marks.map(m => { const c = m.st === 'ok' ? '#16a34a' : m.st === 'fail' ? '#dc2626' : 'var(--mb-accent)'
+        {marks.map(m => { const c = m.st === 'ok' ? '#15803d' : m.st === 'fail' ? '#dc2626' : 'var(--mb-accent)'   // 초록 = 흰 글 5.0(옛 #16a34a 3.3 — 2026-11-10 7단계)
           return <div key={m.key} data-testid={`pdf-clip-${m.st}`} style={{ position: 'absolute', ...m.rect, border: `2px ${m.st === 'busy' ? 'dashed' : 'solid'} ${c}`, background: m.st === 'ok' ? 'rgba(22,163,74,.10)' : 'transparent', pointerEvents: 'none' }}>
-            <div style={{ position: 'absolute', left: -2, ...(m.rect.top - top < 24 ? { top: 2, left: 2 } : { bottom: '100%', marginBottom: 2 }), padding: '2px 8px', borderRadius: 99, background: c, color: '#fff', font: "600 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap' }}>{m.msg}</div>
+            <div role={m.st === 'fail' ? 'alert' : undefined} style={{ position: 'absolute', left: -2, ...(m.rect.top - top < 24 ? { top: 2, left: 2 } : { bottom: '100%', marginBottom: 2 }), padding: '2px 8px', borderRadius: m.st === 'fail' ? 8 : 99, background: c, color: '#fff', font: "600 12px 'Pretendard', sans-serif", ...(m.st === 'fail' ? { width: 'max-content', maxWidth: Math.max(180, Math.min(280, w - 16)), wordBreak: 'keep-all' } : { whiteSpace: 'nowrap' }) }}>{m.msg}</div>
           </div> })}
       </div>
     </div>
     {on && (alt || sel) && <div style={{ position: 'absolute', left: 8, bottom: 8, padding: '2px 8px', borderRadius: 99, background: 'var(--mb-accent)', color: '#fff', font: "600 11px 'Pretendard', sans-serif", pointerEvents: 'none' }}>✂ 끌어서 오려 오기</div>}
-    {lay.length > 0 && <div style={{ position: 'absolute', right: 8, bottom: 8, padding: '2px 8px', borderRadius: 99, background: 'rgba(24,24,27,.72)', color: '#fff', font: "600 11px 'Pretendard', sans-serif", pointerEvents: 'none' }}>{cur + 1} / {lay.length}</div>}
+    {lay.length > 0 && <div style={{ position: 'absolute', right: 8, bottom: 8, padding: '2px 8px', borderRadius: 99, background: 'rgba(24,24,27,.72)', color: '#fff', font: "600 11px 'Pretendard', sans-serif", fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' }}>{cur + 1} / {lay.length}</div>}
   </div>
 }

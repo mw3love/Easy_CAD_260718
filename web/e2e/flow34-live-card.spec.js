@@ -27,33 +27,33 @@ test('움직이는 카드 — 한 번 = 고르기 · 두 번 = 조작 · 바깥 
   await page.evaluate(h => window.__mb.ed.pinCard({ live: true, html: h, title: '시험 카드', model: 'gpt-6.1-sol' }), CARD)
   const card = (await liveDoc(page)).items.find(it => it.type === 'doc')
   expect(card.live).toBe(true)
-  const fr = page.locator(`iframe[data-liveid="${card.uid}"]`)
-  await expect(fr).toHaveAttribute('sandbox', 'allow-scripts')                  // same-origin 없음
-  await expect(fr).toHaveAttribute('csp', /default-src 'none'/)
+  const fr = page.locator(`iframe[data-liveid="${card.uid}"]`), still = page.locator(`iframe[data-still="${card.uid}"]`)
+  await expect(still).toHaveAttribute('sandbox', '')                             // 평소 = 멈춘 모습(스크립트 없는 틀 — 2026-11-10 7단계 사용자: 누를 때만 돎)
+  await expect(fr).toHaveCount(0)
   const inner = page.frameLocator(`iframe[data-liveid="${card.uid}"]`)
-  await expect(inner.locator('#r')).toHaveText(/fetch 막힘/)
-  await expect(inner.locator('#r')).toHaveText(/ls 막힘/)
-  await expect(inner.locator('#r')).toHaveText(/parent 막힘/)
 
   // 칸 안 단추의 화면 자리 — 카드는 기준 폭 720을 카드 폭으로 줄여 보여 줌(Playwright boundingBox는 iframe 배율을 빼고 셈)
   const spot = async (loc, el) => { const f = await loc.boundingBox(), k = f.width / 720, r = await inner.locator(el).evaluate(e => { const b = e.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2] }); return { x: f.x + r[0] * k, y: f.y + r[1] * k } }
-  const at = await spot(fr, '#inc')
+  const sf = await still.boundingBox(), k0 = sf.width / 720, at = { x: sf.x + 370 * k0, y: sf.y + 235 * k0 }   // #inc 가운데(멈춘 모습엔 스크립트가 없어 단추 자리를 CSS 값으로)
   await page.mouse.click(at.x, at.y)                                             // 한 번 = 고르기만(칸 안 단추는 안 눌림)
   await expect(page.getByText('두 번 누르면 움직여 보기').first()).toBeVisible()
   expect(await page.evaluate(() => window.__mb.ed.getSel())).toEqual([card.uid])
-  await expect(inner.locator('#v')).toHaveText('0')
+  await expect(fr).toHaveCount(0)
 
-  await page.mouse.dblclick(at.x, at.y)                                          // 두 번 = 조작 켜기
+  await page.mouse.dblclick(at.x, at.y)                                          // 두 번 = 돌리고 조작 켜기
   await expect(fr).toHaveCSS('pointer-events', 'auto')
+  await expect(fr).toHaveAttribute('sandbox', 'allow-scripts')                  // same-origin 없음
+  await expect(fr).toHaveAttribute('csp', /default-src 'none'/)
+  await expect(inner.locator('#r')).toHaveText(/fetch 막힘/)
+  await expect(inner.locator('#r')).toHaveText(/ls 막힘/)
+  await expect(inner.locator('#r')).toHaveText(/parent 막힘/)
   await settle(page)   // 켠 바로 뒤 누르기는 칸에 안 닿고 칠판으로 가 「끝」이 됨(2026-11-02 다른 PC — 크롬 154, 기다리면 늘 됨)
   await page.mouse.click(at.x, at.y)
   await expect(inner.locator('#v')).toHaveText('1')
-  await clickScene(page, 300, 560)                                               // 바깥(카드 아래 빈 곳) = 끝
-  await expect(fr).toHaveCSS('pointer-events', 'none')
-  await page.mouse.click(at.x, at.y)
-  await expect(inner.locator('#v')).toHaveText('1')
+  await clickScene(page, 300, 560)                                               // 바깥(카드 아래 빈 곳) = 끝 = 다시 멈춘 모습
+  await expect(fr).toHaveCount(0); await expect(still).toHaveCount(1)
 
-  await page.mouse.dblclick(at.x, at.y)                                          // 칸 안에서 바깥 주소로 가기 = 막힘(iframe `csp` — 바깥 페이지가 이 틀을 받아들이지 않음)
+  await page.mouse.dblclick(at.x, at.y); await expect(fr).toHaveCSS('pointer-events', 'auto'); await settle(page)                                          // 칸 안에서 바깥 주소로 가기 = 막힘(iframe `csp` — 바깥 페이지가 이 틀을 받아들이지 않음)
   const g = await spot(fr, '#go')
   await page.mouse.click(g.x, g.y)
   await page.waitForTimeout(800)
@@ -62,13 +62,13 @@ test('움직이는 카드 — 한 번 = 고르기 · 두 번 = 조작 · 바깥 
 
   await clickScene(page, 300, 560); await expect.poll(() => page.evaluate(() => window.__mb.unsaved())).toBe(false); await page.reload()   // 새로고침해도 움직이는 카드(저장은 넣을 때 끝남 — 상태 글은 「조작 중」이 덮음)
   await expect(page.getByText(`서버 「${name}」`, { exact: false }).first()).toBeVisible()
-  await expect(page.locator('iframe[data-liveid]')).toHaveCount(1)
+  await expect(page.locator('iframe[data-still]')).toHaveCount(1); await expect(page.locator('iframe[data-liveid]')).toHaveCount(0)
 
-  const c2 = (await liveDoc(page)).items.find(it => it.type === 'doc'), fr2 = page.locator('iframe[data-liveid]')
+  const c2 = (await liveDoc(page)).items.find(it => it.type === 'doc'), fr2 = page.locator('iframe[data-still]')
   const hb = await fr2.boundingBox()
-  await page.mouse.click(hb.x + hb.width - 40, hb.y - 20, { button: 'right' })   // 위 띠 우클릭 → 크게 보기
+  await page.mouse.click(hb.x + 40, hb.y - 20, { button: 'right' })              // 위 띠 우클릭 → 크게 보기(오른쪽엔 ▶ 움직이기 단추)
   const pop = context.waitForEvent('page')
-  await page.getByText('크게 보기', { exact: true }).click()
+  await page.getByRole('menuitem', { name: '크게 보기…', exact: true }).click()
   const big = await pop
   await expect(big.locator('iframe[sandbox="allow-scripts"]')).toHaveCount(1)
   await expect(big.frameLocator('iframe').locator('#r')).toHaveText(/parent 막힘/)
@@ -80,7 +80,7 @@ test('움직이는 카드 — 한 번 = 고르기 · 두 번 = 조작 · 바깥 
   const plain = (await liveDoc(page)).items.find(it => it.type === 'doc' && !it.live)
   const pb = await page.locator(`iframe[data-docid="${plain.uid}"]`).boundingBox()
   await page.mouse.click(pb.x + pb.width / 2, pb.y - 20, { button: 'right' })
-  await page.getByText('크게 보기', { exact: true }).click()                      // 보통 문서 = 앱 안 큰 창(2026-11-09) — 그 틀도 스크립트가 안 돎
+  await page.getByRole('menuitem', { name: '크게 보기…', exact: true }).click()                      // 보통 문서 = 앱 안 큰 창(2026-11-09) — 그 틀도 스크립트가 안 돎
   await expect(page.getByTestId('doc-view')).toBeVisible()
   await expect.poll(() => page.evaluate(() => document.querySelector('[data-testid="doc-frame"]')?.contentDocument?.title)).toBe('파일')
   const pop2 = context.waitForEvent('page')
@@ -116,7 +116,7 @@ test('대화창 「움직여 볼 수 있게」 → 대화창에서 만져 보기
   const card = (await liveDoc(page)).items.find(it => it.type === 'doc')
   expect(card.live).toBe(true); expect(card.html).toBe(CARD)
   expect(card.rect[3] - 40).toBe(Math.round(card.rect[2] * 480 / 720))           // 띠 + 기준 비율
-  await expect(page.locator(`iframe[data-liveid="${card.uid}"]`)).toHaveCount(1)
+  await expect(page.locator(`iframe[data-still="${card.uid}"]`)).toHaveCount(1)  // 칠판에선 멈춘 모습(▶ 누를 때만 돎)
 
   await page.getByPlaceholder('물어보세요', { exact: false }).click()
   await page.keyboard.type('막대를 더 크게'); await page.keyboard.press('Enter')

@@ -23,6 +23,8 @@ export const liveFits = it => isLive(it) && !!it.html && it.html.length <= LIVE_
 export const liveSrc = html => head(LIVE_CSP) + KICK + body(html)
 export const probeSrc = (probe, html) => head(LIVE_CSP) + KICK + probe + body(html)   // 카드 검사(`cardcheck.js`) — 재는 스크립트가 카드보다 먼저
 export const staticSrc = html => head(STATIC_CSP) + body(html)
+// 움직이는 카드의 멈춘 모습(2026-11-10 화면 검사 7단계 사용자 — 누를 때만 돎): 스크립트 없이 카드 글의 첫 모습만, 바깥 것은 움직일 때와 같이 막음
+export const stillSrc = html => head("default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:") + body(html)
 // 「크게 보기」 새 탭에 둘 페이지 — 앱 주소의 blob이라 그 페이지 자체엔 스크립트가 없어야 함. 움직이는 카드는 그 안의 틀(iframe)에서만 돎
 export function bigPage(it) {
   if (!liveFits(it)) return staticSrc(it?.html)

@@ -85,3 +85,5 @@ export function pauseYoutubeOutside(root) {
 
 // 오른쪽 위 「새 탭에서 열기」 단추 자리(아이템 안 좌표)
 export function openBtnRect(it) { const [x, y, w] = it.rect, s = 24; return { x: x + w - s - 8, y: y + (WEB_HEAD - s) / 2, w: s, h: s } }
+// 움직이는 카드 「▶ 움직이기 / ■ 멈추기」 단추 자리 — ↗ 왼쪽(2026-11-10 화면 검사 7단계: 평소엔 멈춘 모습, 누를 때만 돎)
+export function playBtnRect(it) { const b = openBtnRect(it), w = 76; return { x: b.x - w - 6, y: b.y, w, h: b.h } }

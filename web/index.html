@@ -18,7 +18,7 @@
     :root[data-theme=dark]{--mb-icon-acc:#7aa8ff;--mb-ctl:#5f7083;--mb-row-on:#283039;--mb-group-hover:#2a3646;color-scheme:dark;--mb-bar:#171e26;--mb-group:#1d2632;--mb-ink:#ffffff;--mb-muted:#8a98a8;--mb-icon:#cdd8e3;--mb-board:#1e2731;--mb-line:#2a3542;--mb-card:#171e26;--mb-seg:#1d2632;--mb-onbg:#4a2c22;--mb-editbg:rgba(30,39,49,.92);--mb-pick:#2c3846;--mb-danger-ink:#f2766f;--mb-link:#6ea8ff}
     /* 2026-11-09 better-interface 점검: 라이트 보조 글 #71717a는 회색 칸·판 바탕에서 대비 4.5 미만(3.99·4.40) → #63636b. 빨간 글은 글 전용 색(--mb-danger-ink — 단추 바탕 #d44c47은 그대로) */
     /* 글쇠로 옮겨 다닐 때 초점 표시 — 단추들이 all:unset이라 브라우저 기본 테두리가 지워졌음(같은 점검). 마우스로 누를 땐 안 뜸(:focus-visible). data-own-ring = 확인 창처럼 제 테두리가 있는 단추 */
-    button:not([data-own-ring]):focus-visible,[role=button]:focus-visible,[role=switch]:focus-visible,[role=separator]:focus-visible,.mb-row a:focus-visible,.mb-skip:focus-visible{outline:2px solid var(--mb-icon-acc)!important;outline-offset:2px}
+    button:not([data-own-ring]):focus-visible,[role=button]:focus-visible,[role=switch]:focus-visible,[role=separator]:focus-visible,.mb-row a:focus-visible,.mb-skip:focus-visible,iframe:focus-visible{outline:2px solid var(--mb-icon-acc)!important;outline-offset:2px}   /* iframe = 안에 누를 것이 있는 틀(문서 큰 창·조작 중 카드 — 2026-11-10 화면 검사 7단계) */
     .mb-chat button:disabled{opacity:.45;cursor:default!important}   /* 대화창 못 누르는 단추 — 색·커서가 누를 수 있는 단추와 똑같았음(2026-11-09 점검) */
     .mb-field:focus,.mb-field:focus-within{border-color:var(--mb-icon-acc)!important}   /* 글 칸 초점 = 테두리 파랑(대화창 — 2026-11-09 점검, outline:none이라 아무 표시 없었음) */
     .mb-chat button.mb-send:disabled{opacity:1}   /* 입력부 ↑ — 못 누를 땐 회색 원 자체가 표시(더 흐리면 안 보임) */

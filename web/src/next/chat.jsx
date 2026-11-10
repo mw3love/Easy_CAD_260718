@@ -213,7 +213,7 @@ function NavBtn({ side, onClick, title, testid, children }) {
 }
 
 // ed = Editor 손잡이(selTexts·pinCard·showCard), selKey = 고른 것이 바뀔 때 다시 읽게(main이 넘김)
-export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus, onBusy, width = CHAT_W, setWidth, fromTop = false }) {   // fromTop = 처음 읽은 대화를 첫 질문부터(예시 칠판 — 2026-11-03 UX 검토: 긴 딥모드 대화 끝 카드 중간부터 보였음)   // width·setWidth = 폭(왼쪽 경계 끌기 — main.jsx가 이 브라우저에 기억)   // onBusy(글) = 칠판 위 알약(정리 문서·딥모드 중에만, 끝나면 '')   // focus = { id, tool } — 빈 칠판 안내가 입력 칸으로(그 길 이름표까지, 2026-10-26)
+export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus, onBusy, width = CHAT_W, setWidth, fromTop = false, onOpenDoc }) {   // onOpenDoc = 문서 큰 창(main `setDocView`) — 없으면(휴대폰) 새 탭   // fromTop = 처음 읽은 대화를 첫 질문부터(예시 칠판 — 2026-11-03 UX 검토: 긴 딥모드 대화 끝 카드 중간부터 보였음)   // width·setWidth = 폭(왼쪽 경계 끌기 — main.jsx가 이 브라우저에 기억)   // onBusy(글) = 칠판 위 알약(정리 문서·딥모드 중에만, 끝나면 '')   // focus = { id, tool } — 빈 칠판 안내가 입력 칸으로(그 길 이름표까지, 2026-10-26)
   const [busyJob, setBusyJob] = useState('')   // 기다리는 일의 종류(모르면 '' = 서버가 짐작)   // request = { id, text, kind } — 칠판에서 시킨 질문(바뀔 때마다 한 번 보냄)   // floating = 좁은 창 — 칠판 위에 뜬 카드(2026-10-19)
   const [msgs, setMsgs] = useState([]), [loaded, setLoaded] = useState(false), [draft, setDraft] = useState(''), [busy, setBusy] = useState(null)
   const [, tick] = useState(0), [models, setModels] = useState(null), [server, setServer] = useState(true), [gone, setGone] = useState({})
@@ -544,6 +544,13 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     const m = msgs[i]; if (m.flowId && ed.current?.showIds([m.flowId])) return
     const r = ed.current?.flowBoard?.({ spec: m.flow, place: m.place }); if (r) setMsg(i, { flowId: r.id })
   }
+  // 문서 미리보기 크게 보기 = 칠판 카드와 같은 앱 안 큰 창(2026-11-10 화면 검사 7단계 사용자 — 새 탭이었음). 칠판에 붙인 카드(답 시각 `chat_at`)가 있으면 그 카드 창(블록 고치기까지),
+  // 없으면 같은 창을 보기·인쇄만으로 — 대화창에만 있는 문서를 고치면 어디에 남길지 없어서(고칠 점은 지금처럼 대화로 말하면 고쳐 씀)
+  function viewDoc(m, d) {
+    const html = d?.html || m.html; if (!onOpenDoc) return openHtml(html)
+    const card = ed.current?.liveModel?.().items.find(it => it.type === 'doc' && !it.live && it.chat_at === m.at && (!(m.docs?.length > 1) || it.style === d?.style))
+    onOpenDoc(card ? card._id : { _id: `chat-${m.at}-${d?.style || ''}`, type: 'doc', html, title: d?.title || m.title || '문서', page_w: d?.page_w || m.page_w })
+  }
   function pin(i) {
     const m = msgs[i]
     if (ed.current?.showCard(m.at)) return   // 이미 붙인 카드 → 그리로
@@ -766,16 +773,16 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
                 {m.autoFixed > 0 && <div>글자 잘림·겹침 {m.autoFixed}곳을 찾아 자동으로 고쳤어요</div>}
                 {m.fixKept && <div>고쳐 봤지만 나아지지 않아 그대로 뒀어요</div>}
                 {m.fixTried && !m.fixKept && !m.check?.length && <div>잘린 곳을 고쳤어요</div>}
-                {m.check?.length > 0 && <div>확인이 필요해요 — {m.check.slice(0, 3).join(' · ')}{m.check.length > 3 ? ` 외 ${m.check.length - 3}곳` : ''}</div>}
+                {m.check?.length > 0 && <div data-testid="card-check-need" style={{ color: 'light-dark(#b45309, #fbbf24)' }}>확인이 필요해요 — {m.check.slice(0, 3).join(' · ')}{m.check.length > 3 ? ` 외 ${m.check.length - 3}곳` : ''}{m.kind === 'motion' && !m.fixTried && m.motionFrame ? '' : ' — 고칠 곳을 아래 칸에 말하면 고쳐요'}</div>}   {/* 다음 할 일·경고 색(「답이 끊겼어요」 줄과 같게 — 2026-11-10 화면 검사 7단계) */}
                 {m.kind === 'motion' && m.check?.length > 0 && !m.fixTried && m.motionFrame && <button data-testid="card-fix" disabled={!!busy} onClick={e => setCostAsk({ what: '움직이는 장의 잘린 곳을 고쳐요(1~4분)', ok: '고치기', fix: i, back: e.currentTarget })} style={{ ...css.pin, marginTop: 4 }}>잘린 곳 고치기… (약 270~520크레딧)</button>}
               </div>}
               {m.html && m.kind !== 'live' && <div data-testid="answer-doc" style={{ marginTop: 6 }}>   {/* 정리 문서 미리보기 — A4 폭 794px를 대화창 폭에 맞춰 줄임(스크립트 없는 iframe) */}
                 {m.docs?.length > 1 ? <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>   {/* 두 장(발표용·읽기용) = 나란히 반쪽 크기 */}
                   {m.docs.map(d => <div key={d.style} data-testid="answer-doc-style" data-style={d.style}>
                     <div style={{ ...css.meta, marginBottom: 2 }}>{d.label}</div>
-                    <DocThumb html={d.html} title={d.title || d.label} h={220} tip={`${d.label} — 누르면 크게 보기 · 인쇄`} name={`${d.label} 크게 보기 · 인쇄`} open={() => openHtml(d.html)} /></div>)}
+                    <DocThumb html={d.html} title={d.title || d.label} h={220} tip={`${d.label} — 누르면 크게 보기 · 인쇄`} name={`${d.label} 크게 보기 · 인쇄`} open={() => viewDoc(m, d)} /></div>)}
                 </div>
-                : <DocThumb html={m.html} title={m.title || '문서'} w={m.page_w || 794} h={300} tip="누르면 크게 보기 · 인쇄" name="문서 크게 보기 · 인쇄" open={() => openHtml(m.html)} />}
+                : <DocThumb html={m.html} title={m.title || '문서'} w={m.page_w || 794} h={300} tip="누르면 크게 보기 · 인쇄" name="문서 크게 보기 · 인쇄" open={() => viewDoc(m)} />}
                 <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>   {/* 「크게 보기 · 인쇄」 단추는 뺌 — 미리보기 누르기와 같았음(2026-10-26 실검증) */}
                   <button style={css.ghost} disabled={!!busy} onClick={() => drawReport(i)} title="같은 자료로 인포그래픽 그림 후보 2장 — 보기 좋지만 숫자·날짜를 지어낼 수 있으니 확인하고 쓰세요(약 20크레딧)">🎨 이미지로도</button>
                   <span style={{ ...css.meta, alignSelf: 'center' }}>미리보기를 누르면 크게 보기·인쇄 · 고칠 점을 이어서 말하면 이 문서를 고쳐 써요</span></div>

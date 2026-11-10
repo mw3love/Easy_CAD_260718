@@ -8,12 +8,12 @@ import {
 } from './geom.js'
 import { symbolPath } from './symbols.js'
 import { sarrowRadius } from './arrows.js'
-import { WEB_HEAD, frameSrc, isYoutube, openBtnRect, siteOf } from './webcard.js'
+import { WEB_HEAD, frameSrc, isYoutube, openBtnRect, playBtnRect, siteOf } from './webcard.js'
 import { LISTY, MEMO, MEMO_KIND, MUTED, olNumbers } from './memo.js'
 import { LEGEND, descOf, rowName } from './legend.js'
 import { PdfPages, pdfPageAt } from './pdfcard.jsx'
 import { chartScene, isChart } from './chart.js'
-import { LIVE_CSP, LIVE_W, isLive, isMotion, liveFits, liveSrc, motionSrc } from './livecard.js'
+import { LIVE_CSP, LIVE_W, isLive, isMotion, liveFits, liveSrc, motionSrc, stillSrc } from './livecard.js'
 
 // ── 글자 재기(캔버스) ──
 let _ctx = null
@@ -246,7 +246,9 @@ export const setInkDark = v => { DARK = !!v }
 // 어두운 화면에서 판단·화살표·글이 바탕에 묻혔음(2026-10-19 점검). 짙은 빨강·초록처럼 색이 뚜렷한 것은 뜻이 있어 그대로
 const nearBlack = c => { const m = /^#([0-9a-f]{6})$/i.exec(c || ''); if (!m) return false; const n = parseInt(m[1], 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255
   return 0.299 * r + 0.587 * g + 0.114 * b < 64 && Math.max(r, g, b) - Math.min(r, g, b) <= 64 }
-export const ink = (c, onBoard) => { const css = cssColor(c); if (onBoard) return css; return DARK ? (nearBlack(css) ? '#ffffff' : css) : (near(css, true) ? '#1f1f1f' : css) }
+// 보조 글 회색(PDF에서 오려 온 그림 밑 「파일 · N쪽」 — 2026-11-10 화면 검사 7단계): 흰 칠판 5.95 · 어두운 칠판에선 화면 보조 글색 #8a98a8(5.15) — 한 값으로는 두 바탕 다 4.5가 안 됨
+export const CAPTION_INK = '#ff63636b'
+export const ink = (c, onBoard) => { const css = cssColor(c); if (onBoard) return css; return DARK ? (nearBlack(css) ? '#ffffff' : css === '#63636b' ? '#8a98a8' : css) : (near(css, true) ? '#1f1f1f' : css) }
 // 딥모드 판 프레임 = 흰 종이(2026-10-25 사용자 「어두운 화면에서도 잘 보여야」) — 판의 제목·밑 글은 투명 메모(메모 글은 늘 검은 잉크)·흰 종이 기준 톤이라 어두운 칠판에 묻혔음.
 // 판 = 인쇄하는 한 장이라 바탕째 종이로(메모 = 흰 종이 그대로와 같은 생각). 발표 화면은 프레임을 안 그려 종이만 네모로(`deepPaper`). 데스크톱 core_web `_FrameItem`도 같게
 // 그림 데이터(base64, 머리 없음) → 주소. JPEG(「/9j/」로 시작)면 jpeg 이름표 — 2026-11-02부터 큰 그림은 JPEG로 담음(15MB 칠판이 밖에서 10초 넘게 열렸음), 브라우저 추측에 기대지 않게
@@ -361,12 +363,15 @@ function chartPrim(p, k) {
 // 카드 속 페이지(iframe) — 칠판 안(foreignObject)과 휴대폰 위층(Editor `phoneCards`, 아이폰 Safari는 SVG 안 iframe에 칠판 배율을 안 먹임 — 2026-10-27)이 같이 씀
 export const docPageW = it => it.page_w || 794   // 문서가 짜인 폭 — 옛 문서 A4 794, 2026-11-09부터 1000(서버 `board_report.PAGE_W`)
 export function docFrame(it, bh, web) { const lv = isLive(it), k = it.rect[2] / (lv ? LIVE_W : docPageW(it))
-  if (isMotion(it)) return <iframe data-docid={it._id} data-liveid={it._id} data-motion={it._id} data-motion-of={it.motion_of || ''} srcDoc={motionSrc(it.html)} title={it.title || '움직이는 장'} sandbox="allow-scripts" csp={LIVE_CSP} scrolling="no"
+  // tabIndex: 누를 것이 없는 틀(멈춘 모습·보통 문서·조작 전)은 글쇠 길에서 뺌 — 조작 중('on')일 때만 Tab으로 들어감(2026-11-10 화면 검사 7단계)
+  if (isMotion(it)) return <iframe data-docid={it._id} data-liveid={it._id} data-motion={it._id} data-motion-of={it.motion_of || ''} srcDoc={motionSrc(it.html)} title={it.title || '움직이는 장'} sandbox="allow-scripts" csp={LIVE_CSP} scrolling="no" tabIndex={web === 'on' ? 0 : -1}
     style={{ border: 0, width: it.rect[2], height: it.rect[3], display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} />   // 움직이는 장 = 프레임 크기 그대로(머리 띠 없음, 배율 1)
+  if (lv && web === 'still') return <iframe key="still" data-docid={it._id} data-still={it._id} srcDoc={stillSrc(it.html)} title={`${it.title || '움직이는 카드'} — 멈춘 모습`} sandbox="" scrolling="no" tabIndex={-1}   // 움직이는 카드 평소 = 멈춘 모습(스크립트 없음 — ▶·두 번 누르기 때만 돎). key = 돌 때 새 틀(같은 틀의 sandbox만 바꾸면 다음 열기까지 스크립트가 안 돎)
+    style={{ border: 0, width: LIVE_W, height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: 'none' }} />
   return lv
-    ? <iframe data-docid={it._id} data-liveid={it._id} srcDoc={liveSrc(it.html)} title={it.title || '인터랙티브 HTML'} sandbox="allow-scripts" csp={LIVE_CSP} scrolling="no"
+    ? <iframe key="live" data-docid={it._id} data-liveid={it._id} srcDoc={liveSrc(it.html)} title={it.title || '움직이는 카드'} sandbox="allow-scripts" csp={LIVE_CSP} scrolling="no" tabIndex={web === 'on' ? 0 : -1}
         style={{ border: 0, width: LIVE_W, height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} />
-    : <iframe data-docid={it._id} srcDoc={it.html} title={it.title || '문서'} sandbox="" scrolling="no"
+    : <iframe data-docid={it._id} srcDoc={it.html} title={it.title || '문서'} sandbox="" scrolling="no" tabIndex={-1}
         style={{ border: 0, width: docPageW(it), height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: 'none' }} /> }
 export const webZoom = (it, fsScale) => (!isYoutube(it) && it.zoom > 0 && it.zoom < 1 ? it.zoom : isYoutube(it) && fsScale > 1 ? 1 / fsScale : 1)
 export function webFrame(it, web, noFs, fsScale) { const zm = webZoom(it, fsScale)
@@ -470,7 +475,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
       // 발표의 유튜브 = 화면에 보이는 크기의 판에 띄우고 줄임(작은 판을 확대하면 유튜브 단추가 몇 배로 커 보였음 — 2026-10-20 사용자)
       const info = () => { const s = Math.min(36, bh - 16), lw = w - s - 34, lines = wrap2(it.desc || siteOf(it.url), 12, lw)   // 막힌 사이트·그림 없음 = 아이콘 + 설명 두 줄
         return <>{it.icon ? <image href={it.icon} x={x + 12} y={y + H + (bh - s) / 2} width={s} height={s} />
-          : <><rect x={x + 12} y={y + H + (bh - s) / 2} width={s} height={s} rx={s / 4} fill="#e4e4e7" /><text x={x + 12 + s / 2} y={y + H + bh / 2} textAnchor="middle" dominantBaseline="central" fontSize={s / 2} fontWeight={700} fontFamily={APP_FONT} fill="#71717a">{siteOf(it.url).slice(0, 1).toUpperCase()}</text></>}
+          : <><rect x={x + 12} y={y + H + (bh - s) / 2} width={s} height={s} rx={s / 4} fill="#e4e4e7" /><text x={x + 12 + s / 2} y={y + H + bh / 2} textAnchor="middle" dominantBaseline="central" fontSize={s / 2} fontWeight={700} fontFamily={APP_FONT} fill="#52525b">{siteOf(it.url).slice(0, 1).toUpperCase()}</text></>}
           {lines.map((t, k) => <text key={k} x={x + s + 22} y={y + H + bh / 2 + (k - (lines.length - 1) / 2) * 17} dominantBaseline="central" fontSize={12} fontFamily={APP_FONT} fill="#52525b">{t}</text>)}</> }
       // data-web-* = HTML 공유 파일이 카드를 누르면 그 자리에 실제 페이지를 끼울 때 씀(htmlshare.js — 2026-10-19 사용자)
       return <g transform={T} data-web-url={it.url} data-web-src={it.frameable && bh > 4 ? frameSrc(it) : undefined} data-web-box={`${x},${y + H},${w},${bh}`} data-web-head={h > 0 ? (H / h).toFixed(3) : 1} data-web-zoom={zm < 1 ? zm : undefined}>
@@ -491,7 +496,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         <rect x={x} y={y} width={w} height={h} rx={8} ry={8} fill="none" stroke="#a1a1aa" strokeWidth={1} />
         {ic > 0 && <image href={it.icon} x={x + 10} y={y + (Math.min(WEB_HEAD, h) - ic) / 2} width={ic} height={ic} />}
         <text x={tx} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis(it.title || siteOf(it.url), 13, 700, tw)}</text>
-        <text x={tx} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(it.url, 10, 400, tw)}</text>
+        <text x={tx} y={y + 31} dominantBaseline="central" fontSize={11} fontFamily={APP_FONT} fill="#63636b">{ellipsis(it.url, 11, 400, tw)}</text>
         {yl > 0 && <g style={{ cursor: 'pointer' }}><rect x={ob.x - yl} y={ob.y} width={yl - 6} height={ob.h} rx={5} fill={ytBig ? '#da7756' : '#ffffff'} stroke={ytBig ? '#da7756' : '#d4d4d8'} />
           <text x={ob.x - yl + (yl - 6) / 2} y={ob.y + ob.h / 2} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={600} fontFamily={APP_FONT} fill={ytBig ? '#ffffff' : '#3f3f46'}>{ytBig ? '⤡ 원래대로' : '⤢ 크게 보기 (F)'}</text></g>}
         <g><title>새 탭에서 열기</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
@@ -510,9 +515,10 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
               <text x={x + 12} y={y + 22} dominantBaseline="central" fontSize={18} fontFamily={APP_FONT} fill="#da7756">▶ 움직이는 장</text></> : null}
           {web === 'on' && <rect x={x} y={y} width={w} height={h} fill="none" stroke="#da7756" strokeWidth={3} />}
         </g> }
-      const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'dc-' + (it._id || idx), ob = openBtnRect(it), tw = w - ob.w - 26
-      const lv = isLive(it), fits = liveFits(it), k = w / (lv ? LIVE_W : docPageW(it))
-      const live = (web === 'on' || web === 'view') && bh > 4 && it.html && (!lv || fits)
+      const lv = isLive(it), fits = liveFits(it), k = it.rect[2] / (lv ? LIVE_W : docPageW(it))
+      const play = lv && fits && (web === 'still' || web === 'on') && it.rect[3] >= WEB_HEAD, pb = playBtnRect(it)   // ▶ 움직이기 / ■ 멈추기(편집 화면 — 평소 멈춘 모습, 2026-11-10 화면 검사 7단계)
+      const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'dc-' + (it._id || idx), ob = openBtnRect(it), tw = w - ob.w - 26 - (play ? pb.w + 6 : 0)
+      const live = (web === 'on' || web === 'view' || web === 'still') && bh > 4 && it.html && (!lv || fits)
       return <g transform={T} data-doc-box={`${x},${y + H},${w},${bh}`} data-live-src={lv && fits && !web ? liveSrc(it.html) : undefined}>
         <clipPath id={cid}><rect x={x} y={y} width={w} height={h} rx={6} ry={6} /></clipPath>
         <g clipPath={`url(#${cid})`}>
@@ -522,12 +528,15 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
             ? <foreignObject x={x} y={y + H} width={w} height={bh}>{docFrame(it, bh, web)}</foreignObject>
             : web === 'shell' ? <rect x={x} y={y + H} width={w} height={bh} fill="#ffffff" />   // 몸통은 휴대폰 위층이 그림
             : <><rect x={x} y={y + H} width={w} height={bh} fill="#fafafa" />
-              <text x={x + w / 2} y={y + H + bh / 2} textAnchor="middle" dominantBaseline="central" fontSize={Math.min(16, bh / 6)} fontFamily={APP_FONT} fill="#8a8f98">{lv ? (fits ? '▶ 인터랙티브 HTML — 칠판에서 두 번 눌러 움직여 보세요' : '▶ 인터랙티브 HTML — 너무 커서 못 띄워요') : '📄 정리 문서 — ↗로 크게 보기·인쇄'}</text></>)}
+              <text x={x + w / 2} y={y + H + bh / 2} textAnchor="middle" dominantBaseline="central" fontSize={Math.min(16, bh / 6)} fontFamily={APP_FONT} fill="#63636b">{lv ? (fits ? '▶ 움직이는 카드 — 칠판에서 두 번 눌러 움직여 보세요' : '▶ 움직이는 카드 — 너무 커서 못 띄워요') : '📄 문서 — ↗로 크게 보기·인쇄'}</text></>)}
         </g>
         {bh > 0 && <path d={`M${x},${y + H} H${x + w}`} stroke="#ddd6fe" strokeWidth={1} />}
         <rect x={x} y={y} width={w} height={h} rx={6} ry={6} fill="none" stroke={web === 'on' ? '#da7756' : '#a78bfa'} strokeWidth={web === 'on' ? 2 : 1} />
-        <text x={x + 10} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis((lv ? '▶ ' : '📄 ') + (it.title || (lv ? '인터랙티브 HTML' : '문서')), 13, 700, tw)}</text>
-        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(it.file ? `HTML 파일 · ${it.file}` : `${lv ? '인터랙티브 HTML' : '문서'} · KAIROS ${it.model || ''}${it.lives && Object.keys(it.lives).length ? ` · ▶ 움직이는 칸 ${Object.keys(it.lives).length}` : ''}`, 10, 400, tw)}</text>
+        <text x={x + 10} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis((lv ? '▶ ' : '📄 ') + (it.title || (lv ? '움직이는 카드' : '문서')), 13, 700, tw)}</text>
+        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={11} fontFamily={APP_FONT} fill="#63636b">{ellipsis(it.file ? `HTML 파일 · ${it.file}` : `${lv ? '움직이는 카드' : '문서'} · KAIROS ${it.model || ''}${it.lives && Object.keys(it.lives).length ? ` · ▶ 움직이는 카드 ${Object.keys(it.lives).length}` : ''}`, 11, 400, tw)}</text>
+        {play && <g data-testid="live-card-play" data-on={web === 'on' ? '1' : undefined} style={{ cursor: 'pointer' }}><title>{web === 'on' ? '멈추기 — 멈춘 모습으로(Esc)' : '움직이기 — 이 카드의 스크립트를 돌려요(두 번 누르기와 같음)'}</title>
+          <rect x={pb.x} y={pb.y} width={pb.w} height={pb.h} rx={5} fill={web === 'on' ? '#f7e1da' : '#ffffff'} stroke={web === 'on' ? '#c4613f' : '#8b8b94'} />
+          <text x={pb.x + pb.w / 2} y={pb.y + pb.h / 2} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={600} fontFamily={APP_FONT} fill="#18181b">{web === 'on' ? '■ 멈추기' : '▶ 움직이기'}</text></g>}
         <g><title>크게 보기 · 인쇄</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
           <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
       </g>
@@ -549,7 +558,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         {bh > 0 && <path d={`M${x},${y + H} H${x + w}`} stroke="#fecaca" strokeWidth={1} />}
         <rect x={x} y={y} width={w} height={h} rx={6} ry={6} fill="none" stroke={web === 'on' ? '#da7756' : '#f87171'} strokeWidth={web === 'on' ? 2 : 1} />
         <text x={x + 10} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis('📕 ' + (it.name || 'PDF'), 13, 700, tw)}</text>
-        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(`PDF · ${it.pages || 0}쪽`, 10, 400, tw)}</text>
+        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={11} fontFamily={APP_FONT} fill="#63636b">{ellipsis(`PDF · ${it.pages || 0}쪽`, 11, 400, tw)}</text>
         <g><title>원본 PDF 새 탭에서 열기</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
           <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
       </g>
