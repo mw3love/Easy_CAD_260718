@@ -13,7 +13,7 @@ import { LISTY, MEMO, MEMO_KIND, MUTED, olNumbers } from './memo.js'
 import { LEGEND, descOf, rowName } from './legend.js'
 import { PdfPages, pdfPageAt } from './pdfcard.jsx'
 import { chartScene, isChart } from './chart.js'
-import { LIVE_CSP, LIVE_W, isLive, isMotion, liveFits, liveSrc, motionSrc, stillSrc } from './livecard.js'
+import { LIVE_CSP, LIVE_W, isLive, isMotion, liveFits, liveSrc, motionSrc, staticSrc, stillSrc } from './livecard.js'
 
 // ── 글자 재기(캔버스) ──
 let _ctx = null
@@ -242,6 +242,11 @@ const near = (c, white) => { const m = /^#([0-9a-f]{6})$/i.exec(c || ''); if (!m
 // 칠판 바탕 기본 잉크 — 밝은 화면은 흰 잉크를 검정으로, 어두운 화면은 검정 잉크를 흰색으로(데스크톱 `_DEFAULT_INK_DARK` #FFFFFF). 보드 안은 보드 색 기준이라 그대로
 let DARK = false
 export const setInkDark = v => { DARK = !!v }
+// 내보낸 결과의 문서 카드(2026-11-11 화면 검사 8단계 — 전엔 「↗로 크게 보기」 자리 글만 남아 받은 사람이 문서를 못 봤음): 'pdf' = 끝에 문서 쪽을 붙임(쪽 번호는 exporter가 DOC_PAGE 자리에 채움),
+// 'img' = PNG·SVG(쪽을 못 붙임), 'html' = 공유 파일(누르면 그 자리에 문서 틀 — data-doc-src). null = 칠판·발표 장 목록·그림으로 복사(모습 그대로)
+let CARDS = null
+export const setExportCards = v => { CARDS = v || null }
+export const DOC_PAGE = id => `@@DOCP:${id}@@`
 // 검정 잉크 = 어둡고(밝기 < 64) 색이 옅은(최대−최소 ≤ 64) 색 — 검정·숯색·보드 남색 #1e2b45가 다 들어감. 옛 규칙(세 값 모두 ≤ 0x40)은 남색(파랑 0x45~0x4d)을 놓쳐
 // 어두운 화면에서 판단·화살표·글이 바탕에 묻혔음(2026-10-19 점검). 짙은 빨강·초록처럼 색이 뚜렷한 것은 뜻이 있어 그대로
 const nearBlack = c => { const m = /^#([0-9a-f]{6})$/i.exec(c || ''); if (!m) return false; const n = parseInt(m[1], 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255
@@ -519,7 +524,8 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
       const play = lv && fits && (web === 'still' || web === 'on') && it.rect[3] >= WEB_HEAD, pb = playBtnRect(it)   // ▶ 움직이기 / ■ 멈추기(편집 화면 — 평소 멈춘 모습, 2026-11-10 화면 검사 7단계)
       const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'dc-' + (it._id || idx), ob = openBtnRect(it), tw = w - ob.w - 26 - (play ? pb.w + 6 : 0)
       const live = (web === 'on' || web === 'view' || web === 'still') && bh > 4 && it.html && (!lv || fits)
-      return <g transform={T} data-doc-box={`${x},${y + H},${w},${bh}`} data-live-src={lv && fits && !web ? liveSrc(it.html) : undefined}>
+      const xc = !web && CARDS, paper = xc === 'pdf' || xc === 'img', fs = Math.min(16, bh / 6), dt = ellipsis(it.title || '문서', fs, 400, Math.max(60, w - 230 * fs / 16))
+      return <g transform={T} data-doc-box={`${x},${y + H},${w},${bh}`} data-live-src={lv && fits && !web ? liveSrc(it.html) : undefined} data-doc-src={xc === 'html' && !lv && it.html ? staticSrc(it.html) : undefined} data-doc-w={xc === 'html' && !lv && it.html ? docPageW(it) : undefined}>
         <clipPath id={cid}><rect x={x} y={y} width={w} height={h} rx={6} ry={6} /></clipPath>
         <g clipPath={`url(#${cid})`}>
           <rect x={x} y={y} width={w} height={h} fill="#ffffff" />
@@ -528,7 +534,8 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
             ? <foreignObject x={x} y={y + H} width={w} height={bh}>{docFrame(it, bh, web)}</foreignObject>
             : web === 'shell' ? <rect x={x} y={y + H} width={w} height={bh} fill="#ffffff" />   // 몸통은 휴대폰 위층이 그림
             : <><rect x={x} y={y + H} width={w} height={bh} fill="#fafafa" />
-              <text x={x + w / 2} y={y + H + bh / 2} textAnchor="middle" dominantBaseline="central" fontSize={Math.min(16, bh / 6)} fontFamily={APP_FONT} fill="#63636b">{lv ? (fits ? '▶ 움직이는 카드 — 칠판에서 두 번 눌러 움직여 보세요' : '▶ 움직이는 카드 — 너무 커서 못 띄워요') : '📄 문서 — ↗로 크게 보기·인쇄'}</text></>)}
+              <text x={x + w / 2} y={y + H + bh / 2} textAnchor="middle" dominantBaseline="central" fontSize={fs} fontFamily={APP_FONT} fill="#63636b">{lv ? (fits ? (xc === 'html' ? '▶ 움직이는 카드 — 누르면 움직여요' : '▶ 움직이는 카드 — 칠판에서 두 번 눌러 움직여 보세요') : '▶ 움직이는 카드 — 너무 커서 못 띄워요')
+                : xc === 'pdf' && it.html ? `📄 「${dt}」 — ${DOC_PAGE(it._id)}쪽에 이어 붙임` : paper ? `📄 「${dt}」 — 문서는 칠판에서 따로 인쇄` : xc === 'html' && it.html ? '📄 문서 — 누르면 문서가 열려요' : '📄 문서 — ↗로 크게 보기·인쇄'}</text></>)}
         </g>
         {bh > 0 && <path d={`M${x},${y + H} H${x + w}`} stroke="#ddd6fe" strokeWidth={1} />}
         <rect x={x} y={y} width={w} height={h} rx={6} ry={6} fill="none" stroke={web === 'on' ? '#da7756' : '#a78bfa'} strokeWidth={web === 'on' ? 2 : 1} />
@@ -537,8 +544,8 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         {play && <g data-testid="live-card-play" data-on={web === 'on' ? '1' : undefined} style={{ cursor: 'pointer' }}><title>{web === 'on' ? '멈추기 — 멈춘 모습으로(Esc)' : '움직이기 — 이 카드의 스크립트를 돌려요(두 번 누르기와 같음)'}</title>
           <rect x={pb.x} y={pb.y} width={pb.w} height={pb.h} rx={5} fill={web === 'on' ? '#f7e1da' : '#ffffff'} stroke={web === 'on' ? '#c4613f' : '#8b8b94'} />
           <text x={pb.x + pb.w / 2} y={pb.y + pb.h / 2} textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={600} fontFamily={APP_FONT} fill="#18181b">{web === 'on' ? '■ 멈추기' : '▶ 움직이기'}</text></g>}
-        <g><title>크게 보기 · 인쇄</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
-          <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
+        {!paper && <g><title>크게 보기 · 인쇄</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
+          <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>}   {/* 종이·그림엔 누를 수 없는 ↗를 안 그림 */}
       </g>
     }
     case 'pdf': {   // PDF 보기 카드(2026-10-21) — 위 띠(📕 파일 이름·쪽 수·↗ 원본) + 칸 안 쪽 그림(편집·발표 화면, `pdfcard.jsx`). 서버 없이(내보내기·HTML 공유) = 첫 쪽 작은 그림

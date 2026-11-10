@@ -34,7 +34,7 @@ import { colEdges, colFracs, frameTag, frameTagFs, itemTransform, rowEdges } fro
 import { orderedFrames, presentFrames, frameLinks, setFrameOrder } from './edit.js'
 import { Presenter } from './present.jsx'
 import { layersOf, layerIdOf } from './layers.jsx'
-import { buildSvg, download, exportPdf, exportPng, exportSvg, fontFaces, pngBlob, usesBoardFont, weightsOf } from './exporter.jsx'
+import { buildSvg, download, exportPdf, exportPng, exportSvg, fontFaces, pngBlob, usesBoardFont, weightsOf, withDocPages } from './exporter.jsx'
 import { buildHtml } from './htmlshare.js'
 import { ContextMenu } from './ctxmenu.jsx'
 import { Confirm, btnSecondary } from './ui.jsx'
@@ -137,6 +137,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 고친 뒤 알릴 말 — 크레딧·막힘처럼 꼭 봐야 할 말만 조금 뒤에 다시(옛 저장 알림이 덮던 것 — 2026-10-27부터 저장은 알림 없음)
   const sayLater = msg => setTimeout(() => setStatus(msg), 1200)
   const commit = useCallback((next, nextSel, label = '', merge = null) => {
+    dropNotesBanner()   // 「발표 판서 N개 지움」 띠 = 다음 편집까지(2026-11-11 8단계)
     const prev = R.current.model.items, h = hist.current, now = Date.now()
     // 잠긴 도형 = 고를 수는 있어도 안 바뀜(2026-10-25 사용자 — 옮기기·지우기·고치기만 막음). 길목 한 곳에서: 잠긴 채 바뀐 것은 옛것으로, 사라진 것은 되살림. 잠금을 푸는 것(locked: false)만 통과
     const lockedPrev = new Map(prev.filter(it => it.locked).map(it => [it._id, it]))
@@ -162,8 +163,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (nextSel) setSel(nextSel.filter(id => fixed.some(it => it._id === id)))
     onCommit?.(label, fixed.length - prev.length)   // 둘째 = 늘어난 개수(휴대폰 「붙였어요 · 되돌리기」 알림 — main)
   }, [setModel, onCommit])
-  const undo = () => { const h = hist.current, p = h.past.pop(); h.mergeKey = null; if (!p) return; h.future.push(p); const items = applyDelta(R.current.model.items, p.before); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); setSel(p.sel.filter(id => items.some(it => it._id === id))); onCommit?.('되돌림') }
-  const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
+  const undo = () => { dropNotesBanner(); const h = hist.current, p = h.past.pop(); h.mergeKey = null; if (!p) return; h.future.push(p); const items = applyDelta(R.current.model.items, p.before); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); setSel(p.sel.filter(id => items.some(it => it._id === id))); onCommit?.('되돌림') }
+  const redo = () => { dropNotesBanner(); const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
   useImperativeHandle(ref, () => ({ undo, redo, liveModel: () => R.current.model, startToolDrag, placeShape, selCommands: () => (R.current.sel.length ? menuEntries(cellSel && R.current.sel.length === 1 && R.current.sel[0] === cellSel.id ? { cell: { r: cellSel.r1, c: cellSel.c1 } } : {}) : []), busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, skipFrames, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, selImageIds, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, printDoc, saveHwpx, setImage, slidesBoard, slideBranch, motionInfo, motionPlace, flowBoard, flowTarget, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
@@ -666,14 +667,15 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // 발표는 발표에서 끝남(2026-10-28 사용자) — 끝나면 이번 발표에서 그은 판서만 지우고 「남기기」 알약(되살림 = 지운 것을 다시 넣음, Ctrl+Z도 됨). 전에 있던 판서는 그대로
   const penAtStart = useRef(new Set()), [notesGone, setNotesGone] = useState(null)   // notesGone = { items: 지운 판서 }
-  useEffect(() => { if (!notesGone) return; const t = setTimeout(() => setNotesGone(null), 8000); return () => clearTimeout(t) }, [notesGone])
+  function dropNotesBanner() { if (R.current.notesGoneOn) { R.current.notesGoneOn = false; setNotesGone(null) } }
+  // 띠는 다음 편집(칠판 문서를 바꾸는 commit·되돌리기·다시)이나 ✕까지 남음(2026-11-11 8단계 사용자 결정 — 전엔 8초 뒤 사라져 못 읽은 채 지나감)
   function endPresent() {
     setPresent(null)
     const m = R.current.model, gone = m.items.filter(it => it.layer_id === PEN_LAYER && !penAtStart.current.has(it._id)); if (!gone.length) return
-    commit(removeItems(m.items, gone.map(it => it._id)), R.current.sel, '발표 판서 지움'); setNotesGone({ items: gone })
+    commit(removeItems(m.items, gone.map(it => it._id)), R.current.sel, '발표 판서 지움'); setNotesGone({ items: gone }); R.current.notesGoneOn = true
   }
   function keepNotes() {
-    const g = notesGone; setNotesGone(null); if (!g) return; const m = R.current.model, have = new Set(m.items.map(it => it._id)), back = g.items.filter(it => !have.has(it._id))
+    const g = notesGone; dropNotesBanner(); if (!g) return; const m = R.current.model, have = new Set(m.items.map(it => it._id)), back = g.items.filter(it => !have.has(it._id))
     if (back.length) commit([...m.items, ...back], R.current.sel, '발표 판서 남김')
   }
   const cellRange = cs => ({ r0: Math.min(cs.r0, cs.r1), r1: Math.max(cs.r0, cs.r1), c0: Math.min(cs.c0, cs.c1), c1: Math.max(cs.c0, cs.c1) })
@@ -866,18 +868,18 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (o.format === 'html') return exportHtml(o)
     const r = await exportPages(o); if (r.error) { setStatus(r.error); return false }
     const pages = r.pages
-    if (o.format === 'pdf') exportPdf(pages.length === 1 ? pages[0] : pages, o.name)
+    if (o.format === 'pdf') exportPdf(pages.length === 1 ? pages[0] : pages, o.name, r.docs || [])   // 문서 카드의 문서 = 끝에 이어 붙임(2026-11-11 8단계)
     else if (pages.length === 1) { if (o.format === 'png') await exportPng(pages[0], o.name + '.png'); else exportSvg(pages[0], o.name + '.svg') }
     else for (let i = 0; i < pages.length; i++) { const nm = `${o.name}-${i + 1}`; if (o.format === 'png') await exportPng(pages[i], nm + '.png'); else exportSvg(pages[i], nm + '.svg') }
-    setStatus(o.format === 'pdf' ? `${pages.length > 1 ? pages.length + '쪽 — ' : ''}인쇄 창에서 「PDF로 저장」을 고르세요` : pages.length > 1 ? `${pages.length}쪽 내려받음` : `${o.name}.${o.format} 내려받음`)
+    setStatus(o.format === 'pdf' ? `${pages.length > 1 ? pages.length + '쪽 — ' : ''}${r.docs?.length ? `끝에 문서 ${r.docs.length}개 이어 붙임 — ` : ''}인쇄 창에서 「PDF로 저장」을 고르세요` : pages.length > 1 ? `${pages.length}쪽 내려받음` : `${o.name}.${o.format} 내려받음`)
     return true
   }
   // HTML 한 파일(2026-10-18 — 방송본 고정·예비본): 범위의 전체 그림 + 칠판의 프레임 = 발표 장, 글꼴은 맨 위에 한 번만(그림마다 넣지 않음 — preview = 글꼴 빼고 그림)
   async function exportHtml(o) {
-    const ov = await exportPages({ ...o, format: 'svg', preview: true, transparent: false, onePage: true, scope: o.scope === 'frames' ? 'all' : o.scope })
+    const ov = await exportPages({ ...o, format: 'svg', cards: 'html', preview: true, transparent: false, onePage: true, scope: o.scope === 'frames' ? 'all' : o.scope })
     if (ov.error || !ov.pages?.length) { setStatus(ov.error || '내보낼 것이 없어요'); return false }
     const hasFrames = R.current.model.items.some(it => it.type === 'frame')
-    const sl = hasFrames ? await exportPages({ ...o, format: 'svg', preview: true, transparent: false, scope: 'frames', onePage: false }) : { pages: [] }
+    const sl = hasFrames ? await exportPages({ ...o, format: 'svg', cards: 'html', preview: true, transparent: false, scope: 'frames', onePage: false }) : { pages: [] }
     const its = R.current.model.items, fonts = its.some(usesBoardFont) ? await fontFaces(weightsOf(its)) : ''
     const d = new Date(), p2 = v => String(v).padStart(2, '0'), made = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`
     const html = buildHtml({ title: o.name, made, overview: ov.pages[0].svg, slides: (sl.pages || []).map(pg => ({ svg: pg.svg, name: pg.name })), fonts })
@@ -887,6 +889,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // 내보낼 쪽들(내려받지 않음 — 내보내기 창 미리보기도 씀). o.scope: 'frames' = 프레임만(순서대로, 2026-10-18 사용자: 「프레임 모두 고르기」를 내보내기 범위로). 쪽마다 frameId(순서 끌기)
   async function exportPages(o) {
+    o = { ...o, cards: o.cards || (o.format === 'pdf' ? 'pdf' : 'img') }   // 문서 카드 자리 글 = 내보낸 모습에 맞게(PDF = 끝에 문서 쪽, 그림 = 따로 인쇄, HTML = 누르면 열림 — 8단계)
+    const done = pages => (o.cards === 'pdf' ? withDocPages(pages, id => R.current.model.items.find(it => it._id === id)) : { pages })
     const m = R.current.model, hid = new Set(layersOf(m).filter(l => !l.visible).map(l => l.id))
     // 칠판 규칙(2026-10-18 사용자와 정함 — 데스크톱 「틀이 있으면 전체 = 틀」을 바꿈): 용지틀도 보통 도형
     const all = drawOrder(m.items).filter(([it]) => !hid.has(layerIdOf(it)))
@@ -905,7 +909,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const inFrame = it => { const b = sceneBox(it, textBox), cx = b.x + b.w / 2, cy = b.y + b.h / 2; return frames.some(f => cx >= f.x && cx <= f.x + f.w && cy >= f.y && cy <= f.y + f.h) }
       const rest = onlyFrames ? [] : all.filter(([it]) => selIds.has(it._id) && it.type !== 'titleblock' && it.type !== 'frame' && !inFrame(it))
       if (rest.length) pages.push(await buildSvg(rest, unionBox(rest.map(([it]) => sceneBox(it, textBox))), { ...o, frame: null, transparent: tr }, ob, rts, o.format !== 'pdf'))   // 틀 밖에 고른 것 — 버리지 않음
-      return { pages }
+      return done(pages)
     }
     let ents = all
     if (selIds) ents = all.filter(([it]) => selIds.has(it._id))
@@ -914,7 +918,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const src = unionBox(ents.map(([it]) => sceneBox(it, textBox)))
     // 프레임 테두리·이름표는 그리지 않음(자리만 — 「고른 것 한 쪽에」)
     const res = await buildSvg(ents.filter(([it]) => it.type !== 'frame'), src, { ...o, frame, transparent: o.format !== 'pdf' && o.transparent }, boardMembership(m.items), resolveRoutes(m.items, rectOf), o.format !== 'pdf' && !o.preview)
-    return { pages: [res] }
+    return done([res])
   }
   // ── KAIROS 대화창 길목(chat.jsx) ──
   // 고른 것(보드면 안의 것까지)의 글 — 질문에 같이 보냄
@@ -2789,10 +2793,11 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
             if (a) commit(m.items.map(it => (it._id === a._id ? { ...it, pts: [...it.pts].reverse() } : it)), R.current.sel, '화살표 뒤집기') }} onClearNotes={box => { const m = R.current.model, inBox = it => { const b = sceneBox(it, textBox), cx = b.x + b.w / 2, cy = b.y + b.h / 2; return cx >= box.x && cx <= box.x + box.w && cy >= box.y && cy <= box.y + box.h }   // 이 장(프레임) 안 판서만
             const ids = m.items.filter(it => it.layer_id === PEN_LAYER && inBox(it)).map(it => it._id); if (ids.length) commit(removeItems(m.items, ids), R.current.sel, '이 장 판서 지움') }}
           onErase={(p, tol, key) => { const m = R.current.model, hit = topHit(m.items.filter(it => it.layer_id === PEN_LAYER), p, tol, textBox); if (hit) commit(removeItems(m.items, [hit._id]), R.current.sel, '판서 지움', key) }} /> })()}
-      {notesGone && present == null && <div data-testid="notes-gone" onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', bottom: 54, left: '50%', transform: 'translateX(-50%)', zIndex: 7, display: 'flex', alignItems: 'center', gap: 10, padding: '4px 6px 4px 14px', borderRadius: 99,
+      {notesGone && present == null && <div role="status" data-testid="notes-gone" onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', bottom: 54, left: '50%', transform: 'translateX(-50%)', zIndex: 7, display: 'flex', alignItems: 'center', gap: 10, padding: '4px 6px 4px 14px', borderRadius: 99,
         background: 'rgba(24,24,27,.9)', color: '#fff', font: "400 13px 'Pretendard', sans-serif", whiteSpace: 'nowrap', boxShadow: '0 2px 10px rgba(0,0,0,.25)' }}>
-        발표 판서 {notesGone.items.length}개 지움
-        <button onClick={keepNotes} style={{ all: 'unset', cursor: 'pointer', padding: '3px 12px', borderRadius: 99, background: 'var(--mb-accent)', color: '#fff', fontWeight: 600 }}>남기기</button></div>}
+        발표 판서 {notesGone.items.length}개 지움 · {keyLabel('Ctrl+Z')}로도 되살림
+        <button onClick={keepNotes} style={{ all: 'unset', cursor: 'pointer', padding: '3px 12px', borderRadius: 99, background: 'var(--mb-accent)', color: '#fff', fontWeight: 600 }}>남기기</button>
+        <button className="mb-hit" aria-label="알림 닫기" title="알림 닫기" onClick={() => dropNotesBanner()} style={{ all: 'unset', cursor: 'pointer', position: 'relative', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 99, color: 'rgba(255,255,255,.85)', fontSize: 12 }}>✕</button></div>}
       {tagEdit && (() => { const it = byId.get(tagEdit); if (!it) return null; const b = frameTagBox(it), o = scr({ x: b.x, y: b.y })   // 프레임 이름표 바로 고치기(치는 대로 — 2026-10-18 사용자)
         return <input key={tagEdit} autoFocus className="mb-field" aria-label="프레임 이름" defaultValue={it.name || ''} placeholder="이름" onFocus={e => { if (e.currentTarget.dataset.w == null) e.currentTarget.dataset.w = it.name || '' }} onPointerDown={e => e.stopPropagation()} onChange={e => renameFrame(it._id, e.target.value)}
           onBlur={() => setTagEdit(null)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') renameFrame(it._id, e.currentTarget.dataset.w ?? ''); if (e.key === 'Enter' || e.key === 'Escape') setTagEdit(null) }}   /* Esc = 처음 이름으로(규칙 ⑦ — 2026-11-10 4단계) */

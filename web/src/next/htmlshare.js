@@ -17,7 +17,7 @@ export function buildHtml({ title, made, overview, slides = [], fonts = '' }) {
 html,body{margin:0;height:100%;background:#f4f4f5;font:14px 'Pretendard','Malgun Gothic',sans-serif;color:#27272a;overflow:hidden}
 #bar{position:fixed;left:0;right:0;top:0;height:44px;display:flex;align-items:center;gap:10px;padding:0 14px;background:#fff;border-bottom:1px solid #e4e4e7;z-index:5}
 #bar b{font-size:15px}#bar .m{color:#71717a;font-size:12px}#bar .sp{flex:1}
-#bar button{border:0;border-radius:6px;padding:6px 12px;background:rgba(218,119,86,.14);font:600 13px inherit;cursor:pointer;color:#27272a}
+#bar button{border:0;border-radius:6px;padding:6px 12px;background:rgba(218,119,86,.14);font-weight:600;font-size:13px;font-family:inherit;cursor:pointer;color:#27272a}
 #bar button.on{background:#da7756;color:#fff}
 #tabs{display:flex;gap:2px;padding:2px;border-radius:8px;background:#f4f4f5}#tabs button{background:transparent}#tabs button.cur{background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.12)}
 #ov{position:fixed;left:0;right:0;top:44px;bottom:0;overflow:hidden;cursor:grab}
@@ -27,14 +27,14 @@ html,body{margin:0;height:100%;background:#f4f4f5;font:14px 'Pretendard','Malgun
 #show .slide svg{width:100%;height:100%;display:block}
 #show .slide.cur{display:flex}
 #nav{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);display:flex;gap:4px;align-items:center;padding:4px;border-radius:10px;background:rgba(24,24,27,.86);color:#fff;z-index:11;opacity:0;transition:opacity .25s}
-#show:hover #nav,#nav:hover{opacity:1}
-#nav button{border:0;background:transparent;color:#fff;font:600 14px inherit;padding:6px 10px;border-radius:6px;cursor:pointer}
+#show:hover #nav,#nav:hover,#nav:focus-within{opacity:1}
+#nav button{border:0;background:transparent;color:#fff;font-weight:600;font-size:14px;font-family:inherit;padding:6px 10px;border-radius:6px;cursor:pointer}
 #nav span{font-size:12px;padding:0 8px}
 </style></head><body>
 <div id="bar"><b>${esc(title)}</b><span class="m">${esc(made)} 기준 고정본 · Magic Board</span><span class="sp"></span>
 <div id="tabs"><button id="fit" class="cur" title="칠판 전체가 화면에 들어오게 맞춤 · 끌기 = 이동, 휠 = 확대">칠판</button>${n ? `<button id="play" title="프레임을 한 장씩 (Enter)">▶ 발표 (${n}장)</button>` : ''}</div></div>
 <div id="ov"><div id="ovin">${overview}</div></div>
-<div id="show">${slideDivs}<div id="nav"><button data-d="-1">◀</button><span id="no"></span><button data-d="1">▶</button><button id="end">끝 (Esc)</button></div></div>
+<div id="show">${slideDivs}<div id="nav"><button data-d="-1" aria-label="이전 장">◀</button><span id="no"></span><button data-d="1" aria-label="다음 장">▶</button><button id="end">끝 (Esc)</button></div></div>
 <script>
 (function(){
 var ov=document.getElementById('ov'),inn=document.getElementById('ovin'),svg=inn.querySelector('svg');
@@ -50,10 +50,11 @@ ov.addEventListener('pointermove',function(e){if(!drag)return;x=e.clientX-drag.x
 ov.addEventListener('pointerup',function(e){var d=drag;drag=null;ov.style.cursor='grab';if(d&&Math.abs(e.clientX-d.sx)+Math.abs(e.clientY-d.sy)<5)webClick(d.t,e)});
 // 웹 카드 누르기 — 몸통 = 그 자리에 실제 페이지(유튜브는 바로 재생, 인터넷이 없으면 그림 그대로), 위 띠·막는 사이트 = 새 탭
 // 움직이는 카드(§8 항목66 4단계) = 누르면 그 자리에 틀(스크립트만 켠 칸 — 칠판과 같은 sandbox·CSP, 글은 내보낼 때 남긴 data-live-src)
-function liveClick(t){var g=t&&t.closest&&t.closest('[data-live-src]');if(!g)return false;if(g.querySelector('foreignObject'))return true;var b=g.getAttribute('data-doc-box').split(',').map(Number),k=b[2]/${LIVE_W};
+// 문서 카드(2026-11-11 화면 검사 8단계) = 누르면 그 자리에 문서(스크립트 없는 칸 sandbox="" — 글은 data-doc-src, 폭은 data-doc-w)
+function liveClick(t){var g=t&&t.closest&&t.closest('[data-live-src],[data-doc-src]');if(!g)return false;if(g.querySelector('foreignObject'))return true;var doc=g.hasAttribute('data-doc-src'),pw=doc?(+g.getAttribute('data-doc-w')||794):${LIVE_W},b=g.getAttribute('data-doc-box').split(',').map(Number),k=b[2]/pw;
 var fo=document.createElementNS('http://www.w3.org/2000/svg','foreignObject');fo.setAttribute('x',b[0]);fo.setAttribute('y',b[1]);fo.setAttribute('width',b[2]);fo.setAttribute('height',b[3]);
-var f=document.createElement('iframe');f.setAttribute('sandbox','allow-scripts');f.setAttribute('csp',${JSON.stringify(LIVE_CSP)});f.srcdoc=g.getAttribute('data-live-src');
-f.style.cssText='border:0;display:block;background:#fff;width:${LIVE_W}px;height:'+b[3]/k+'px;transform-origin:0 0;transform:scale('+k+')';fo.appendChild(f);g.appendChild(fo);return true}
+var f=document.createElement('iframe');if(doc){f.setAttribute('sandbox','');f.srcdoc=g.getAttribute('data-doc-src')}else{f.setAttribute('sandbox','allow-scripts');f.setAttribute('csp',${JSON.stringify(LIVE_CSP)});f.srcdoc=g.getAttribute('data-live-src')}
+f.style.cssText='border:0;display:block;background:#fff;width:'+pw+'px;height:'+b[3]/k+'px;transform-origin:0 0;transform:scale('+k+')';fo.appendChild(f);g.appendChild(fo);return true}
 function webClick(t,e){if(liveClick(t))return;var g=t&&t.closest&&t.closest('[data-web-url]');if(!g)return;var url=g.getAttribute('data-web-url'),src=g.getAttribute('data-web-src'),r=g.getBoundingClientRect(),head=+g.getAttribute('data-web-head')||0;
 var yt=src&&src.indexOf('youtube.com/embed/')>=0;
 // 유튜브는 내 PC에서 바로 연 파일(file://)이면 「오류 153」(어디서 왔는지 안 보냄 — 2026-10-19 확인) → 새 탭에서 재생
@@ -63,11 +64,11 @@ var b=g.getAttribute('data-web-box').split(',').map(Number),z=+g.getAttribute('d
 var fo=document.createElementNS('http://www.w3.org/2000/svg','foreignObject');fo.setAttribute('x',b[0]);fo.setAttribute('y',b[1]);fo.setAttribute('width',b[2]);fo.setAttribute('height',b[3]);
 var f=document.createElement('iframe');f.src=src;f.setAttribute('allow','autoplay; encrypted-media; picture-in-picture; fullscreen');f.setAttribute('allowfullscreen','');f.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
 f.style.cssText='border:0;display:block;background:#fff;width:'+100/z+'%;height:'+100/z+'%;transform-origin:0 0'+(z<1?';transform:scale('+z+')':'');fo.appendChild(f);g.appendChild(fo)}
-var show=document.getElementById('show'),slides=show.querySelectorAll('.slide'),i=0,on=false,no=document.getElementById('no'),wheelAt=0;
+var bar=document.getElementById('bar'),show=document.getElementById('show'),slides=show.querySelectorAll('.slide'),i=0,on=false,no=document.getElementById('no'),wheelAt=0;
 show.addEventListener('click',function(e){webClick(e.target,e)});
 function go(k){if(!slides.length)return;i=Math.max(0,Math.min(slides.length-1,k));for(var j=0;j<slides.length;j++)slides[j].classList.toggle('cur',j===i);var nm=slides[i].getAttribute('data-name');no.textContent=(i+1)+' / '+slides.length+(nm?' · '+nm:'')}
-function start(){if(!slides.length)return;on=true;show.style.display='block';go(i);try{document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen()}catch(e){}}
-function end(){on=false;show.style.display='none';try{document.fullscreenElement&&document.exitFullscreen()}catch(e){}}
+function start(){if(!slides.length)return;on=true;show.style.display='block';bar.inert=true;go(i);try{document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen()}catch(e){}}
+function end(){on=false;show.style.display='none';bar.inert=false;try{document.fullscreenElement&&document.exitFullscreen()}catch(e){}}
 var play=document.getElementById('play');if(play)play.onclick=function(){i=0;start()};
 document.getElementById('end').onclick=end;
 Array.prototype.forEach.call(document.querySelectorAll('#nav [data-d]'),function(b){b.onclick=function(){go(i+ +b.getAttribute('data-d'))}});
