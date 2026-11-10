@@ -1,6 +1,7 @@
 // 메모 고치기(§8 항목61 4-b ⑤ 1차) — 메모 자리에 TipTap을 겹쳐 띄움. 제목·글머리·번호·할 일·코드·인용 + 마크다운 입력(`# `·`- `·`1. `·`[] `·`> `·``` ```)은
 // TipTap 확장의 입력 규칙 그대로(`---` = 구분선). 치수는 memo.js MEMO·MEMO_KIND와 render.jsx memoLayout과 같게(고치는 모습 = 결과). Esc·Ctrl+Enter·바깥 클릭 = 끝.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Editor, Extension, mergeAttributes } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
@@ -20,7 +21,7 @@ import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table
 import { Plugin } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { BOARD_FONT, METRICS, PT, TEXT_MARGIN, urlSpans } from './geom.js'
-import { CODE_BAND, MONO_FONT } from './render.jsx'
+import { CODE_BAND, LINK, MONO_FONT } from './render.jsx'
 import { HANDLE_MIN_Z, LINE_KINDS, MEMO, MEMO_KIND, MUTED, caretLine, docToLines, lineBlocks, linesToDoc } from './memo.js'
 import { Italic, Strike, Underline } from './marks.js'
 import { FormatBar } from './formatbar.jsx'
@@ -38,7 +39,7 @@ export const MemoTable = Table.extend({
 const Finish = Extension.create({
   name: 'memoFinish',
   addOptions() { return { onDone: () => {}, onTurn: () => false } },
-  // Esc = 끝내고 커서 줄 고르기(노션 — 그 상태에서 Ctrl+D·Del·Ctrl+/), Ctrl+Enter = 그냥 끝, Ctrl+/ = 전환 메뉴
+  // Esc = 끝내고 커서 줄 고르기(노션 — 그 상태에서 Ctrl+D·Del·Ctrl+/), Ctrl+Enter = 그냥 끝, Ctrl+/ = 줄 종류 메뉴
   // Ctrl+Enter: 커서(또는 고른 글)가 할 일 줄이면 체크/해제(노션), 아니면 끝내기 — 2026-10-18 사용자 선택
   addKeyboardShortcuts() { return { Escape: () => { this.options.onDone(true); return true }, 'Mod-Enter': () => { if (!toggleTaskItems(this.editor)) this.options.onDone(false); return true }, 'Mod-/': () => this.options.onTurn() } },
 })
@@ -72,32 +73,41 @@ function toggleTaskItems(editor) {
   for (const [pos, n] of items) tr = tr.setNodeMarkup(pos, undefined, { ...n.attrs, checked: !all })
   view.dispatch(tr); return true
 }
-// 전환(Ctrl+/) — 커서 줄 종류 바꾸기. 목록·인용에서 빠져나온 뒤 바꿈(clearNodes)
+// 줄 종류(Ctrl+/) — 커서 줄 종류 바꾸기. 목록·인용에서 빠져나온 뒤 바꿈(clearNodes)
 function turnInto(editor, k) {
   const c = editor.chain().focus().clearNodes()
   ;({ p: () => c, h1: () => c.setHeading({ level: 1 }), h2: () => c.setHeading({ level: 2 }), h3: () => c.setHeading({ level: 3 }), ul: () => c.toggleBulletList(), ol: () => c.toggleOrderedList(),
     todo: () => c.toggleTaskList(), code: () => c.setCodeBlock(), quote: () => c.setBlockquote() }[k] || (() => c))().run()
 }
+// 커서 줄의 지금 종류(LINE_KINDS 열쇠) — 안쪽부터(할 일 안 글머리면 글머리). 줄 종류 메뉴가 ✓ 하고 그 줄부터 시작(2026-11-10 5단계)
+function lineKindAt(editor) {
+  const { $from } = editor.state.selection
+  for (let d = $from.depth; d > 0; d--) { const n = $from.node(d), t = n.type.name
+    if (t === 'heading') return 'h' + n.attrs.level
+    const k = { codeBlock: 'code', taskList: 'todo', orderedList: 'ol', bulletList: 'ul', blockquote: 'quote' }[t]; if (k) return k }
+  return 'p'
+}
+const TURN_ID = j => `mb-turn-${j}`
 
 // spec: { left, top(화면 px — 메모 왼쪽 위), width(화면 px), zoom(칠판 배율 × 아이템 배율), fill(바탕 CSS), lines, caret?(처음 커서 줄), onChange(lines), onWheel(e) }
 // onDone(lines, extra) — extra = { caret: 줄 번호 }(Esc — 그 줄 고르기) | { grab: { i, clientX, clientY } }(⠿를 눌러 끌기 시작) | { pick: { cur, clicked, range } }(단축키 + 다른 줄 클릭 = 줄 고르기) | null
 const mayTake = host => { const a = document.activeElement; return !a || a === document.body || !!host?.contains(a) || !(/INPUT|TEXTAREA|SELECT/.test(a.tagName) || a.isContentEditable) }   // 대기 편집기가 다른 입력 칸의 포커스를 뺏지 않게(text.jsx와 같음)
 export function MemoEditor({ spec, onDone }) {
   const box = useRef(null), host = useRef(null), ed = useRef(null), done = useRef(false), sp = useRef(spec), od = useRef(onDone)
-  const [hov, setHov] = useState(null), [turn, setTurn] = useState(null), turnR = useRef(null)   // 손잡이를 띄울 줄 { i, y(칸 안 px) } · 전환 메뉴 { x, y, at }
+  const [hov, setHov] = useState(null), [turn, setTurn] = useState(null), turnR = useRef(null), turnBox = useRef(null)   // 손잡이를 띄울 줄 { i, y(칸 안 px) } · 줄 종류 메뉴 { c(커서 화면 자리), cur(지금 종류), at }
   sp.current = spec; od.current = onDone; turnR.current = turn
   const finishR = useRef(null), turnOpenR = useRef(null), [edInst, setEdInst] = useState(null)   // 꾸미기 막대(2026-10-19)가 쓸 편집기·줄 종류 메뉴
   useLayoutEffect(() => {
     const finish = extra => { if (done.current) return; done.current = true; try { ed.current.view.domObserver?.flush?.() } catch { /* 없어도 그만 */ } od.current(docToLines(ed.current.getJSON()), extra || null) }
     finishR.current = finish
     const openTurn = () => {
-      const v = ed.current.view, c = v.coordsAtPos(v.state.selection.from), b = box.current.getBoundingClientRect()
-      setTurn({ x: c.left - b.left, y: c.bottom - b.top + 4, at: Math.max(0, LINE_KINDS.findIndex(([k]) => k === 'p')) }); return true
+      const v = ed.current.view, c = v.coordsAtPos(v.state.selection.from), cur = lineKindAt(ed.current)   // 자리 = 화면 기준(아래가 모자라면 위로 — 640×360에서 9줄 중 4줄만 보였음)
+      setTurn({ c: { left: c.left, top: c.top, bottom: c.bottom }, cur, at: Math.max(0, LINE_KINDS.findIndex(([k]) => k === cur)) }); return true
     }
     const editor = new Editor({
       element: host.current,
       extensions: [Document, Paragraph, Text, Bold, Italic, Underline, Strike, Code, TextStyle, Color, BackgroundColor, Heading.configure({ levels: [1, 2, 3] }), Blockquote, CodeBlock, HorizontalRule,
-        BulletList, OrderedList, ListItem, TaskList, TaskItem.configure({ nested: true }), ListKeymap, UndoRedo, MemoTable.configure({ View: null }), TableRow, TableHeader, TableCell, Gapcursor, UrlPaint.configure({ off: new Set((spec.lines || []).filter(l => l.nolink).map(l => l.t)) }),
+        BulletList, OrderedList, ListItem, TaskList, TaskItem.configure({ nested: true, a11y: { checkboxLabel: (node, checked) => `할 일 ${checked ? '끝냄' : '안 끝냄'}: ${node.textContent || '빈 줄'}` } }), ListKeymap, UndoRedo, MemoTable.configure({ View: null }), TableRow, TableHeader, TableCell, Gapcursor, UrlPaint.configure({ off: new Set((spec.lines || []).filter(l => l.nolink).map(l => l.t)) }),
         Finish.configure({ onDone: sel => (turnR.current ? setTurn(null) : finish(sel ? { caret: caretLine(ed.current.state) } : null)), onTurn: openTurn })],
       content: linesToDoc(spec.lines),
       editorProps: {
@@ -113,7 +123,7 @@ export function MemoEditor({ spec, onDone }) {
           e.preventDefault(); finishR.current?.({ pick: { cur, clicked, range } }); return true
         } },
         handlePaste: () => !!sp.current.armed,   // 대기 중 Ctrl+V = 칠판 붙여넣기
-        handleKeyDown: (_v, e) => {   // 전환 메뉴가 떠 있으면 ↑↓ Enter가 메뉴를 움직임
+        handleKeyDown: (_v, e) => {   // 줄 종류 메뉴가 떠 있으면 ↑↓ Enter가 메뉴를 움직임
           if (sp.current.armed) return e.ctrlKey || e.metaKey || e.altKey || !(e.key.length === 1 || e.key === 'Process' || e.keyCode === 229)   // 대기 중 = 글자만 받고 Del·방향키·Enter·Ctrl+… 는 칠판이(메모 지우기·옮기기·고치기 시작)
           const t = turnR.current
           if (!t) { if (e.key === 'Escape') e.stopPropagation(); return false }   // 끝내며 고른 줄을 칠판의 Esc(= 고르기 풀기)가 바로 풀지 않게
@@ -153,7 +163,14 @@ export function MemoEditor({ spec, onDone }) {
     })
     if (hit?.i !== hov?.i || hit?.y !== hov?.y) setHov(hit)
   }
-  useEffect(() => { if (!spec.armed && ed.current && !ed.current.view.hasFocus()) ed.current.view.focus() }, [spec.armed])   // 대기 → 고치기(Enter 등) = 커서 그대로 보이게
+  useEffect(() => { if (!spec.armed && ed.current && !ed.current.view.hasFocus()) ed.current.view.focus() }, [spec.armed])
+  useEffect(() => {   // 줄 종류 메뉴 — 편집기가 고른 줄을 읽어 주게(초점은 편집기에 그대로), 고른 줄이 굴림 칸 밖이면 그 칸만 굴림(scrollIntoView는 칠판 칸까지 밀었음 — 2단계)
+    const dom = ed.current?.view.dom; if (!dom) return
+    if (!turn) { dom.removeAttribute('aria-activedescendant'); dom.removeAttribute('aria-controls'); return }
+    dom.setAttribute('aria-activedescendant', TURN_ID(turn.at)); dom.setAttribute('aria-controls', 'mb-turn')
+    const L = turnBox.current, o = L && document.getElementById(TURN_ID(turn.at)); if (!o) return
+    if (o.offsetTop < L.scrollTop) L.scrollTop = o.offsetTop - 4; else if (o.offsetTop + o.offsetHeight > L.scrollTop + L.clientHeight) L.scrollTop = o.offsetTop + o.offsetHeight - L.clientHeight + 4
+  }, [turn])   // 대기 → 고치기(Enter 등) = 커서 그대로 보이게
   const S = '[data-testid=memo-editor]'
   // 블록 = 위아래 TEXT_MARGIN, 블록 사이 GAP(제목은 제 gap), 목록 들여쓰기 INDENT(깊이마다), 인용 = 왼쪽 막대 + QUOTE, 코드 = 고정폭 + 회색 바탕(이어진 줄 사이 여백 없음), 구분선 = 높이 HR*2 가운데 가는 줄
   const css = `${S} .ProseMirror{outline:none;white-space:pre-wrap;word-break:keep-all;overflow-wrap:anywhere;font-family:${BOARD_FONT};font-size:${fs('p')};line-height:${ls};color:#1f1f1f}
@@ -176,23 +193,28 @@ ${S} table{width:100%;table-layout:fixed;border-collapse:separate;border-spacing
 ${S} td,${S} th{vertical-align:top;text-align:left;font-weight:400;padding:${P(MEMO.CELL)} ${P(MEMO.CELL + TEXT_MARGIN)};box-shadow:inset 1px 0 0 #d4d4d8,inset 0 1px 0 #d4d4d8}
 ${S} th{font-weight:700;background:#f4f4f5}${S} td p+p,${S} th p+p{margin-top:0}
 ${S} .selectedCell{background:rgba(137,180,250,.25)}
-${S} .mb-url{color:#2f80ed;text-decoration:underline}${S} code{font-family:${MONO_FONT};font-size:inherit;background:${CODE_BAND}}${S} ::selection{background:rgba(137,180,250,.35)}`
+${S} .mb-url{color:${LINK};text-decoration:underline}${S} code{font-family:${MONO_FONT};font-size:inherit;background:${CODE_BAND}}${S} ::selection{background:rgba(137,180,250,.35)}`
   const item = { all: 'unset', boxSizing: 'border-box', display: 'block', width: '100%', padding: '5px 10px', borderRadius: 5, cursor: 'pointer' }
   // 바탕은 투명 — 칠판이 고치는 메모의 바탕(채움·테두리)만 그려 줌(겹쳐 칠하면 투명한 채움이 진해졌음 — 2026-10-18)
   if (spec.armed) return <div ref={box} data-testid="memo-armed" data-armed="" style={{ position: 'absolute', left: spec.left, top: spec.top, width: spec.width, boxSizing: 'border-box', padding: `${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.LPAD)}`, opacity: 0, pointerEvents: 'none', zIndex: 20 }}><style>{css.replaceAll(S, '[data-testid=memo-armed]')}</style><div ref={host} /></div>   // 메모만 고른 대기 — 보이지 않게 미리 띄워 첫 글자(한글 조합 포함)를 받음. 같은 host라 고치기로 바뀌어도 편집기는 그대로
   return <div ref={box} data-testid="memo-editor" onPointerDown={e => { e.stopPropagation(); if (e.button === 1) sp.current.onPan?.(e) }} onMouseDown={e => { if (e.button === 1) e.preventDefault() }} onWheel={e => e.stopPropagation()} onMouseMove={onMove} onMouseLeave={() => setHov(null)}
-    style={{ position: 'absolute', left: spec.left, top: spec.top, width: spec.width, boxSizing: 'border-box', padding: `${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.LPAD)}`, background: 'transparent', borderRadius: P(10), outline: '1.5px solid #89b4fa', zIndex: 20, colorScheme: 'light' }}>
+    style={{ position: 'absolute', left: spec.left, top: spec.top, width: spec.width, boxSizing: 'border-box', padding: `${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.LPAD)}`, background: 'transparent', borderRadius: P(10), outline: `1.5px solid ${spec.ring || '#3b82f6'}`, zIndex: 20, colorScheme: 'light' }}>
     <style>{css}</style>
     <div ref={host} />
     {hov && !turn && z >= HANDLE_MIN_Z && <div data-testid="memo-edit-handle" title="끌기 = 옮기기 · 누르기 = 메뉴"
       onPointerDown={e => { e.preventDefault(); e.stopPropagation(); finishR.current?.({ grab: { i: hov.i, clientX: e.clientX, clientY: e.clientY } }) }}
-      style={{ position: 'absolute', left: hx, top: hov.y - HH / 2, width: HW, height: HH, borderRadius: 4, background: 'rgba(127,127,127,.16)', cursor: 'grab', display: 'grid', placeItems: 'center', color: '#8a8f98', font: '700 12px sans-serif', lineHeight: 1, userSelect: 'none' }}>⠿</div>}
+      style={{ position: 'absolute', left: hx, top: hov.y - HH / 2, width: HW, height: HH, borderRadius: 4, background: 'rgba(127,127,127,.16)', cursor: 'grab', display: 'grid', placeItems: 'center', color: MUTED, font: '700 12px sans-serif', lineHeight: 1, userSelect: 'none' }}>⠿</div>}
     {!turn && <FormatBar ed={edInst} onTurn={() => turnOpenR.current?.()} />}
-    {turn && <div data-testid="memo-turn" onMouseDown={e => e.preventDefault()}
-      style={{ position: 'absolute', left: turn.x, top: turn.y, zIndex: 2, minWidth: 170, background: 'var(--mb-card)', color: 'var(--mb-ink)', border: '1px solid var(--mb-line)', borderRadius: 8, padding: 4, boxShadow: 'var(--mb-shadow)', font: "400 12.5px 'Pretendard', sans-serif", colorScheme: 'normal' }}>
-      <div style={{ padding: '3px 10px 5px', color: 'var(--mb-muted)', fontSize: 11 }}>전환 · ↑↓ Enter</div>
-      {LINE_KINDS.map(([k, name], j) => <button key={k} onClick={() => { turnInto(ed.current, k); setTurn(null) }} onMouseEnter={() => setTurn(t => ({ ...t, at: j }))}
-        style={{ ...item, background: j === turn.at ? 'rgba(218,119,86,.14)' : 'transparent' }}>{name}</button>)}
-    </div>}
+    {turn && (() => {   // 줄 종류 메뉴(Ctrl+/ · 꾸미기 막대 「줄 ▾」) — 화면 기준(fixed)으로 띄워 칠판 칸에 안 잘림, data-keep-edit = 눌러도 고치기가 안 끝남
+      const H = 30 + LINE_KINDS.length * 27, below = window.innerHeight - turn.c.bottom - 12, above = turn.c.top - 12, up = below < H && above > below
+      return createPortal(<div data-keep-edit data-testid="memo-turn" onMouseDown={e => e.preventDefault()} onPointerDown={e => e.stopPropagation()}
+        style={{ position: 'fixed', left: Math.max(8, Math.min(turn.c.left, window.innerWidth - 178)), ...(up ? { bottom: window.innerHeight - turn.c.top + 4 } : { top: turn.c.bottom + 4 }), zIndex: 60, minWidth: 170, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', maxHeight: Math.max(90, up ? above : below),
+          background: 'var(--mb-card)', color: 'var(--mb-ink)', border: '1px solid var(--mb-line)', borderRadius: 8, padding: 4, boxShadow: 'var(--mb-shadow)', font: "400 12.5px 'Pretendard', sans-serif", colorScheme: 'normal' }}>
+        <div aria-hidden="true" style={{ padding: '3px 10px 5px', color: 'var(--mb-muted)', fontSize: 11 }}>줄 종류 · ↑↓ Enter</div>
+        <div ref={turnBox} id="mb-turn" role="listbox" aria-label="줄 종류" style={{ overflowY: 'auto', overscrollBehavior: 'contain', position: 'relative' }}>
+          {LINE_KINDS.map(([k, name], j) => <div key={k} id={TURN_ID(j)} role="option" aria-selected={j === turn.at} onClick={() => { turnInto(ed.current, k); setTurn(null) }} onMouseMove={() => setTurn(t => (t.at === j ? t : { ...t, at: j }))}
+            style={{ ...item, display: 'flex', gap: 6, background: j === turn.at ? 'var(--mb-group)' : 'transparent' }}><span aria-hidden="true" style={{ width: 12, color: 'var(--mb-muted)' }}>{k === turn.cur ? '✓' : ''}</span>{name}{k === turn.cur && <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}> (지금)</span>}</div>)}
+        </div>
+      </div>, document.body) })()}
   </div>
 }

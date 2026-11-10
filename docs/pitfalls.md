@@ -1784,3 +1784,4 @@
 - ⚠ 웹 세로 flex 안 `textarea`에 `flex: 1`을 주면 `style.height`가 무시되어 자동 높이가 안 먹는다 — 세로 줄일 땐 `flex: none`(`composer.jsx`, 2026-11-09).
 - ⚠ 웹 메뉴 줄은 `role=menuitem`(2026-11-10) — 시험에서 메뉴 항목은 `getByRole('menuitem')`로 찾는다(`button`이면 못 찾고 1분 기다림).
 - ⚠ 웹 `.mb-hit` 단추는 `position: relative`가 꼭 있어야 한다 — 없으면 `::after`가 가까운 기준 상자(창 전체)를 덮어 옆 단추가 안 눌린다(2026-11-10 AI 창 ✕).
+- ⚠ 웹 메뉴 줄 마우스 올림을 `onMouseEnter`로 잡으면 메뉴가 가만히 있는 마우스 밑에 뜰 때 그 줄이 바로 골라진다 — 「지금 것부터」 시작하는 목록은 `onMouseMove`로(2026-11-10 줄 종류 메뉴).

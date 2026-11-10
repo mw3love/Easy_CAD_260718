@@ -42,8 +42,10 @@ import { answerTable, freeSpot, nearSpot, sourceLine } from '../chatFormat.js'
 import { LIVE_H, LIVE_W, bigPage, isLive, liveFits } from './livecard.js'
 import { DOC_SLEEP_PX, WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { isLegendLine, legendEntries, restyleLegendRow, syncLegends } from './legend.js'
-import { HANDLE_MIN_Z, LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoMarkdown, memoText, moveLines, pickLines, splitRunLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
+import { HANDLE_MIN_Z, LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoMarkdown, memoText, moveLines, pickLines, shiftLines, splitRunLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
+import { keyLabel } from './keylabel.js'
+import { MEMO_FOLD_N } from './render.jsx'
 import { htmlPlan, looksMarkdown, textKind, tsvRows } from './clipin.js'
 import { looksSvg, svgFits, svgItems } from './svgin.js'
 import { BoardSkeleton } from './skeleton.jsx'
@@ -163,7 +165,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, liveModel: () => R.current.model, startToolDrag, placeShape, selCommands: () => (R.current.sel.length ? menuEntries({}) : []), busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, skipFrames, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, selImageIds, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, printDoc, saveHwpx, setImage, slidesBoard, slideBranch, motionInfo, motionPlace, flowBoard, flowTarget, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, liveModel: () => R.current.model, startToolDrag, placeShape, selCommands: () => (R.current.sel.length ? menuEntries(cellSel && R.current.sel.length === 1 && R.current.sel[0] === cellSel.id ? { cell: { r: cellSel.r1, c: cellSel.c1 } } : {}) : []), busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, skipFrames, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, selImageIds, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, printDoc, saveHwpx, setImage, slidesBoard, slideBranch, motionInfo, motionPlace, flowBoard, flowTarget, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -642,6 +644,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const frameLockAt = p => { const it = single?.type === 'frame' && !single.locked ? single : null; if (!it) return null
     const b = frameTagBox(it), s = b.h; return p.x >= b.x + b.w + b.fs * 0.3 && p.x <= b.x + b.w + b.fs * 0.3 + s && p.y >= b.y && p.y <= b.y + s ? it : null }
   const [memoHov, setMemoHov] = useState(null); R.current.memoHov = memoHov   // 마우스를 올린 메모 줄 { id, s, e } — 왼쪽에 ⠿ 손잡이(2026-10-18 사용자: 노션처럼)
+  const keyMenuAt = useRef(0)   // 글쇠(Shift+F10·메뉴 키)로 메뉴를 연 때 — 브라우저가 이어 띄우는 제 메뉴를 막음
+  useEffect(() => { const f = e => { if (Date.now() - keyMenuAt.current < 800) e.preventDefault() }; window.addEventListener('contextmenu', f, true); return () => window.removeEventListener('contextmenu', f, true) }, [])
   const [lineMenu, setLineMenu] = useState(null)   // ⠿를 누르면 그 줄 메뉴 { x, y, id, s, e, kinds? }
   const [lineSel, setLineSel] = useState(null); R.current.lineSel = lineSel   // 고른 메모 줄 { id, s, e } — 노션처럼 ⠿ 누르기·Esc로 고르고 Ctrl+D·Del·Ctrl+/·↑↓(2026-10-18 사용자)
   const [webOn, setWebOn] = useState(null); R.current.webOn = webOn   // 칸 안을 조작 중인 웹 카드 _id(두 번 누르기 — 2026-10-18 사용자)
@@ -725,6 +729,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function hoverCursor(p) {
     if (readOnly) { setCursor('grab'); return }
     const t = R.current.tool
+    { const tip = t === 'select' && !R.current.editing && memoRowAt(p) && memoLinkHit(p) ? `주소 — ${keyLabel('Ctrl')}+클릭 = 새 탭에서 열기` : ''; if (svg.current && svg.current.title !== tip) svg.current.title = tip }   // 메모 주소 위 마우스 올림 글(2026-11-10 5단계)
     if (t === 'select' && !R.current.editing) { const hv = memoRowAt(p), on = hv && memoHandleOn(hv.it), k = on ? `${hv.it._id}:${hv.s}:${hv.e}` : null   // 메모 줄 위 = 왼쪽 ⠿(많이 줄이면 없음)
       if (k !== (R.current.memoHov ? `${R.current.memoHov.id}:${R.current.memoHov.s}:${R.current.memoHov.e}` : null)) setMemoHov(on ? { id: hv.it._id, s: hv.s, e: hv.e } : null)
       if (hv && memoHandleHit(p)) { setHp(null); setCursor('grab'); return }
@@ -845,7 +850,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       return o
     })
     commit(rebound, [id], to === 'memo' ? '메모로 바꿈' : to === 'text' ? '글 상자로 바꿈' : '사각형으로 바꿈'); setTool('select')
-    setStatus(to === 'memo' ? '메모로 바꿨어요 — 두 번 누르면 제목·목록·할 일로 고쳐 써요 · 되돌리기 Ctrl+Z' : `${to === 'text' ? '글 상자' : '사각형'}로 바꿨어요 — 목록 모양·글자 꾸밈은 글로 남아요 · 되돌리기 Ctrl+Z`)
+    setStatus(to === 'memo' ? `메모로 바꿨어요 — 두 번 누르면 제목·목록·할 일로 고쳐 써요 · 되돌리기 ${keyLabel('Ctrl+Z')}` : `${to === 'text' ? '글 상자' : '사각형'}로 바꿨어요 — 목록 모양·글자 꾸밈은 글로 남아요 · 되돌리기 ${keyLabel('Ctrl+Z')}`)
   }
   // 고른 도형을 레이어로(데스크톱 `move_selection_to_layer`) — 그 레이어의 잠금을 물려받음, 되돌리기 한 칸
   function moveSelToLayer(id) {
@@ -1332,13 +1337,13 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function lineMenuEntries(lm) {
     const m = R.current.model, it = m.items.find(x => x._id === lm.id); if (!it) return []
     const L = it.lines, us = lm.units, idx = us.flatMap(([a, b]) => Array.from({ length: b - a }, (_, k) => a + k)), on = new Set(idx), cur = L[idx[0]], close = () => setLineMenu(null)
-    const kinds = LINE_KINDS.map(([k, name]) => [(cur.k === k ? '✓ ' : '') + name, () => { close(); const mm = R.current.model; commit(mm.items.map(x => (x._id === it._id ? withLines(x, x.lines.map((l, j) => (on.has(j) ? convertLine(l, k) : l))) : x)), [it._id], '줄 전환') }, ''])
-    if (lm.kinds) return kinds.map(([n, f]) => [n, '', f])   // Ctrl+/ = 전환 목록만 바로
+    const kinds = LINE_KINDS.map(([k, name]) => [(cur.k === k ? '✓ ' : '') + name, () => { close(); const mm = R.current.model; commit(mm.items.map(x => (x._id === it._id ? withLines(x, x.lines.map((l, j) => (on.has(j) ? convertLine(l, k) : l))) : x)), [it._id], '줄 종류') }, ''])
+    if (lm.kinds) return kinds.map(([n, f]) => [n, '', f])   // Ctrl+/ = 줄 종류 목록만 바로
     const apply = (f, label) => () => { close(); const mm = R.current.model, x0 = mm.items.find(x => x._id === it._id); if (!x0) return; commit(mm.items.map(x => (x._id === it._id ? withLines(x, f(x.lines)) : x)), [it._id], label) }
     const each = f => lines => lines.map((l, j) => (on.has(j) ? f(l) : l)), last = idx[idx.length - 1] + 1
     const sw = (c, txt, bg) => <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ display: 'inline-flex', width: 18, height: 18, alignItems: 'center', justifyContent: 'center', borderRadius: 4, border: '1px solid var(--mb-line)', color: c || 'inherit', background: bg ? cssColor('#ff' + bg.slice(3)) : 'transparent', fontWeight: 600, ...(bg ? { color: '#1f1f1f' } : {}) }}>A</span>{txt}</span>
     return [
-      ['전환', 'Ctrl+/', null, kinds],
+      ['줄 종류', 'Ctrl+/', null, kinds],
       ['색', '', null, [...LINE_COLORS.map(([n, c]) => [sw(c, `${n} 텍스트`), apply(each(l => recolorLine(l, { color: c })), '줄 색')]), '-',
         ...LINE_COLORS.map(([n, , b]) => [sw(null, `${n} 배경`, b), apply(each(l => recolorLine(l, { bg: b })), '줄 배경')])]],
       ...(idx.some(i => urlSpans(L[i]?.t).length) ? [(() => { const on2 = idx.some(i => urlSpans(L[i]?.t).length && !L[i].nolink)   // 링크 끄기/켜기(고칠 때 자꾸 열려 불편할 때 — 2026-10-18 사용자)
@@ -1351,14 +1356,29 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       '-',
       ['복제', 'Ctrl+D', () => { apply(lines => [...lines.slice(0, last), ...idx.map(i => structuredClone(lines[i])), ...lines.slice(last)], '줄 복제')(); setLineSel({ id: it._id, s: last, e: last + idx.length }) }],
       ['지우기', 'Del', () => { apply(lines => lines.filter((_, j) => !on.has(j)), '줄 지움')(); setLineSel(null) }],
-    ]   // 「칠판으로 꺼내기」는 뺌(2026-10-18 사용자: 손잡이로 끌어내는 게 더 직관적)
+      ...[[-1, '위로 옮기기', 'Alt+↑'], [1, '아래로 옮기기', 'Alt+↓']].flatMap(([d, n, kk]) => { const ls = { id: it._id, s: us.at(-1)[0], e: us.at(-1)[1], more: us.slice(0, -1) }; return shiftLines(L, ls, d) ? [[n, kk, () => { close(); moveLineSel(ls, d) }]] : [] }),
+      ['새 메모로 꺼내기', '', () => { close(); popLines(it._id, us) }],
+    ]   // 글쇠 길(2026-11-10 5단계): 옮기기·꺼내기도 메뉴에 — 끌기는 그대로, 10-18에 뺐던 「꺼내기」는 사용자 결정으로 다시
+  }
+  function moveLineSel(ls, d) {   // 고른 줄 한 칸 위·아래(Alt+↑↓ · 줄 메뉴)
+    const m = R.current.model, it = m.items.find(x => x._id === ls.id), r = it && shiftLines(it.lines || [], ls, d); if (!r) return
+    commit(m.items.map(x => (x._id === it._id ? withLines(x, r.lines) : x)), [it._id], '줄 옮김'); setLineSel({ id: it._id, ...r.sel })
+  }
+  function popLines(id, units) {   // 고른 줄 → 메모 오른쪽 옆 새 메모(끌어 꺼내기 `memoLineDrop`의 「밖」과 같은 일)
+    const m = R.current.model, src = m.items.find(x => x._id === id); if (!src) return
+    const idx = selIdx({ s: units.at(-1)[0], e: units.at(-1)[1], more: units.slice(0, -1) }), set = new Set(idx), unit = pickLines(src.lines, idx), rest = src.lines.filter((_, i) => !set.has(i))
+    const gone = rest.every(l => !(l.t || '').trim()), sc = src.scale || 1, p = toScene(src, { x: src.rect[0] + src.rect[2] + 24, y: src.rect[1] })
+    const it = base([p.x, p.y], { type: 'memo', rect: [0, 0, src.rect[2], 40], fill: src.fill, lines: unit, scale: sc, z: topZ(m.items) + 1 }), nw = { ...it, rect: [0, 0, src.rect[2], memoHeight(it)] }
+    const items = gone ? m.items.filter(x => x._id !== src._id) : m.items.map(x => (x._id === src._id ? withLines(x, rest) : x))
+    commit([...items, nw], [nw._id], '새 메모로 꺼냄'); setLineSel(null)
   }
   function finishMemo(lines, extra) {   // extra = { caret }(Esc — 그 줄 고르기) | { grab }(고치는 중 ⠿ — 끝내고 그 줄 끌기·메뉴로)
     const ed = R.current.editing; setEditing(null); if (!ed || !lines) return
     const m = R.current.model, it = m.items.find(x => x._id === ed.id); if (!it) return
     const nol = new Set((it.lines || []).filter(l => l.nolink).map(l => l.t)); lines = lines.map(l => (nol.has(l.t) ? { ...l, nolink: true } : l))   // 고친 뒤에도 「링크 끔」 유지(같은 글의 줄)
     clearTimeout(memoT.current); memoT.current = 0; commit(m.items.map(x => (x._id === it._id ? { ...it, lines } : x)), [it._id], '메모 고침', 'memo' + it._id)
-    if (extra?.caret != null && lines[extra.caret]) { const [s, e] = lineUnit(lines, extra.caret); setLineSel({ id: it._id, s, e }) }
+    if (extra?.caret != null && lines[extra.caret]) { const [s, e] = lineUnit(lines, extra.caret); setLineSel({ id: it._id, s, e })   // Esc = 줄 고르기 — 할 수 있는 글쇠를 알림 줄에(읽어 주기도 — 2026-11-10 5단계)
+      setStatus(`줄 ${e - s}개 고름 — ${keyLabel('Shift+F10')} 메뉴 · ${keyLabel('Alt+↑↓')} 옮기기 · Del 지우기 · Enter 고치기`) }
     else if (extra?.pick && lines[extra.pick.cur] && lines[extra.pick.clicked]) {   // 고치는 중 단축키 + 다른 줄 클릭 = 줄 고르기
       const [s1, e1] = lineUnit(lines, extra.pick.cur), [s2, e2] = lineUnit(lines, extra.pick.clicked)
       setLineSel(extra.pick.range ? { id: it._id, s: Math.min(s1, s2), e: Math.max(e1, e2) } : s1 === s2 ? { id: it._id, s: s2, e: e2 } : { id: it._id, s: s2, e: e2, more: [[s1, e1]] }) }
@@ -1787,12 +1807,18 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         else if (k === 'Delete' || k === 'Backspace') return act(() => { const on = new Set(selIdx(ls)); put(L.filter((_, j) => !on.has(j)), '줄 지움'); setLineSel(null) })
         else if (mod && k.toLowerCase() === 'd') return act(() => { const idx = selIdx(ls), last = idx[idx.length - 1] + 1; put([...L.slice(0, last), ...idx.map(i => structuredClone(L[i])), ...L.slice(last)], '줄 복제'); setLineSel({ id: it._id, s: last, e: last + idx.length }) })
         else if (mod && (k === '/' || e.code === 'Slash')) return act(() => { const us = selUnits(ls), b = memoHandleRect(it, us[0][0]), o = scr(toScene(it, { x: b.x + b.w, y: b.y + b.h })); setLineMenu({ x: o.x + 4, y: o.y, id: it._id, units: us, kinds: true }) })
+        else if ((k === 'F10' && e.shiftKey) || k === 'ContextMenu') return act(() => { const us = selUnits(ls), b = memoHandleRect(it, us[0][0]), o = scr(toScene(it, { x: b.x + b.w, y: b.y + b.h })); keyMenuAt.current = Date.now(); setLineMenu({ x: o.x + 4, y: o.y, id: it._id, units: us }) })   // 줄 메뉴를 글쇠로(⠿ 누르기와 같은 메뉴 — 2026-11-10 5단계)
+        else if (e.altKey && !mod && (k === 'ArrowUp' || k === 'ArrowDown')) return act(() => moveLineSel(ls, k === 'ArrowUp' ? -1 : 1))   // 줄 옮기기(끌기와 같은 일)
         else if (k === 'Enter' && mod) return act(() => { const nx = toggleTodos(L, selIdx(ls)); if (nx) put(nx, '할 일') })   // 고른 할 일 한꺼번에 체크/해제
         else if (k === 'Enter' && !mod) return act(() => { setLineSel(null); setEditing({ id: it._id, kind: 'memo', caret: selUnits(ls)[0][0] }) })   // 고른 줄 끝에 커서(2026-10-18 사용자: 맨 아래로 내려갔음)
         else if (k === 'ArrowUp' || k === 'ArrowDown') return act(() => {
           if (k === 'ArrowDown') { if (ls.e >= L.length) return; const [, ne] = lineUnit(L, ls.e); setLineSel(e.shiftKey ? { ...ls, e: ne } : { id: ls.id, s: ls.e, e: ne }) }   // 개별로 고른 것(more)은 화살표에선 풀림(Shift는 유지)
           else { if (ls.s <= 0) return; const s0 = lineUnit(L, ls.s - 1)[0]; setLineSel(e.shiftKey ? { ...ls, s: s0 } : { id: ls.id, s: s0, e: lineUnit(L, s0)[1] }) } })   // 위 줄(코드·인용은 그 덩어리 처음)
       }
+      if (((k === 'F10' && e.shiftKey) || k === 'ContextMenu') && ids.length) return act(() => {   // 우클릭 메뉴를 글쇠로(2026-11-10 5단계 — 표 칸을 골랐으면 그 칸의 「행 · 열」까지), 자리 = 고른 칸·고른 것 왼쪽 아래
+        const one = ids.length === 1 && m.items.find(x => x._id === ids[0]), cell = one?.type === 'table' && cellSel?.id === one._id ? { r: cellSel.r1, c: cellSel.c1 } : null
+        const sb = cell ? (r => scr(toScene(one, { x: r.x, y: r.y + r.h })))(cellRect(one, cell.r, cell.c)) : (b => scr({ x: b.x, y: b.y + b.h }))(unionBox(m.items.filter(x => ids.includes(x._id)).map(x => sceneBox(x, textBox))))
+        keyMenuAt.current = Date.now(); setMenu({ x: Math.max(8, Math.min(sb.x, size.w - 8)), y: Math.max(8, Math.min(sb.y + 4, size.h - 8)), cell }) })
       if (k === 'Escape') { setOverlay(o => ({ ...o, poly: null, draw: null, lpt: null, pcur: null })); if (R.current.tool !== 'select') setTool('select'); else if (cellSel) setCellSel(null); else setSel([]); return }
       if (k === 'Enter' && overlay.poly) return act(() => finishPoly(overlay.poly, false))
       // 칸을 고른 채로 — 엑셀처럼: 글자를 치면 바로 그 칸에 새로 씀(두 번 누르지 않아도 — 2026-10-18 사용자), Enter·F2 = 있는 글 이어 고치기, Delete = 칸 글만 지움(표는 그대로)
@@ -2467,7 +2493,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     }
     its = its.map(it => ({ ...it, pos: [it.pos[0] + tl.x - b.x, it.pos[1] + tl.y - b.y] }))
     commit([...R.current.model.items, ...its], its.map(it => it._id), '붙여넣음'); setTool('select')
-    setStatus(opt.file ? `${opt.file} → ${what}${its.some(it => it.fold) ? ' — 길어서 접어 넣음, 「… 줄 더」를 누르면 펼쳐져요' : ''}` : `${what} 붙여넣음 — 마음에 안 들면 Ctrl+Z`)
+    setStatus(opt.file ? `${opt.file} → ${what}${its.some(it => it.fold) ? ' — 길어서 접어 넣음, 「… 줄 더」를 누르면 펼쳐져요' : ''}` : `${what} 붙여넣음 — 마음에 안 들면 ${keyLabel('Ctrl+Z')}`)
     return true
   }
 
@@ -2604,6 +2630,11 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         if (frame1) out.push(['이 장부터 발표', '', act(() => startPresent(frame1._id))], ['이름 바꾸기', '', act(() => setTagEdit(frame1._id))], '-')
         const conv = selIt.length === 1 && !card ? convertTargets(selIt[0]) : []   // 다른 물건으로 바꾸기(2026-11-02 사용자 — 네모 글 → 메모 등)
         if (conv.length) out.push(...conv.map(([to, name]) => [name, '', act(() => convertItem(selIt[0]._id, to))]), '-')
+        const memo1 = selIt.length === 1 && selIt[0].type === 'memo' ? selIt[0] : null   // 메모 — 접기·주소 열기도 글쇠·Ctrl+K로(2026-11-10 5단계: 「… N줄 더」·Ctrl+클릭은 마우스로만)
+        if (memo1) { const ml = memo1.lines || [], urls = [...new Set(ml.filter(l => !l.nolink).flatMap(l => urlSpans(l.t).map(u => u[2])))], short = u => (u.length > 48 ? u.slice(0, 47) + '…' : u), open = u => act(() => window.open(u, '_blank', 'noopener'))
+          const fo = ml.length > MEMO_FOLD_N + 1 ? [[memo1.fold === true ? '펼치기' : '접기', '', act(() => commit(m.items.map(x => (x._id === memo1._id ? { ...x, fold: memo1.fold !== true } : x)), [memo1._id], memo1.fold === true ? '메모 펼침' : '메모 접음'))]] : []
+          const uo = urls.length === 1 ? [['주소 새 탭에서 열기', 'Ctrl+클릭', open(urls[0])]] : urls.length > 1 ? [['주소 새 탭에서 열기', '', null, urls.slice(0, 12).map(u => [short(u), open(u)])]] : []
+          if (fo.length || uo.length) out.push(...fo, ...uo, '-') }
         if (has) out.push(['복사', 'Ctrl+C', act(copy)], ['잘라내기', 'Ctrl+X', act(() => { copy(); commit(removeItems(m.items, movingSet(ids)), [], '잘라냄') })],
           ['복제', 'Ctrl+D', act(dupSel)],
           ['지우기', 'Del', act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))])
@@ -2766,14 +2797,14 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         const cs = cellStyle(it, editing.r, editing.c), s = it.scale || 1, pxFor = v => cellFontPx(v, r.w, r.h, cs.bold, cs.px) * s
         // 다른 글과 같은 편집기(부분 색·굵게·형광펜) — Enter 아래·Tab 오른쪽·Esc 취소, 치는 동안 글자 크기도 칸에 맞춰(자동 크기)
         return <TextEditor key={`${editing.id}-cell`} onDone={res => (res ? finishCell(res.text, res.move, res.runs) : finishCell(null, null))}   // 돌려준 다음 칸 내용으로 편집기가 바로 바꿈
-          spec={{ cell: true, cellKey: `${editing.r},${editing.c}`, left: Math.min(...xs), top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: h, px: pxFor(txt0), pxFor, zoom: cam.z, family: 'app', weight: cs.bold ? 700 : 400,
+          spec={{ cell: true, cellKey: `${editing.r},${editing.c}`, now: it.cells?.[editing.r]?.[editing.c] || '', ring: BLUE, left: Math.min(...xs), top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: h, px: pxFor(txt0), pxFor, zoom: cam.z, family: 'app', weight: cs.bold ? 700 : 400,
             color: ink(cs.color || '#111111', !!cs.fill), bg: 'var(--mb-editbg)', align: cs.align, text: txt0, runs: editing.fresh || editing.armed ? undefined : it.cell_runs?.[`${editing.r},${editing.c}`], onReady: setLiveEd,
             armed: !!editing.armed, fresh: !!editing.fresh, at: editing.at, onPan: startPan, onWheel: wheelZoom, onArm: () => { const e = { id: editing.id, kind: 'cell', r: editing.r, c: editing.c, fresh: true }; R.current.editing = e; setEditing(e) } }} /> })(editing?.kind === 'cell' ? editing : !editing && cellSel && sel.length === 1 && sel[0] === cellSel.id ? { id: cellSel.id, kind: 'cell', r: cellRange(cellSel).r0, c: cellRange(cellSel).c0, armed: true } : null)}
       {(me => { if (!me) return null; const it = byId.get(me.id); if (!it) return null; const s = it.scale || 1, o = scr(toScene(it, { x: it.rect[0], y: it.rect[1] }))   // armed = 메모만 고른 대기(보이지 않음) — 고치기와 같은 key·같은 자리라 편집기가 그대로 이어 받음
-        return <MemoEditor key={it._id} spec={{ left: o.x, top: o.y, width: it.rect[2] * s * cam.z, zoom: s * cam.z, fill: it.fill ? cssColor(it.fill) : '#fff', lines: it.lines, caret: me.caret, at: me.at, armed: !!me.armed, onChange: ls => liveMemo(it._id, ls), onWheel: wheelZoom, onPan: startPan,
+        return <MemoEditor key={it._id} spec={{ ring: BLUE, left: o.x, top: o.y, width: it.rect[2] * s * cam.z, zoom: s * cam.z, fill: it.fill ? cssColor(it.fill) : '#fff', lines: it.lines, caret: me.caret, at: me.at, armed: !!me.armed, onChange: ls => liveMemo(it._id, ls), onWheel: wheelZoom, onPan: startPan,
           onArm: () => { const ne = { id: it._id, kind: 'memo' }; R.current.editing = ne; setEditing(ne) } }} onDone={finishMemo} /> })(editing ? (editing.kind === 'memo' ? editing : null) : armTarget()?.kind === 'memo' ? armTarget() : null)}
       {(ed => { if (!ed) return null; const s = editSpec(ed); if (!s) return null   // armed = 도형만 고른 대기(보이지 않음) — 고치기와 같은 key라 같은 편집기가 그대로 이어 받음
-        return <TextEditor key={ed.id} spec={{ ...s, onReady: setLiveEd, at: ed.at, onPan: startPan, onWheel: wheelZoom, armed: !!ed.armed, fresh: !!ed.fresh,
+        return <TextEditor key={ed.id} spec={{ ...s, ring: BLUE, onReady: setLiveEd, at: ed.at, onPan: startPan, onWheel: wheelZoom, armed: !!ed.armed, fresh: !!ed.fresh,
           onArm: () => { const ne = { id: ed.id, kind: ed.kind, ...(ed.i != null ? { i: ed.i } : {}), fresh: true }; R.current.editing = ne; setEditing(ne) } }} onDone={finishEdit} /> })(editing ? (editing.kind !== 'cell' && editing.kind !== 'memo' ? editing : null) : (t => (t?.kind === 'memo' ? null : t))(armTarget()))}   {/* 메모 대기는 위 MemoEditor가 받음(둘이 같이 뜨면 이 편집기가 첫 글자를 가로챘음) */}
       {editing && liveEd && <FormatBar ed={liveEd} />}   {/* 드래그 꾸미기 막대(2026-10-19 — 옛 오른쪽 위 「글자」 카드 대신) */}
       {selItems.length > 0 && onAsk && !readOnly && !phone && !live && !(editing && !editing.armed) && present == null && !menu && (selTexts().length || selImages().length) > 0 && (() => {   // ✨ AI 칩 — 끄는 중·글 고치는 중엔 숨김

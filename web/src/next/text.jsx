@@ -42,6 +42,13 @@ const Finish = Extension.create({
 const focusNow = editor => { try { editor.commands.setTextSelection(editor.state.doc.content.size); editor.view.focus() } catch { editor.commands.focus('end') } }
 // 대기 편집기가 포커스를 가져가도 되나 — 다른 입력 칸(대화창·속성 카드 등)에서 치는 중이면 뺏지 않음(고른 것이 저절로 바뀔 때 대화가 끊기지 않게)
 const mayTake = host => { const a = document.activeElement; return !a || a === document.body || !!host?.contains(a) || !(/INPUT|TEXTAREA|SELECT/.test(a.tagName) || a.isContentEditable) }
+// 편집기 이름(읽어 주는 말 — 2026-11-10 5단계: 늘 「고른 도형의 글」이었음). 표 칸 = 몇 행 몇 열, 고치는 중 = 끝내는 글쇠, 대기 = 지금 글
+const cut = t => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > 40 ? t.slice(0, 40) + '…' : t }
+function labelOf(s) {
+  if (s.cell) { const [r, c] = String(s.cellKey || '0,0').split(',').map(Number), where = `표 ${r + 1}행 ${c + 1}열 칸`
+    return s.armed ? `${where}: ${cut(s.now) || '빈 칸'} — 치면 새로 씀, Enter = 이어 고치기` : `${where} 고치기 — Enter·Tab = 다음 칸, Esc = 고친 것 버림` }
+  return s.armed ? `고른 도형의 글: ${cut(s.text) || '없음'} — 치면 새 글, Enter = 이어 고치기` : '글 고치기 — Esc = 끝'
+}
 // 두 번 누른 자리(화면 px)에 커서 — 글 밖이면 그대로(끝)
 const caretAt = (editor, at) => { if (!at) return; try { const hit = editor.view.posAtCoords({ left: at.x, top: at.y }); if (hit) editor.commands.setTextSelection(hit.pos) } catch { /* 없어도 그만 */ } }
 
@@ -68,7 +75,7 @@ export function TextEditor({ spec, onDone }) {
       extensions: [Document, Paragraph, Text, Bold, Italic, Underline, Strike, Code, TextStyle, Color, BackgroundColor, FontWeight, UndoRedo, Finish.configure({ onDone: finish, onCancel: spec.cell ? cancel : null, onMove: spec.cell ? finish : null, isArmed: () => !!sp.current.armed })],
       content: runsToRichText(spec.text || '', spec.runs, spec.weight && spec.weight !== 400 ? spec.weight : null),
       autofocus: spec.at ? false : 'end',   // 두 번 누른 자리에 둔 커서를 한 박자 늦은 autofocus가 끝으로 옮기지 않게
-      editorProps: { attributes: { spellcheck: 'false', 'aria-label': '고른 도형의 글 — 치면 새 글, Enter = 이어 고치기' }, handlePaste: () => !!sp.current.armed },   // 대기 중 Ctrl+V = 칠판 붙여넣기(편집기에 글이 숨어 들어가지 않게)
+      editorProps: { attributes: () => ({ spellcheck: 'false', 'aria-label': labelOf(sp.current) }), handlePaste: () => !!sp.current.armed },   // 대기 중 Ctrl+V = 칠판 붙여넣기(편집기에 글이 숨어 들어가지 않게)
     })
     ed.current = editor
     if (!spec.armed || mayTake(host.current)) focusNow(editor); if (!spec.armed) caretAt(editor, spec.at)   // 기본 autofocus는 한 박자 늦어 두 번 누르자마자 친 글자가 빠질 수 있음 — 바로
@@ -92,6 +99,7 @@ export function TextEditor({ spec, onDone }) {
     return () => { clearTimeout(tm); window.removeEventListener('pointerdown', onDown, true); window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); finish(); spec.onReady?.(null); editor.destroy() }
   }, [])   // eslint-disable-line
   const [px, setPx] = useState(spec.px)
+  useEffect(() => { ed.current?.view.dom.setAttribute('aria-label', labelOf(spec)) })   // 대기 → 고치기·다음 칸은 글이 안 바뀌어도 이름은 바뀜(편집기 attributes는 글이 바뀔 때만 다시 읽힘)
   useEffect(() => { if (!spec.pxFor && !spec.armed) setPx(spec.px) }, [spec.px])   // eslint-disable-line react-hooks/exhaustive-deps — 고치는 중 속성 카드로 글자 크기를 바꾸면 편집 칸도 바로(2026-10-23 — 고치는 중에도 속성 카드)
   const wasArmed = useRef(!!spec.armed)
   useLayoutEffect(() => {   // 표 칸 대기(엑셀처럼 칸을 고르면 보이지 않는 편집기가 미리 포커스 — 첫 키부터 한글 입력기가 켜져 있게, 2026-10-18 사용자: 「ㅎ」이 「g」로 들어감)
@@ -117,7 +125,7 @@ export function TextEditor({ spec, onDone }) {
       transform: spec.center ? `translate(${spec.side === 'left' ? '0' : spec.side === 'right' ? '-100%' : '-50%'},-50%)` : spec.rotation ? `rotate(${spec.rotation}deg)` : undefined,   // center = 도형 라벨(가운데 기준, side = 왼·오른쪽 정렬이면 그 끝 기준)
       transformOrigin: !spec.center && spec.origin ? `${spec.origin.x - spec.left}px ${spec.origin.y - spec.top}px` : undefined,
       fontWeight: spec.weight || 400, fontSize: fs, fontFamily: spec.family === 'board' ? BOARD_FONT : APP_FONT, lineHeight: m.lineSpacing, color: spec.color, textAlign: spec.align || 'left',   // font 칸은 낱개로(한 줄짜리 font와 섞으면 다시 그릴 때 경고) — 2026-10-27 밤: 이 주석이 color·textAlign까지 삼켜 10-18부터 안 먹었음
-      whiteSpace: spec.width && !spec.cell ? 'pre-wrap' : 'pre', width: spec.width, height: spec.height, display: spec.cell ? 'flex' : undefined, alignItems: spec.cell ? 'center' : undefined, justifyContent: spec.cell ? ({ left: 'flex-start', right: 'flex-end' }[spec.align] || 'center') : undefined, overflowWrap: spec.width ? 'anywhere' : undefined, outline: spec.flat || spec.armed ? 'none' : '1.5px solid #89b4fa', background: spec.bg || 'rgba(255,255,255,.9)', zIndex: 20, ...(spec.armed ? { opacity: 0, pointerEvents: 'none' } : {}) }}>
+      whiteSpace: spec.width && !spec.cell ? 'pre-wrap' : 'pre', width: spec.width, height: spec.height, display: spec.cell ? 'flex' : undefined, alignItems: spec.cell ? 'center' : undefined, justifyContent: spec.cell ? ({ left: 'flex-start', right: 'flex-end' }[spec.align] || 'center') : undefined, overflowWrap: spec.width ? 'anywhere' : undefined, outline: spec.flat || spec.armed ? 'none' : `1.5px solid ${spec.ring || '#3b82f6'}`, background: spec.bg || 'rgba(255,255,255,.9)', zIndex: 20, ...(spec.armed ? { opacity: 0, pointerEvents: 'none' } : {}) }}>
     {/* 고른 글의 색·형광펜이 고른 채로 보이게 — 브라우저 기본 선택은 글자색을 덮음(2026-10-18 사용자: 드래그를 풀어야 바뀐 색이 보임). 바탕만 옅게 */}
     <style>{`[data-testid=text-editor] .ProseMirror{outline:none;white-space:${spec.width ? 'pre-wrap' : 'pre'};overflow-wrap:${spec.width ? 'anywhere' : 'normal'}}[data-testid=text-editor] p{margin:0}[data-testid=text-editor] code{font-family:${MONO_FONT};font-size:inherit;background:${CODE_BAND};padding:0;border-radius:0;word-break:keep-all}[data-testid=text-editor] ::selection{background:rgba(137,180,250,.35)}`}</style>
   </div>

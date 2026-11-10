@@ -10,6 +10,7 @@ import { FoldBtn, useFold } from './fold.jsx'
 import SYMBOLS from '../symbols.json' with { type: 'json' }
 import { shapeIcon as paletteIcon } from './palette.jsx'
 import { FRAME_RATIOS, paperWH } from './geom.js'
+import { keyLabel } from './keylabel.js'
 // 프레임 비율 바꾸기 — 긴 쪽 방향은 그대로(가로로 길면 폭 유지, 세로로 길면 높이 유지)
 const frameRatio = (it, ratio) => { const [x, y, w, h] = it.rect; if (!ratio) return { ratio: undefined }; const r = FRAME_RATIOS[ratio]; return { ratio, rect: w >= h ? [x, y, w, w / r] : [x, y, h / r, h] } }
 import { cellPt, labelNeedW, labelShownPt, tableAutoPt } from './render.jsx'
@@ -364,8 +365,10 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, con
     {tables.length === 1 && (() => { const t = tables[0], why = chartWhys(t), cur = isChart(t) ? t.chart : 'table'   // 그래프 = 표 + 모양(§8 항목66 1단계 — 시안 「그래프 = 표 + 모양」), 안 맞는 모양은 흐리게 + 까닭
       return <><Row label="모양"><div data-testid="chart-kinds" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 2, background: C.seg, borderRadius: 8, padding: 2, flex: 1 }}>
         {CHART_KINDS.map(([k, name]) => { const no = !!why[k]
-          return <button key={k} data-chart-kind={k} title={no ? `${name} — ${why[k]}` : name} aria-label={name} aria-pressed={cur === k} disabled={no} onClick={() => set(it => (it._id === t._id ? chartPatch(it, k) : null), '그래프 모양')}
+          return <button key={k} data-chart-kind={k} title={no ? `${name} — ${why[k]}` : name} aria-label={name} aria-pressed={cur === k} aria-disabled={no || undefined} onClick={() => { if (!no) set(it => (it._id === t._id ? chartPatch(it, k) : null), '그래프 모양') }}
             style={btn(cur === k, { flex: 1, opacity: no ? 0.3 : 1, cursor: no ? 'not-allowed' : 'pointer' })}>{CHART_ICONS[k]}</button> })}</div></Row>
+        {(() => { const by = new Map(); for (const [k, name] of CHART_KINDS) if (why[k]) by.set(why[k], [...(by.get(why[k]) || []), name])   // 안 되는 까닭 = 풍선에만 있었음(못 누르는 단추는 마우스를 올려도 글쇠로는 못 봄 — 2026-11-10 5단계)
+          return by.size ? <div data-testid="chart-whys" style={{ fontSize: 11, color: C.muted }}>{[...by].map(([w, ns]) => `${ns.join('·')} 안 됨 — ${w}`).join(' · ')}</div> : null })()}
         {cur !== 'table' && <div style={{ fontSize: 11, color: C.muted }}>두 번 누르면 표로 펼쳐 숫자를 고쳐요 · 바깥을 누르면 다시 그래프</div>}</> })()}
     {tables.length > 0 && <Row label="첫 행">
       <Seg value={one(tables.map(it => !!it.header))} onPick={v => set(it => (it.type === 'table' ? { header: v } : null), '머리 행')} items={[[true, <b key="b">머리</b>, '첫 행을 머리로(굵게)'], [false, <span key="n">보통</span>, '첫 행도 보통']]} />
@@ -424,7 +427,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, con
       const fontV = list.map(e => cellPt(t, e.r, e.c)), auto = list.every(e => e.s.font == null && !t.font)
       return <>
         <div style={{ borderTop: `1px solid ${C.line}`, margin: '4px 0 0' }} />
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}><span style={{ fontWeight: 600 }}>칸</span><span style={{ fontSize: 11, color: C.muted }}>{n}개 · Shift+클릭으로 넓히기</span></div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}><span style={{ fontWeight: 600 }}>칸</span><span style={{ fontSize: 11, color: C.muted }}>{n}개 · {keyLabel('Shift+클릭')}·{keyLabel('Shift+방향키')}로 넓히기</span></div>
         <Row label="크기"><Stepper title="칸 글자 크기" onSet={v => setCells(() => ({ font: stepClamp(v, 0, 1, 200, 1) }), '칸 글자 크기')} values={fontV} onStep={d => setCells((s, r, c) => ({ font: stepClamp(cellPt(t, r, c), d, 1, 200, 1) }), '칸 글자 크기', 'cfont')} fmt={x => Math.round(x) + 'pt'} />
           <AutoToggle on={auto} onClick={() => (auto ? setCells((s, r, c) => ({ font: cellPt(t, r, c, true) }), '칸 글자 크기 고정') : setCells(() => ({ font: undefined }), '칸 글자 크기 자동'))} /></Row>
         <Row label="굵게"><Seg value={v(e => e.s.bold ?? !!(t.header && e.r === 0))} onPick={b => setCells(() => ({ bold: b }), '칸 굵게')} items={[[true, <b key="b">굵게</b>, '굵게'], [false, <span key="n">보통</span>, '보통']]} /></Row>

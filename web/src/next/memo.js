@@ -14,7 +14,7 @@ export const MEMO_KIND = {
   h1: { pt: 16, bold: true, gap: 10 }, h2: { pt: 13.5, bold: true, gap: 8 }, h3: { pt: 11.5, bold: true, gap: 6 }, code: { pt: 10, mono: true }, hr: { pt: 10.5 },
 }
 export const LISTY = new Set(['ul', 'ol', 'todo'])
-export const MUTED = '#8a8f98'
+export const MUTED = '#6e737c'   // 끝낸 할 일·출처 줄·「… N줄 더」·⠿ — 흰 메모 위 3.25 → 4.77(2026-11-10 5단계 사용자 「진한 회색」, 옛 값 #8a8f98)
 
 // 블록 = 그리기·고치기에서 한 덩어리(위 간격 단위) — 이어진 코드 줄·인용 줄은 한 블록
 export function memoBlocks(lines) {
@@ -210,6 +210,13 @@ export function moveLines(lines, idx, to, copy = false) {
   const set = new Set(idx), picked = idx.map(i => (copy ? structuredClone(lines[i]) : lines[i]))
   const rest = copy ? lines : lines.filter((_, i) => !set.has(i)), at = copy ? to : to - idx.filter(i => i < to).length
   return [...rest.slice(0, at), ...picked, ...rest.slice(at)]
+}
+// 고른 줄 한 칸 위·아래로(Alt+↑↓·줄 메뉴 「위로/아래로 옮기기」 — 2026-11-10 5단계). 건너뛰는 칸 = 옆 덩어리(코드·인용 묶음, 목록은 딸린 줄까지). 못 가면 null
+export function shiftLines(lines, ls, d) {
+  const idx = selIdx(ls), s = idx[0], e = idx[idx.length - 1] + 1
+  if (d < 0) { if (s <= 0) return null; const to = lineUnit(lines, s - 1)[0]; return { lines: moveLines(lines, idx, to), sel: { s: to, e: to + idx.length } } }
+  if (e >= lines.length) return null
+  const to = lineUnit(lines, e)[1]; return { lines: moveLines(lines, idx, to), sel: { s: to - idx.length, e: to } }
 }
 // 고른 줄들 떼어 내기(다른 메모·새 메모로) — 깊이는 맨 앞 줄 기준 0부터
 export function pickLines(lines, idx) {

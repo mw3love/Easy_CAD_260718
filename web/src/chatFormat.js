@@ -62,7 +62,7 @@ export function answerToRichText(md, source = '') {
     const nodes = parts.filter(p => p.text).map(p => textNode(p.text, p.bold || ln.kind === 'h' ? [{ type: 'bold' }] : []))
     content.push(nodes.length ? { type: 'paragraph', content: nodes } : { type: 'paragraph' })
   }
-  if (source) content.push({ type: 'paragraph', content: [textNode(source, [{ type: 'textStyle', attrs: { color: '#8a8f98' } }])] })
+  if (source) content.push({ type: 'paragraph', content: [textNode(source, [{ type: 'textStyle', attrs: { color: '#6e737c' } }])] })
   if (!content.length) content.push({ type: 'paragraph' })
   return { type: 'doc', content }
 }
@@ -140,7 +140,7 @@ export function answerToEcadText(md, source = '') {
     if (ln.kind === 'li') add(ln.mark + ' ', false)
     for (const p of ln.parts) add(p.text, p.bold || ln.kind === 'h', null, !!p.code)
   })
-  if (source) { if (text) text += '\n'; add(source, false, '#8a8f98') }
+  if (source) { if (text) text += '\n'; add(source, false, '#6e737c') }
   return { text, runs }
 }
 

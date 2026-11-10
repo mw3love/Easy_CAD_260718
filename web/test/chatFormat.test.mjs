@@ -25,7 +25,7 @@ test('카드 글 — 굵게는 bold 표시, 목록은 앞에 표, 끝에 회색 
   assert.deepEqual(doc.content[0].content[0].marks, [{ type: 'bold' }])
   assert.deepEqual(doc.content[1].content.map(n => n.text), ['• ', '가', '나'])
   assert.deepEqual(doc.content[1].content[1].marks, [{ type: 'bold' }])
-  assert.equal(doc.content[2].content[0].marks[0].attrs.color, '#8a8f98')
+  assert.equal(doc.content[2].content[0].marks[0].attrs.color, '#6e737c')
   assert.equal(answerToRichText('').content.length, 1)   // 빈 답도 문서 모양은 지킨다
 })
 
@@ -53,7 +53,7 @@ test('answerToEcadText — 굵게·제목·목록·출처 줄이 .ecad runs로',
   assert.equal(text, '제목\n\n• 핵심 하나\n보통\nKAIROS · m · 10-18 12:00')
   assert.deepEqual(runs[0], [0, 2, null, true])                     // 제목 = 굵게
   assert.deepEqual(runs[1], [text.indexOf('핵심'), 2, null, true])   // **핵심**
-  assert.deepEqual(runs.at(-1), [text.indexOf('KAIROS'), 'KAIROS · m · 10-18 12:00'.length, '#8a8f98', false])
+  assert.deepEqual(runs.at(-1), [text.indexOf('KAIROS'), 'KAIROS · m · 10-18 12:00'.length, '#6e737c', false])
 })
 
 
