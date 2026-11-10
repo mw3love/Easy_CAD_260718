@@ -25,17 +25,17 @@ export function EmptyGuide({ onAsk, onDeep, onMeet, onExample, phone = false }) 
     ...(deep ? [['board', '슬라이드 만들기', '주제 하나로 여러 장 — 글 장·그림 장, 만들면 바로 발표해요.', onDeep]] : []),   // 2026-11-08 Deep Mode(한 판)는 칠판 자료 우클릭 「정리 › 한 판으로」로 옮김
     ...(onExample ? [['frame', '예시 칠판 보기', '기능마다 KAIROS로 진짜 만든 예시 — 새 칠판으로 열려서 마음껏 고쳐 봐도 돼요.', onExample]] : [])]   // 2026-11-04 — 처음 방문이 예시 사본 대신 빈 칠판이 되며
   return <div ref={box} data-testid="empty-guide" style={{ position: 'absolute', zIndex: tight ? 6 : 5, top: '50%', left: tight ? '50%' : 'calc((100% - var(--mb-right-inset, 0px)) / 2)', transform: 'translate(-50%, -50%)',
-    width: 'min(420px, calc(100% - 32px))', boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: '16px 18px 12px',
+    width: 'min(420px, calc(100% - 32px))', maxHeight: 'calc(100% - 24px)', overflowY: 'auto', boxSizing: 'border-box',   /* 200% 확대에서 위아래가 잘렸음(2026-11-10 1단계) */ background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: '16px 18px 12px',
     boxShadow: 'var(--mb-shadow)', font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
     <div style={{ display: 'flex', alignItems: 'center', marginBottom: 2 }}>
-      <span style={{ font: "700 17px 'Pretendard', sans-serif", flex: 1 }}>무엇부터 해 볼까요?</span>
-      <button data-testid="empty-guide-close" onClick={close} title="이 안내 다시 보지 않기(이 브라우저)" className="mb-hit" style={{ position: 'relative', '--hit': '0 -4px', border: 'none', background: 'none', color: C.muted, cursor: 'pointer', fontSize: 15, padding: 2 }}>✕</button>
+      <h2 style={{ margin: 0, font: "700 17px 'Pretendard', sans-serif", flex: 1 }}>무엇부터 해 볼까요?</h2>
+      <button data-testid="empty-guide-close" aria-label="안내 닫기" onClick={close} title="이 안내 다시 보지 않기(이 브라우저)" className="mb-hit" style={{ position: 'relative', '--hit': '0 -4px', border: 'none', background: 'none', color: C.muted, cursor: 'pointer', fontSize: 15, padding: 2 }}>✕</button>
     </div>
     <div style={{ color: C.muted, marginBottom: 10 }}>KAIROS에게 물은 것이 쌓이고 정리되는 칠판이에요.</div>
     {rows.map(([icon, title, tip, go]) => <button key={title} className="mb-mi" data-testid={`empty-guide-${title}`} onClick={() => { if (tight) setAway(true); go() }}
       style={{ display: 'flex', alignItems: 'flex-start', gap: 10, width: '100%', textAlign: 'left', padding: '8px 10px', marginBottom: 4, border: `1px solid ${C.line}`, borderRadius: 10,
         background: C.group, color: C.ink, cursor: 'pointer', font: 'inherit' }}>
-      <span aria-hidden style={{ width: 20, height: 20, flex: 'none', display: 'block', color: 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ICONS[icon].replace('<svg ', '<svg width="20" height="20" ') }} />
+      <span aria-hidden className="mb-btn-icon" style={{ width: 20, height: 20, flex: 'none', display: 'block', color: 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ICONS[icon].replace('<svg ', '<svg width="20" height="20" ') }} />
       <span><span style={{ display: 'block', fontWeight: 700 }}>{title}</span><span style={{ color: C.muted, fontSize: 12 }}>{tip}</span></span>
     </button>)}
     <div data-testid="empty-guide-tip" style={{ color: C.muted, fontSize: 12, marginTop: 8, lineHeight: 1.6 }}>{phone ? '한 손가락 = 칠판 옮기기 · 두 손가락 = 확대 · 위 칠판 이름 = 다른 칠판'

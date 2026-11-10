@@ -9,7 +9,7 @@ import { setInkDark } from './render.jsx'
 import { isPhone, usePhoneViewport } from './ui.jsx'
 
 const C = { bar: 'var(--mb-bar)', ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', board: 'var(--mb-board)', line: 'var(--mb-line)' }
-const btn = { all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 6, font: "600 12px 'Pretendard', sans-serif", color: C.ink, background: 'rgba(218,119,86,.14)' }
+const btn = { all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 6, font: "600 12px 'Pretendard', sans-serif", color: C.ink, background: 'transparent', border: '1px solid var(--mb-ctl)' }   // 코랄은 뜻 있는 상태에만(규칙 ③ — 2026-11-10 1단계)
 const btnP = { ...btn, flex: 'none', padding: '8px 12px', font: "600 14px 'Pretendard', sans-serif" }   // 휴대폰 = 손가락 크기
 
 export function Viewer({ token }) {
@@ -36,10 +36,11 @@ export function Viewer({ token }) {
   }, [token])
   useEffect(() => { if (model && !fitted.current && size.w > 1) { fitted.current = true; fit(model.items, size) } }, [model, size, fit])
   if (gone) return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.muted, background: C.board, font: "400 14px 'Pretendard', sans-serif" }}>보기 전용 링크가 꺼졌거나 바뀌었어요 — 칠판을 고치는 분께 새 링크를 받아 주세요.</div>
+  if (model?.title) document.title = `${model.title} · 보기 전용`   // 탭 이름 = 칠판 이름(2026-11-10 1단계)
   if (!model) return <div style={{ height: '100%', background: C.board }} />
   return <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink, userSelect: 'none' }}>   {/* 보기 화면 — Ctrl+A가 글자를 칠하지 않게 */}
-    <div data-testid="view-bar" style={{ display: 'flex', alignItems: 'center', gap: phone ? 6 : 8, padding: phone ? '6px 8px' : '6px 10px', background: C.bar, borderBottom: `1px solid ${C.line}`, touchAction: phone ? 'none' : undefined, whiteSpace: 'nowrap' }}>
-      <b style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{phone && model.title ? model.title : 'Magic Board'}</b><span style={{ color: C.muted, fontSize: 12 }}>{phone ? '보기 전용' : '보기 전용 · 고치는 내용이 몇 초 안에 보여요'}</span>
+    <div data-testid="view-bar" style={{ display: 'flex', alignItems: 'center', gap: phone ? 6 : 8, padding: phone ? '6px 8px' : '6px 10px', background: C.bar, borderBottom: `1px solid ${C.line}`, touchAction: phone ? 'none' : undefined, whiteSpace: 'nowrap', flexWrap: phone ? 'nowrap' : 'wrap', rowGap: 4 }}>
+      <b style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{model.title || 'Magic Board'}</b><span style={{ color: C.muted, fontSize: 12 }}>{phone ? '보기 전용' : '보기 전용 · 고치는 내용이 몇 초 안에 보여요'}</span>
       <span style={{ flex: 1 }} />
       <button style={phone ? btnP : btn} data-testid="view-present" onClick={() => ed.current?.startPresent()} title="발표 — 프레임 순서대로 한 장씩 전체 화면">▶ 발표</button>
       <button style={phone ? btnP : btn} onClick={() => fit(model.items, size)} title="칠판 전체가 화면에 들어오게 맞춤">⤢{phone ? '' : ' 다 보기'}</button>

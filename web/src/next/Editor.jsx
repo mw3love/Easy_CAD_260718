@@ -56,7 +56,7 @@ const BLUE = '#89b4fa', PEACH = '#fab387', GUIDE = 'rgb(230,60,160)'   // 데스
 const HANDLE = 10, HIT_PX = 4, EDGE_PX = 5
 const INK = '#ff1f1f1f'   // 새로 그리는 선·글 기본색(밝은 칠판)
 // 다른 사람 색 — 접속 id로 늘 같은 색(테두리·이름표)
-const PERSON_COLORS = ['#e8590c', '#7048e8', '#0c8599', '#d6336c', '#2f9e44', '#1971c2']
+const PERSON_COLORS = ['#c2410c', '#7048e8', '#0b7285', '#d6336c', '#237a37', '#1971c2']   // 흰 이니셜 대비 4.5 이상(2026-11-10 1단계 — 주황·청록·초록을 한 단계 진하게)
 export const personColor = id => PERSON_COLORS[[...String(id)].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7) % PERSON_COLORS.length]
 const BOXY = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'path', 'frame', 'web', 'memo', 'legend', 'doc', 'pdf'])
 

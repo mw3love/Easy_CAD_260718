@@ -36,7 +36,7 @@ test('「＋ 새 칠판」 = 바로 새 칠판(칠판 코드만) · 빈 칠판�
   await expect(rows.nth(0)).toContainText(a)
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('mb.myBoards')).map(x => x.name))).toEqual([a, b])
 
-  await form.locator(`[data-board="${b}"]`).focus(); await page.keyboard.press('F2')                // 다른 칠판 이름 = F2(두 번 누르기는 지금 칠판만 — 한 번 누르면 바로 옮겨 감, 2026-11-05)
+  await form.locator(`[data-board="${b}"] a`).focus(); await page.keyboard.press('F2')                // 다른 칠판 이름 = F2(두 번 누르기는 지금 칠판만 — 한 번 누르면 바로 옮겨 감, 2026-11-05)
   await form.getByTestId('board-rename').fill('송신소 점검'); await page.keyboard.press('Enter')
   await expect(rows.nth(1)).toContainText('송신소 점검')
   await expect.poll(() => savedDoc(b)?.title).toBe('송신소 점검')                       // 문서 이름만 — 주소(칠판 코드)는 그대로
