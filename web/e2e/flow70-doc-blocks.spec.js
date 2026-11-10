@@ -26,7 +26,7 @@ test('큰 창 — 블록 누르기 = 말 칸 → 그 블록만 바뀜 · 원래�
   await openBoard(page, boardName('docblk'), { chat: false }); await setCam(page)
   const card = await makeDoc(page, page1(HARD), seen, '<p data-block="b2" data-kind="text">쉬운 말 단락</p>')
   const at = await toPage(page, card.pos[0] + 100, card.pos[1] + 200)
-  await page.mouse.click(at.x, at.y, { button: 'right' }); await page.getByRole('button', { name: '크게 보기', exact: true }).click()
+  await page.mouse.click(at.x, at.y, { button: 'right' }); await page.getByRole('menuitem', { name: '크게 보기', exact: true }).click()
   const view = page.getByTestId('doc-view'); await expect(view).toBeVisible()
   const doc = page.frameLocator('[data-testid="doc-frame"]')
   await doc.locator('[data-block="b2"]').click()
@@ -43,7 +43,7 @@ test('큰 창 — 블록 누르기 = 말 칸 → 그 블록만 바뀜 · 원래�
   await page.getByTestId('block-flip').click(); await expect.poll(html).toContain('어려운 말로')   // 원래대로
   await page.getByTestId('block-flip').click(); await expect.poll(html).toContain('쉬운 말 단락')   // 바꾼 것으로
   await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await expect(view).toHaveCount(0)
-  await page.mouse.click(at.x, at.y, { button: 'right' }); await page.getByRole('button', { name: '크게 보기', exact: true }).click()   // 다시 열어도 그 블록 대화는 남음(말풍선 대화 저장소)
+  await page.mouse.click(at.x, at.y, { button: 'right' }); await page.getByRole('menuitem', { name: '크게 보기', exact: true }).click()   // 다시 열어도 그 블록 대화는 남음(말풍선 대화 저장소)
   await doc.locator('[data-block="b2"]').click(); await expect(page.getByTestId('block-a')).toContainText('b2만 고쳤어요')
   await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await expect(view).toHaveCount(0)
   await page.keyboard.press('Control+z'); await expect.poll(html).toContain('어려운 말로')
@@ -54,7 +54,7 @@ test('큰 창 — 두 번 누르기 = 글자 손으로 고치기 · 바깥 = 저
   await openBoard(page, boardName('dochand'), { chat: false }); await setCam(page)
   const card = await makeDoc(page, page1(HARD).replace('</main>', '<div data-block="b4" data-kind="chart"><svg width="200" height="80"><text x="10" y="40">그래프</text></svg></div></main>'), seen, HARD)
   const at = await toPage(page, card.pos[0] + 100, card.pos[1] + 200)
-  await page.mouse.click(at.x, at.y, { button: 'right' }); await page.getByRole('button', { name: '크게 보기', exact: true }).click()
+  await page.mouse.click(at.x, at.y, { button: 'right' }); await page.getByRole('menuitem', { name: '크게 보기', exact: true }).click()
   const doc = page.frameLocator('[data-testid="doc-frame"]'), html = async () => (await liveDoc(page)).items.find(it => it.type === 'doc').html
   await doc.locator('[data-block="b3"]').dblclick()
   await expect(page.getByTestId('doc-hint')).toContainText('글자 고치는 중')
@@ -90,7 +90,7 @@ test('큰 창 — 「움직이게」 = 문서 글은 그대로 · ▶ 그 블록
   await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'doc').length).toBe(1)
   const card = (await liveDoc(page)).items.find(it => it.type === 'doc'), docIt = async () => (await liveDoc(page)).items.find(it => it.type === 'doc')
   const at = await toPage(page, card.pos[0] + 100, card.pos[1] + 200)
-  await page.mouse.click(at.x, at.y, { button: 'right' }); await page.getByRole('button', { name: '크게 보기', exact: true }).click()
+  await page.mouse.click(at.x, at.y, { button: 'right' }); await page.getByRole('menuitem', { name: '크게 보기', exact: true }).click()
   const doc = page.frameLocator('[data-testid="doc-frame"]')
   await doc.locator('[data-block="b2"]').click()
   await page.getByTestId('block-input').fill('이 칸 움직이게 해 줘'); await page.getByTestId('block-input').press('Enter')

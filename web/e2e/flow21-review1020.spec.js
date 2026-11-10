@@ -290,7 +290,7 @@ test('표 답 — 대화창엔 표로, 칠판에 붙이면 메모 하나(표 줄
   const top = await page.locator('svg text', { hasText: '항목' }).first().boundingBox(), bot = await page.locator('svg text', { hasText: '오전' }).first().boundingBox()
   const hx = (await toPage(page, memo.pos[0] + 15, memo.pos[1])).x, hy = (top.y + bot.y + bot.height) / 2   // 표 줄 가운데 높이 = 손잡이 자리
   await page.mouse.move(hx + 40, hy); await page.mouse.move(hx, hy); await page.mouse.down(); await page.mouse.up()
-  await page.getByRole('button', { name: '칠판 표로 바꾸기' }).click()
+  await page.getByRole('menuitem', { name: '칠판 표로 바꾸기' }).click()
   d = await liveDoc(page)
   const tbl = d.items.find(it => it.type === 'table'), m2 = d.items.find(it => it.type === 'memo')
   expect(tbl.cells).toEqual([['항목', '내일'], ['기온', '9~18℃'], ['오전', '비']]); expect(tbl.header).toBe(true)

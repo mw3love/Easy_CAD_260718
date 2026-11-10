@@ -107,7 +107,7 @@ test('휴대폰 — 위 이름 톡 = 칠판 판(새 칠판·다른 칠판으로�
   expect((await sheet.getByTestId('board-new').boundingBox()).y).toBeLessThan((await sheet.getByTestId('my-boards').boundingBox()).y)   // 새로 시작 = 맨 위(칠판이 많아도 안 밀림)
   await row.locator('[data-testid=board-more]').tap()
   await expect(page.getByText('이름 바꾸기')).toBeVisible()
-  const item = await page.getByRole('button', { name: '이름 바꾸기' }).boundingBox()
+  const item = await page.getByRole('menuitem', { name: '이름 바꾸기' }).boundingBox()
   expect(item.height).toBeGreaterThanOrEqual(44); expect(item.width).toBeLessThan(220)                       // 폰 ⋯ 메뉴 = 손가락 크기·글자 폭(PC 메뉴 최소 폭 190 아님)
   await expect(page.getByText('새 탭에서 열기')).toHaveCount(0); await expect(page.getByText('내려받기 (.ecad)')).toHaveCount(0)
   await page.screenshot({ path: 'test-results/phone-sheet.png' })

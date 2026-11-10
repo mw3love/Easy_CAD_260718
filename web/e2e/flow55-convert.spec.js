@@ -45,11 +45,11 @@ test('네모 글 → 메모(화살표 그대로·자리 가운데·Ctrl+Z 한 �
   // 우클릭에도 — 「안테나」 → 메모
   const ant = byText(d, '안테나'), p = await toPage(page, ant.pos[0] + 60, ant.pos[1] + 40)
   await page.mouse.click(p.x, p.y); await page.mouse.click(p.x, p.y, { button: 'right' })
-  await page.getByRole('button', { name: '메모로 바꾸기' }).click()
+  await page.getByRole('menuitem', { name: '메모로 바꾸기' }).click()
   await expect.poll(async () => (await liveDoc(page)).items.find(it => it.uid === ant.uid).type).toBe('memo')
   // 메모 → 글 상자
   await page.mouse.click(p.x, p.y, { button: 'right' })
-  await page.getByRole('button', { name: '글 상자로 바꾸기' }).click()
+  await page.getByRole('menuitem', { name: '글 상자로 바꾸기' }).click()
   await expect.poll(async () => (await liveDoc(page)).items.find(it => it.uid === ant.uid)?.type).toBe('text')
   expect((await liveDoc(page)).items.find(it => it.uid === ant.uid).text).toBe('안테나')
 })

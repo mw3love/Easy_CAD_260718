@@ -72,7 +72,7 @@ export function Bubble({ id, info, cam, size, thread = [], first, onThread, onCl
     const on = !m.fix.on; if (!onFields(on ? m.fix.after : m.fix.before)) return
     onThread(thread.map((x, k) => (k === i ? { ...x, fix: { ...x.fix, on } } : x))); onStatus?.(on ? '바꾼 것으로' : '원래대로')
   }
-  const btn = { all: 'unset', cursor: 'pointer', font: `500 11.5px ${F}`, color: C.muted, padding: '2px 7px', borderRadius: 6, border: `1px solid ${C.line}` }
+  const btn = { all: 'unset', cursor: 'pointer', font: `400 11.5px ${F}`, color: C.muted, padding: '2px 7px', borderRadius: 6, border: `1px solid ${C.line}` }
   return <div data-testid="bubble" data-id={id} role="dialog" aria-label={`AI 말풍선 — ${bubbleKind(info.type)}`}
     onPointerDown={e => e.stopPropagation()} onWheel={e => e.stopPropagation()} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }}
     style={{ position: 'absolute', left: pos.x, top: pos.y, width: BUBBLE_W, maxHeight: 360, zIndex: 8, display: 'flex', flexDirection: 'column', background: C.card, color: C.ink,

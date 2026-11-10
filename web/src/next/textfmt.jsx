@@ -11,8 +11,8 @@ export const FMT = [
   ['strike', '취소선 (Ctrl+Shift+X)', <s>S</s>],
   ['code', '코드 — 고정폭 글꼴', <span style={{ fontFamily: 'Consolas, monospace', fontSize: 12 }}>&lt;/&gt;</span>],
 ]
-const fbtn = (on, title, label, onClick, testid, w = 24) => <button key={testid} title={title} aria-label={title.split(' ')[0]} aria-pressed={on || undefined} data-testid={testid} onClick={onClick}
-  style={{ all: 'unset', cursor: 'pointer', minWidth: w, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 5, fontSize: 13, color: C.ink, background: on ? 'rgba(218,119,86,.22)' : 'transparent' }}>{label}</button>
+const fbtn = (on, title, label, onClick, testid, w = 24) => <button key={testid} title={title} aria-label={title.split(' ')[0]} aria-pressed={on === undefined ? undefined : !!on} data-testid={testid} onClick={onClick}
+  style={{ all: 'unset', cursor: 'pointer', minWidth: w, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 5, fontSize: 13, color: C.ink, background: on ? 'var(--mb-on)' : 'transparent' }}>{label}</button>
 export function FmtButtons({ st, act, color, prefix = 'fmt', w = 24 }) {   // w = 버튼 폭(속성 카드는 좁아 20 — 한 줄에)
   const sep = <span style={{ width: 1, height: 18, background: C.line, margin: '0 2px', flex: 'none' }} />
   return <>

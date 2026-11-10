@@ -23,7 +23,7 @@ test('이 장 움직이게 → 프레임을 덮는 카드 → 발표 → = 장 �
   await page.keyboard.press('Escape')
   const p = await toPage(page, fr.pos[0] + 6, fr.pos[1] + 6)                                   // 프레임 테두리 안쪽 모서리 = 프레임만 고름
   await page.mouse.click(p.x, p.y); await page.mouse.click(p.x, p.y, { button: 'right' })
-  await page.getByRole('button', { name: /이 장 움직이게/ }).click()
+  await page.getByRole('menuitem', { name: /이 장 움직이게/ }).click()
   await expect(page.getByTestId('answer-kind').last()).toHaveText('▶ 움직이는 장')
   expect(seen[0].kind).toBe('motion')
   expect(seen[0].motion).toMatchObject({ slide: { title: '송신소', bullets: ['만든다', '바꾼다', '쏜다'], notes: '마지막 관문' }, w: Math.round(fr.rect[2]), h: Math.round(fr.rect[3]), image: '' })   // 글 장 = 참고 그림 없음

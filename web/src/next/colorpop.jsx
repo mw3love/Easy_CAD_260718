@@ -9,6 +9,9 @@ const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line
 // 두 줄 꽉 채움(8+8) — 데스크톱 색 창과 같은 짜임: 진한 6색(`_COLOR_GRID_HUES`) + 검정 + 다른 색 / 같은 6색의 연한 색(Qt lighter(150)) + 회색 + 흰색
 export const ARROW_COLORS = ['#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#007AFF', '#AF52DE', '#000000', null,
   '#ffb4af', '#ffca7f', '#ffe57f', '#6eff93', '#7fbdff', '#e3acff', '#9e9e9e', '#ffffff']
+// 화면 읽기 이름(코드를 글자 하나씩 읽지 않게 — 2026-11-10 0단계 점검), 마우스 올림 글은 코드 그대로
+const COLOR_NAMES = ['빨강', '주황', '노랑', '초록', '파랑', '보라', '검정', null, '연한 빨강', '연한 주황', '연한 노랑', '연한 초록', '연한 파랑', '연한 보라', '회색', '흰색']
+const colorName = c => COLOR_NAMES[ARROW_COLORS.findIndex(x => x && x.toLowerCase() === (c || '').toLowerCase())] || `색 ${c}`
 const hex2 = n => Math.round(n).toString(16).padStart(2, '0')
 export const argbCss = c => { if (!c) return 'transparent'; const a = parseInt(c.slice(1, 3), 16) / 255; return `rgba(${parseInt(c.slice(3, 5), 16)},${parseInt(c.slice(5, 7), 16)},${parseInt(c.slice(7, 9), 16)},${a.toFixed(3)})` }
 // 최근 쓴 색 = 이 브라우저만(편의용 — 못 읽으면 줄이 안 보일 뿐)
@@ -30,9 +33,9 @@ function useWheel(ref, f) { const fr = useRef(f); fr.current = f
 function ColorGrid({ value, onPick, s = 18 }) {   // onPick(색, 끌기 중이면 true — 되돌리기 한 칸으로 묶음)
   return <div data-testid="color-grid" style={{ display: 'grid', gridTemplateColumns: `repeat(8, ${s}px)`, gap: 2, justifyContent: 'space-between' }}>
     {ARROW_COLORS.map((c, i) => { if (!c) return <label key={i} title="다른 색" style={{ width: s, height: s, borderRadius: 4, cursor: 'pointer', background: 'conic-gradient(#f33,#fc0,#3c6,#39f,#c3f,#f33)', position: 'relative', overflow: 'hidden' }}>
-        <input type="color" value={/^#[0-9a-f]{6}$/.test(value) ? value : '#1f1f1f'} onChange={e => onPick(e.target.value, true)} style={{ opacity: 0, position: 'absolute', inset: 0, cursor: 'pointer' }} /></label>
+        <input type="color" value={/^#[0-9a-f]{6}$/.test(value) ? value : '#1f1f1f'} aria-label="다른 색" onChange={e => onPick(e.target.value, true)} style={{ opacity: 0, position: 'absolute', inset: 0, cursor: 'pointer' }} /></label>
       const on = value === c.toLowerCase()
-      return <button key={i} title={c} aria-pressed={on} onClick={() => onPick(c)} style={{ all: 'unset', cursor: 'pointer', width: s, height: s, borderRadius: 4, background: c,
+      return <button key={i} title={c} aria-label={COLOR_NAMES[i]} aria-pressed={on} onClick={() => onPick(c)} style={{ all: 'unset', cursor: 'pointer', width: s, height: s, borderRadius: 4, background: c,
         boxShadow: on ? `0 0 0 2px #fff, 0 0 0 3.5px ${C.on}` : 'inset 0 0 0 1px rgba(0,0,0,.15)' }} /> })}
   </div>
 }
@@ -74,7 +77,7 @@ export function ColorPop({ anchor, id, value, fill, onPick, align, keepEdit, onR
   return createPortal(<div ref={popEl} data-ppop={id} data-keep-edit data-testid={'pop-' + id} onPointerDown={e => e.stopPropagation()}
     onMouseDown={e => { if (keepEdit && e.target.tagName !== 'INPUT') e.preventDefault() }}   // 글 고치는 중 = 편집기 포커스(고른 글자)를 지킴
     style={{ position: 'fixed', zIndex: 70, left: at?.left ?? -9999, top: at?.top ?? -9999, width: 172, boxSizing: 'border-box', background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 10, padding: 8, boxShadow: '0 8px 24px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', gap: 6, font: "400 12px 'Pretendard', sans-serif" }}>
-    <label style={{ display: 'flex', alignItems: 'center', gap: 2, height: 26, padding: '0 6px', boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, font: MONO, color: C.muted }}>#
+    <label className="mb-field" style={{ display: 'flex', alignItems: 'center', gap: 2, height: 26, padding: '0 6px', boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, font: MONO, color: C.muted }}>#
       <input ref={codeEl} data-testid="color-code" value={shown} placeholder={onReset ? '기본' : mixed ? '서로 다름' : '코드'} spellCheck={false} title={fill ? '색 코드 — 치고 Enter(8자리면 진하기까지)' : '색 코드 — 치고 Enter'}
         onChange={e => setTxt(e.target.value)} onFocus={e => e.currentTarget.select()} onBlur={() => txt != null && applyCode()}
         onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') applyCode(); if (e.key === 'Escape') { if (txt != null) setTxt(null); else e.currentTarget.blur() } }}
@@ -82,7 +85,7 @@ export function ColorPop({ anchor, id, value, fill, onPick, align, keepEdit, onR
       {onReset && <button data-testid="color-reset" title="기본 색으로(색 지우기)" onClick={onReset} style={{ all: 'unset', cursor: 'pointer', padding: '1px 6px', borderRadius: 5, background: C.seg, color: C.ink, font: "400 11px 'Pretendard', sans-serif" }}>기본</button>}</label>
     <ColorGrid value={mixed || none ? '' : rgbOf(value)} onPick={rgbPick} />
     {(() => { const recent = loadRecent(); return recent.length > 0 && <><span style={{ fontSize: 11, color: C.muted }}>최근 쓴 색</span>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 18px)', gap: 2, justifyContent: 'space-between' }}>{recent.map(c => <button key={c} title={c} onClick={() => rgbPick(c)} style={{ all: 'unset', cursor: 'pointer', width: 18, height: 18, borderRadius: 4, background: c, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.15)' }} />)}</div></> })()}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 18px)', gap: 2, justifyContent: 'space-between' }}>{recent.map(c => <button key={c} title={c} aria-label={colorName(c)} onClick={() => rgbPick(c)} style={{ all: 'unset', cursor: 'pointer', width: 18, height: 18, borderRadius: 4, background: c, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.15)' }} />)}</div></> })()}
     {fill && <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: C.muted }}>
       <button data-testid="fill-none" title="채움 없음" aria-pressed={none} onClick={() => pick(null)} style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, padding: '0 6px', height: 22, borderRadius: 6, fontSize: 11, color: none ? C.on : C.ink, background: none ? C.onBg : C.seg, outline: none ? `1px solid ${C.on}` : 'none' }}>
         <span style={{ position: 'relative', overflow: 'hidden', width: 12, height: 12, borderRadius: 3, background: '#fff', boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.2)' }}><NoneMark s={12} /></span>없음</button>

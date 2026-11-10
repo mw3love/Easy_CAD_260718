@@ -115,21 +115,21 @@ const css = {
   ai: { alignSelf: 'stretch', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 10px', wordBreak: 'break-word' },
   err: { alignSelf: 'stretch', background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 10, padding: '8px 10px' },
   meta: { font: `400 11px ${F}`, color: C.muted },
-  ctx: { display: 'block', font: `500 11px ${F}`, color: LINK_CHAT, marginBottom: 2 },
+  ctx: { display: 'block', font: `400 11px ${F}`, color: LINK_CHAT, marginBottom: 2 },
   bigNav: { font: `600 13px ${F}`, color: '#fff', background: 'rgba(255,255,255,.14)', border: '1px solid rgba(255,255,255,.3)', borderRadius: 7, padding: '6px 12px', cursor: 'pointer' },
   done: { font: `700 12px ${F}`, color: 'light-dark(#166534, #4ade80)', background: 'rgba(22,163,74,.1)', border: `1px solid ${DONE}`, borderRadius: 6, padding: '2px 9px', cursor: 'pointer' },
   pin: { font: `700 12px ${F}`, color: 'var(--mb-accent)', background: 'transparent', border: '1px solid #da7756', borderRadius: 6, padding: '2px 9px', cursor: 'pointer' },
-  ghost: { font: `500 12px ${F}`, color: C.muted, background: 'transparent', border: `1px solid ${C.line}`, borderRadius: 6, padding: '2px 9px', cursor: 'pointer' },
+  ghost: { font: `400 12px ${F}`, color: C.muted, background: 'transparent', border: `1px solid ${C.line}`, borderRadius: 6, padding: '2px 9px', cursor: 'pointer' },
   foot: { borderTop: `1px solid ${C.line}`, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 },
-  chip: { alignSelf: 'flex-start', font: `500 11.5px ${F}`, color: LINK_CHAT, background: 'rgba(90,169,255,.15)', borderRadius: 99, padding: '2px 9px' },
+  chip: { alignSelf: 'flex-start', font: `400 11.5px ${F}`, color: LINK_CHAT, background: 'rgba(90,169,255,.15)', borderRadius: 99, padding: '2px 9px' },
   input: { font: `400 13.5px/1.5 ${F}`, border: `1px solid ${C.line}`, borderRadius: 8, padding: '8px 10px', resize: 'none', minHeight: 40, maxHeight: 200, outline: 'none', background: C.card, color: C.ink },
   kind: { font: `600 11px ${F}`, color: C.muted, background: C.seg, borderRadius: 99, padding: '1px 8px' },
   bar: { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderBottom: `1px solid ${C.line}` },
   menu: { position: 'absolute', left: 0, bottom: 'calc(100% + 4px)', zIndex: 3, display: 'flex', flexDirection: 'column', minWidth: 170, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, boxShadow: '0 6px 18px rgba(0,0,0,.18)', padding: 4 },
-  item: { all: 'unset', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, font: `500 12.5px ${F}`, color: C.ink, whiteSpace: 'nowrap' },
+  item: { all: 'unset', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, font: `400 12.5px ${F}`, color: C.ink, whiteSpace: 'nowrap' },
   drop: { display: 'flex', flexDirection: 'column', maxHeight: 260, overflowY: 'auto', borderBottom: `1px solid ${C.line}`, background: C.card },
   row: { all: 'unset', cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'center', padding: '6px 12px', font: `400 12.5px ${F}`, color: C.ink, borderBottom: `1px solid ${C.line}` },
-  select: { font: `500 12px ${F}`, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 6, padding: '2px 4px', background: C.card, maxWidth: 210 },
+  select: { font: `400 12px ${F}`, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 6, padding: '2px 4px', background: C.card, maxWidth: 210 },
 }
 
 // 답 글 보이기(굵게·목록·제목만 — 카드에 붙는 모양과 같은 규칙). chart = { pick(표 줄, 모양), down(e, 표 줄, 모양) } — 있으면 숫자 표 밑에 「그래프로」 단추
@@ -686,17 +686,17 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
             {n > 1 && <NavBtn testid="image-big-prev" side="left" onClick={() => go(-1)} title="이전 후보(←)">‹</NavBtn>}
             {n > 1 && <NavBtn testid="image-big-next" side="right" onClick={() => go(1)} title="다음 후보(→)">›</NavBtn>}
           </div>
-          <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 8, alignItems: 'center', font: `500 13px ${F}`, color: '#fff' }}>
+          <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 8, alignItems: 'center', font: `400 13px ${F}`, color: '#fff' }}>
             <AddBtn testid="image-big-pin" big done={flash === `${big.i}:${big.j}`} onClick={() => pinPick(big.i, big.j)} />
             <button style={css.bigNav} onClick={() => setBig(null)} title="닫기(Esc)">닫기</button>
           </div>
-          {n > 1 && <div data-testid="image-big-count" style={{ font: `500 12px ${F}`, color: 'rgba(255,255,255,.6)', marginTop: -6 }}>{big.j + 1} / {n}</div>}
+          {n > 1 && <div data-testid="image-big-count" style={{ font: `400 12px ${F}`, color: 'rgba(255,255,255,.6)', marginTop: -6 }}>{big.j + 1} / {n}</div>}
           </BigModal>, document.body) })()}
       <div style={css.head}>
         <b style={{ fontSize: 14 }}>KAIROS</b>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           {credits && <span data-testid="chat-credits" title={`이번 달 ${Math.round(credits.quota).toLocaleString('ko-KR')} 크레딧 중 남은 것(${myKey ? '내 키' : '서버 키'}) — 답을 받을 때마다 새로`}
-            style={{ font: `500 12px ${F}`, color: credits.remaining < credits.quota * 0.1 ? 'var(--mb-accent)' : C.muted }}>남은 {Math.round(credits.remaining).toLocaleString('ko-KR')}</span>}
+            style={{ font: `400 12px ${F}`, color: credits.remaining < credits.quota * 0.1 ? 'var(--mb-accent)' : C.muted }}>남은 {Math.round(credits.remaining).toLocaleString('ko-KR')}</span>}
           <button title="대화창 닫기" aria-label={full ? undefined : '대화창 닫기'} onClick={onClose} style={{ ...css.ghost, padding: full ? '4px 12px' : '0 7px', fontSize: full ? 15 : undefined }}>{full ? '✕ 칠판' : '✕'}</button>
         </div>
       </div>
@@ -856,7 +856,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
             <input ref={fileIn} data-testid="attach-input" type="file" multiple hidden onChange={e => { const fs = [...e.target.files]; e.target.value = ''; attach(fs) }} />
             <button data-testid="mic" aria-label={mic === 'off' ? '말로 입력' : undefined} {...(mic === 'off' ? hoverBg : null)} onClick={toggleMic} disabled={!server || mic === 'wait' || mic === 'stopping'} aria-pressed={mic === 'listen'}
               title={mic === 'listen' ? '듣는 중 — 다시 누르면 멈춰요(보내도 멈춤)' : '말로 입력 — 말하는 동안 글자가 바로 떠요(KAIROS 실시간 받아쓰기, 말한 1분에 약 2크레딧)'}
-              style={{ ...tool, ...(mic === 'off' ? null : { width: 'auto', padding: '0 8px', gap: 3, display: 'flex', alignItems: 'center', font: `500 12px ${F}` }), ...(mic === 'listen' ? { color: '#fff', background: '#dc2626' } : null) }}>
+              style={{ ...tool, ...(mic === 'off' ? null : { width: 'auto', padding: '0 8px', gap: 3, display: 'flex', alignItems: 'center', font: `400 12px ${F}` }), ...(mic === 'listen' ? { color: '#fff', background: '#dc2626' } : null) }}>
               {mic === 'listen' ? '● 듣는 중' : mic === 'wait' ? <><Glyph svg={ICONS.mic} />…</> : mic === 'stopping' ? <><Glyph svg={ICONS.mic} />마무리…</> : <Glyph svg={ICONS.mic} />}</button>
             <span data-testid="chat-foot-note" style={{ ...css.meta, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', ...(micErr ? { color: 'var(--mb-danger-ink)' } : null) }} title={micErr || (server ? `대화 기록은 이 칠판(「${DOC_NAME}」)에 함께 저장돼요` : '')}>{micErr || (server ? '' : '서버가 꺼져 있어요 — python web/server.py 를 켜야 물을 수 있어요.')}</span>
             <span data-model-set style={{ position: 'relative' }}>

@@ -48,9 +48,9 @@ function Cell({ k, name, icon, on, onDown, onClick, onPeek, onMenu }) {   // onM
   return <button title={onPeek ? undefined : `${name} — 클릭하면 그리기, 칠판으로 끌면 바로 놓기`} aria-label={name} aria-pressed={on} onPointerDown={e => { onPeek?.(null); onDown(e, k) }} onClick={() => onClick(k)}
     onContextMenu={onMenu && (e => { e.preventDefault(); onPeek?.(null); onMenu(e) })} onPointerEnter={onPeek && (e => onPeek(e.currentTarget.getBoundingClientRect()))} onPointerLeave={onPeek && (() => onPeek(null))}
     style={{ all: 'unset', boxSizing: 'border-box', cursor: 'pointer', width: 38, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, padding: '3px 0', borderRadius: 6,
-      background: on ? 'rgba(218,119,86,.22)' : 'transparent', color: C.ink }}>
+      background: on ? 'var(--mb-on)' : 'transparent', color: C.ink }}>
     <span style={{ height: 20, display: 'flex', alignItems: 'center', transform: 'scale(.82)' }}>{icon}</span>   {/* 한 단계 작게(2026-10-23 사용자: 조금 큼) */}
-    <span style={{ font: "500 10px 'Pretendard', sans-serif", maxWidth: 38, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{name}</span>
+    <span style={{ font: "400 10px 'Pretendard', sans-serif", maxWidth: 38, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{name}</span>
   </button>
 }
 // 칸 격자 = auto-fill — 왼쪽 판을 넓히면 한 줄에 더(2026-10-23 판 폭 조절)
@@ -129,7 +129,7 @@ export function Palette({ lib, tool, onDown, onClick, dark, docked, mine, say })
       {folders.filter(isMine).map(f => { const list = syms.filter(s => s.folder === f); return <Section key={f} title={folderTitle(f)} color={FOLDER_GRAY} count={list.length} shut={shut.has('f:' + f)} onToggle={() => toggle('f:' + f)} onMenu={folderMenu(f)} folder={folderTitle(f)} lit={drop?.folder === folderTitle(f)}>{list.map(s => cellOf('customsym:' + s.id))}</Section> })}
       {!mine.mine.symbols.length && <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.5 }}>칠판에서 도형·아이콘을 고르고 우클릭 「내 심볼에 추가」</div>}
       {(n => n > 0 && <button data-testid="sym-reseed" title="지운 예시 심볼(방송·기술·업무)만 다시 넣어요 — 내가 넣은 심볼은 그대로" onClick={() => { const k = mine.api.reseed(); say?.(k ? `예시 심볼 ${k}개를 되돌렸어요` : '빠진 예시가 없어요') }}
-        style={{ all: 'unset', cursor: 'pointer', alignSelf: 'flex-start', padding: '1px 6px', borderRadius: 4, border: `1px solid ${C.line}`, font: "500 11px 'Pretendard', sans-serif", color: C.muted }}>↺ 예시 심볼 되돌리기 ({n}개)</button>)(mine.api.missing())}   {/* 빠진 예시가 있을 때만(2026-10-28 사용자 — 메뉴 안 「예시 다시 넣기」를 따로 보이는 단추로) */}
+        style={{ all: 'unset', cursor: 'pointer', alignSelf: 'flex-start', padding: '1px 6px', borderRadius: 4, border: `1px solid ${C.line}`, font: "400 11px 'Pretendard', sans-serif", color: C.muted }}>↺ 예시 심볼 되돌리기 ({n}개)</button>)(mine.api.missing())}   {/* 빠진 예시가 있을 때만(2026-10-28 사용자 — 메뉴 안 「예시 다시 넣기」를 따로 보이는 단추로) */}
       <input ref={file} type="file" accept=".json,application/json" hidden onChange={async e => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return
         const text = await f.text(), n = mine.api.importText(text)
         let to = ''; try { to = [...new Set(JSON.parse(text).symbols.map(s => String(s.folder || '가져온 심볼')))].map(x => `「${x}」`).join('·') } catch { /* 알림에 폴더 이름만 빠짐 */ }

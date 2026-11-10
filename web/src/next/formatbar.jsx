@@ -28,7 +28,7 @@ export function FormatBar({ ed, onTurn }) {   // onTurn = 줄 종류 바꾸기 �
   const left = Math.max(8, Math.min(window.innerWidth - W - 8, Math.min(a.left, b.left)))
   const st = edState(ed)
   const colorBtnEl = <span ref={colorBtn} data-ppop="fmtcolor" style={{ display: 'flex' }}><button title="글자색" aria-label="글자색" aria-pressed={pal || undefined} data-testid="fmt-글자색" onClick={() => setPal(p => !p)}
-    style={{ all: 'unset', cursor: 'pointer', minWidth: 24, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 5, fontSize: 13, color: C.ink, background: pal ? 'rgba(218,119,86,.22)' : 'transparent' }}>
+    style={{ all: 'unset', cursor: 'pointer', minWidth: 24, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 5, fontSize: 13, color: C.ink, background: pal ? 'var(--mb-on)' : 'transparent' }}>
     <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '13px' }}>A<span style={{ width: 12, height: 3, borderRadius: 1, background: st.color || C.ink }} /></span></button>
     {pal && <ColorPop anchor={colorBtn} id="fmtcolor" align="left" keepEdit value={st.color || undefined} onPick={c => edRun(ed, ch => (c ? ch.setColor(c) : ch.unsetColor()))} onReset={() => edRun(ed, ch => ch.unsetColor())} />}</span>
   return createPortal(<div data-keep-edit data-testid="format-bar" onMouseDown={e => { if (e.target.tagName !== 'INPUT') e.preventDefault() }} onPointerDown={e => e.stopPropagation()}

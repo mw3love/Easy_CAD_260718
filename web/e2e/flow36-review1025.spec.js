@@ -63,7 +63,7 @@ test('그림 우클릭 「도면으로 베끼기」 → 그림 옆 구역 스켈
   const img = (await liveDoc(page)).items.find(it => it.type === 'image')
   const c = await toPage(page, img.pos[0] + img.rect[2] / 2, img.pos[1] + img.rect[3] / 2)
   await page.keyboard.press('Escape'); await page.mouse.click(c.x, c.y, { button: 'right' })
-  await page.getByRole('button', { name: /도면으로 베끼기/ }).click()
+  await page.getByRole('menuitem', { name: /도면으로 베끼기/ }).click()
   const sk = page.locator('[data-testid="board-skeleton"][data-kind="trace"]')
   await expect(sk).toBeVisible()
   await expect(sk).toContainText('2/6')                                                      // 서버 진행이 그대로(끝난 구역 수)

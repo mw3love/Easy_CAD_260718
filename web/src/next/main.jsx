@@ -52,10 +52,10 @@ const KEEP_ICONS = { keep: '<svg viewBox="0 0 24 24" fill="none" stroke="current
 // 묶음 안 버튼(넓은 창) = 큰 버튼 + 작은 버튼 2단(2026-11-08 사용자 선택 — RustGIS 리본 비교 시안 D: 높이 54 그대로, 버튼 줄 약 400px 짧게). small = 자주 안 누르는 것 · 좁은 창은 예전처럼 아이콘 한 줄
 const Btn = ({ icon, label, onClick, onDown, title, on, disabled, special, small }) => { const narrow = useContext(Narrow); const inGroup = useContext(InGroup) && !narrow, sz = inGroup && small ? 15 : 18
   const slot = !inGroup ? null : small ? { flexDirection: 'row', justifyContent: 'flex-start', height: 20, minWidth: 0, gap: 5, padding: '1px 6px', boxSizing: 'border-box' } : { gridRow: 'span 2', justifyContent: 'center', height: 41, minWidth: 44, padding: '2px 6px', boxSizing: 'border-box' }
-  const bg = o => (special ? SPECIAL_BG(o) : o ? 'rgba(218,119,86,.22)' : 'transparent'); return (
-  <button onClick={onClick} onPointerDown={onDown} title={title || label} aria-label={label} disabled={disabled} aria-pressed={on || undefined} style={{ all: 'unset', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.35 : 1,
+  const bg = o => (special ? SPECIAL_BG(o) : o ? 'var(--mb-on)' : 'transparent'); return (
+  <button onClick={onClick} onPointerDown={onDown} title={title || label} aria-label={label} disabled={disabled} aria-pressed={on === undefined ? undefined : !!on} style={{ all: 'unset', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.35 : 1,
     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: narrow ? '4px 4px' : '4px 8px', borderRadius: 6, minWidth: narrow ? 24 : 40, ...slot,   // 좁은 창 옆 여백 6 → 4px: 「칠판」 버튼이 늘며 960px에서 상태 글이 0px로 눌렸음(2026-10-19)
-    background: bg(on), font: special ? "700 11px 'Pretendard', sans-serif" : "500 11px 'Pretendard', sans-serif", color: special ? '#fff' : C.ink }}
+    background: bg(on), font: special ? "700 11px 'Pretendard', sans-serif" : "400 11px 'Pretendard', sans-serif", color: special ? '#fff' : C.ink }}
     onMouseEnter={e => { if (!disabled && (special || !on)) e.currentTarget.style.background = special ? SPECIAL_BG(true) : HOVER }} onMouseLeave={e => { e.currentTarget.style.background = bg(on) }}>
     {(ICONS[icon] || KEEP_ICONS[icon]) ? <span aria-hidden className={special ? undefined : 'mb-btn-icon'} style={{ width: sz, height: sz, display: 'block', color: special ? '#fff' : 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: (ICONS[icon] || KEEP_ICONS[icon]).replace('<svg ', `<svg width="${sz}" height="${sz}" `) }} />
       : <span style={{ fontSize: 16, lineHeight: '18px' }}>{icon}</span>}{!narrow && <span style={{ whiteSpace: 'nowrap' }}>{label}</span>}   {/* 이름은 한 줄(「전체 화면」이 두 줄로 꺾여 위 막대가 높아졌음 — 2026-10-20) */}
@@ -106,7 +106,7 @@ function WebForm({ onInsert, onClose }) {
 
 // 샘플 열기 — 지금 칠판을 그 내용으로 바꿈(개발 시험용 — 서버 없을 때 위 막대에만, 2026-10-27 칠판 칸에서 뺌)
 const SampleSelect = ({ onPick }) => <select data-testid="sample-select" onChange={e => { const u = e.target.value; e.target.value = ''; if (u) onPick(u) }} defaultValue="" title="샘플 칠판으로 바꾸기 — 지금 칠판 내용이 바뀌어요(Ctrl+Z로 되돌리기)"
-  style={{ font: "500 12px 'Pretendard', sans-serif", padding: '4px 6px', borderRadius: 6, border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>
+  style={{ font: "400 12px 'Pretendard', sans-serif", padding: '4px 6px', borderRadius: 6, border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>
   <option value="">샘플 열기…</option>{SAMPLES.map(([n, u]) => <option key={u} value={u}>{n}</option>)}
 </select>
 
@@ -199,7 +199,7 @@ const PICON = {
   present: ICONS.present, share: ICONS.share, theme: ICONS.theme, pen: ICONS.pen,
 }
 const PI = ({ n, s = 18 }) => <span aria-hidden style={{ width: s, height: s, display: 'inline-block', flex: 'none' }} dangerouslySetInnerHTML={{ __html: PICON[n].replace('<svg ', `<svg width="${s}" height="${s}" `) }} />
-const PILL = { all: 'unset', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5, height: 34, padding: '0 11px', borderRadius: 17, background: C.group, color: C.ink, fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap' }
+const PILL = { all: 'unset', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5, height: 34, padding: '0 11px', borderRadius: 17, background: C.group, color: C.ink, fontSize: 13, fontWeight: 400, whiteSpace: 'nowrap' }
 const IBTN = { all: 'unset', cursor: 'pointer', flex: 'none', width: 32, height: 32, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, color: C.muted }
 
 function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, big = false, children }) {   // big = 휴대폰 칠판 판(손가락 — 줄 높이 44·⋯ 늘 보임, 2026-11-06)   // docked = 왼쪽 판 「칠판」 칸(2026-10-23 — 위 막대 팝업에서 옮김), open = 비밀번호 없는 서버, myId·me = 내 접속 이름표(줄 동그라미의 「나」), onDownload = 지금 칠판 내려받기, children = 서버 없을 때 파일 단추들
@@ -280,7 +280,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
       {edit ? <input data-testid="board-rename" autoFocus value={renameText} placeholder={UNTITLED} maxLength={60} onChange={e => setRenameText(e.target.value)} onBlur={commitRename} onFocus={e => e.target.select()}
           onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}
           onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setRenameText(boardTitle(b.name, b.title)); setRenaming(null) } }}
-          style={{ flex: 1, minWidth: 0, height: big ? 38 : 22, boxSizing: 'border-box', border: '1px solid #da7756', borderRadius: 5, background: C.card, color: C.ink, padding: '0 6px', font: big ? "500 16px 'Pretendard', sans-serif" : "500 12px 'Pretendard', sans-serif" }} />
+          style={{ flex: 1, minWidth: 0, height: big ? 38 : 22, boxSizing: 'border-box', border: '1px solid #da7756', borderRadius: 5, background: C.card, color: C.ink, padding: '0 6px', font: big ? "400 16px 'Pretendard', sans-serif" : "400 12px 'Pretendard', sans-serif" }} />
         : big ? <>   {/* 휴대폰 = ✓ 지금 칠판 · 이름 · 사람 얼굴 · 고친 때(2026-11-06 bakeoff — 설명 글 없이 한 줄) */}
             <span style={{ width: 18, display: 'flex', flex: 'none' }}>{cur && <PI n="check" />}</span>
             <BoardName name={b.name} title={b.title} at={b.c || (b.mtime || 0) * 1000} bold={cur} />
@@ -327,7 +327,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
       </div>}
     </div>}
     {!making && !big && <button data-testid="board-example-new" onClick={exampleNew} title="기능마다 진짜로 만든 예시가 담긴 칠판 — 마음껏 고쳐 보세요. 누를 때마다 최신 예시로 새로 열려요(지금 칠판은 그대로)"
-      style={{ all: 'unset', cursor: 'pointer', boxSizing: 'border-box', padding: '4px 8px', borderRadius: 6, border: `1px solid ${C.line}`, color: C.ink, fontWeight: 500, textAlign: 'center', whiteSpace: 'nowrap' }} {...menuHover}>★ 예시 칠판 열기</button>}   {/* 윗줄은 좁아 꺾임 — 한 줄 따로(2026-11-04 자체 확인) */}
+      style={{ all: 'unset', cursor: 'pointer', boxSizing: 'border-box', padding: '4px 8px', borderRadius: 6, border: `1px solid ${C.line}`, color: C.ink, fontWeight: 400, textAlign: 'center', whiteSpace: 'nowrap' }} {...menuHover}>★ 예시 칠판 열기</button>}   {/* 윗줄은 좁아 꺾임 — 한 줄 따로(2026-11-04 자체 확인) */}
     {newMenu && <div ref={menuRef} data-testid="board-new-menu" style={{ ...MENU_BOX, left: newMenu.x, top: newMenu.y, width: 200 }}>
       {!codeOn ? <>
         <button data-testid="board-code-open" onClick={() => setCodeOn(true)} style={MENU_ROW} {...menuHover} title="받은 칠판 코드(QR 밑 8자)나 칠판 주소를 넣어 그 칠판으로"><span style={{ width: 14, textAlign: 'center' }}>#</span>칠판 코드로 열기</button>
@@ -397,7 +397,7 @@ function Dock({ tab, setTab, panes, mini, width, setWidth, help, onHelp }) {   /
     <div style={{ width: RAIL_W, flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, paddingTop: 8, borderRight: tab ? `1px solid ${C.line}` : 'none' }}>
       {DOCK_TABS.map(([k, label, tip]) => { const on = tab === k, ic = DOCK_ICONS[k] || ICONS[k]
         return <button key={k} data-testid={`dock-${k}`} aria-label={`${label} 판`} aria-pressed={on} title={on ? `${label} 판 접기` : tip} onClick={() => setTab(on ? '' : k)}
-          style={{ all: 'unset', cursor: 'pointer', width: 36, padding: '6px 0 4px', borderRadius: 8, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, font: "500 10px 'Pretendard', sans-serif",
+          style={{ all: 'unset', cursor: 'pointer', width: 36, padding: '6px 0 4px', borderRadius: 8, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, font: "400 10px 'Pretendard', sans-serif",
             color: on ? C.accent : C.ink, background: on ? 'rgba(218,119,86,.18)' : 'transparent' }}
           onMouseEnter={e => { if (!on) e.currentTarget.style.background = HOVER }} onMouseLeave={e => { e.currentTarget.style.background = on ? 'rgba(218,119,86,.18)' : 'transparent' }}>
           <span aria-hidden className={on ? undefined : 'mb-btn-icon'} style={{ width: 20, height: 20, display: 'block', color: on ? C.accent : 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ic.replace('<svg ', '<svg width="20" height="20" ') }} />{label}</button> })}
@@ -432,7 +432,7 @@ function ExportForm({ hasSel, selFrames, frameCount, items, onExport, onPreview,
   const [f, setF] = useState('pdf'), [scope, setScope] = useState(hasSel ? 'sel' : 'all'),   // 범위 기본 = 고른 게 있으면 그것, 없으면 전체(2026-10-18 사용자와 정함)
   [page, setPage] = useState('A4'), [orient, setOrient] = useState(''), [margin, setMargin] = useState(10), [tr, setTr] = useState(false), [busy, setBusy] = useState(false)
   const seg = (v, cur, set, label, dis) => <button key={v} disabled={dis} onClick={() => set(v)} style={{ all: 'unset', cursor: dis ? 'default' : 'pointer', opacity: dis ? 0.4 : 1, flex: 1, textAlign: 'center', padding: '3px 0', borderRadius: 6,
-    background: cur === v ? 'rgba(218,119,86,.22)' : 'transparent', color: cur === v ? 'var(--mb-accent)' : C.ink, fontWeight: cur === v ? 600 : 400 }}>{label}</button>
+    background: cur === v ? 'var(--mb-on)' : 'transparent', color: cur === v ? 'var(--mb-accent)' : C.ink, fontWeight: cur === v ? 600 : 400 }}>{label}</button>
   const row = (label, el) => <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ width: 34, color: C.muted }}>{label}</span><div style={{ flex: 1, display: 'flex', gap: 2, background: C.group, borderRadius: 8, padding: 2 }}>{el}</div></div>
   const [split, setSplit] = useState('frames')   // 고른 것에 종이틀이 있을 때 — 틀마다 쪽 / 고른 것 전체를 한 쪽에(2026-10-18 사용자)
   const [order, setOrder] = useState('rows')   // 종이틀 쪽 순서 — 줄 우선(위 줄 왼→오, 지그재그) / 칸 우선(왼 칸 위→아래)
@@ -632,7 +632,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
   const live = server || !srvKnown
   // 위 막대 왼쪽 = 왼쪽 판의 머리(시안 C): 판이 열린 넓은 창만. 자리가 모자라면(창 폭 1440에서 판을 넓히면 버튼이 겹쳤음)·팀 이름표가 붙는 서버는 예전 배치. 코랄은 레일 아이콘이 맡음(이름 칸 전체가 칠해졌음)
   const dockRight = RAIL_W + 1 + dockW + 1, headed = !phone && !narrow && !!dockTab && !(live && team) && dockRight <= winW - TOOLS_ROOM
-  const titleBg = dockTab === 'board' && !headed ? 'rgba(218,119,86,.22)' : 'transparent'
+  const titleBg = dockTab === 'board' && !headed ? 'var(--mb-on)' : 'transparent'
   const [me, setMe] = useState(() => { try { return localStorage.getItem('mb.name') || '' } catch { return '' } }), [others, setOthers] = useState([]), [shareOpen, setShareOpen] = useState(false)
   const sync = useRef({ base: null, rev: 0, busy: false, again: false, id: Math.random().toString(36).slice(2, 10) }), modelRef = useRef(model); modelRef.current = model
   const box = useRef(null), size = useSize(box), file = useRef(null), ed = useRef(null), saveT = useRef(null)
@@ -925,7 +925,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
         board: <BoardForm docked open={openServer} myId={sync.current.id} me={me} onDownload={saveFile} keepDays={keepDays} onClose={() => {}}>
           {!live && <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderTop: `1px solid ${C.line}`, paddingTop: 8 }}>
             {[['open', '파일 열기', () => file.current.click(), '.ecad 파일 열기(지금 칠판을 그 내용으로 바꿈)'], ['download', '내려받기', saveFile, '.ecad 파일로 내려받기']].map(([ic, l, f, t]) =>
-              <button key={l} onClick={f} title={t} style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px 4px 7px', borderRadius: 6, border: `1px solid ${C.line}`, font: "500 12px 'Pretendard', sans-serif" }}>
+              <button key={l} onClick={f} title={t} style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px 4px 7px', borderRadius: 6, border: `1px solid ${C.line}`, font: "400 12px 'Pretendard', sans-serif" }}>
                 <span aria-hidden style={{ width: 16, height: 16, display: 'block', color: 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ICONS[ic].replace('<svg ', '<svg width="16" height="16" ') }} />{l}</button>)}
           </div>}</BoardForm>,
         shape: <Palette docked lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} mine={{ mine: mySyms, api: myApi }} say={setStatus} />,
@@ -952,11 +952,11 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
           <button onClick={() => { forgetBoard(DOC_NAME); location.href = location.pathname }} style={{ all: 'unset', cursor: 'pointer', padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,.22)' }}>쓰던 칠판으로</button></div>}   {/* 2026-10-28 칠판 지우기 — 열어 둔 창 */}
         {/* 예시 칠판 띠(2026-10-28 사용자 — 만져 보다 망가지면 한 번에 처음으로): 이 사람 사본만 되돌림(칠판·대화·예시 심볼), 되돌리면 고친 것이 사라져 한 번 물음 */}
         {example && !gone && !exHide && !phone && <div data-testid="example-band" style={{ position: 'absolute', top: 10, left: 'calc((100% - var(--mb-right-inset)) / 2)', transform: 'translateX(-50%)', zIndex: 19, display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px 6px 14px', borderRadius: 10,
-          background: C.card, border: `1px solid ${C.line}`, color: C.ink, font: "500 13px 'Pretendard', sans-serif", boxShadow: '0 4px 14px rgba(0,0,0,.12)', whiteSpace: 'nowrap' }}>
+          background: C.card, border: `1px solid ${C.line}`, color: C.ink, font: "400 13px 'Pretendard', sans-serif", boxShadow: '0 4px 14px rgba(0,0,0,.12)', whiteSpace: 'nowrap' }}>
           <span><b style={{ fontWeight: 700 }}>예시 칠판</b> — 마음껏 만져 보세요{narrow ? '' : '. 망가져도 한 번에 되돌려요'}</span>   {/* 띠 = 칠판 보이는 칸 가운데(떠 있는 대화창 빼고)·위 막대 팝업(20) 밑, 좁은 창은 짧게 — 속성 카드·공유 창·대화창 머리를 덮었음(2026-11-03 UX 검토) */}
           {/* 차례로 보기(2026-11-03) — 처음 온 사람은 전체 보기라 노트북에서 글씨가 안 읽힘 → 1번 프레임부터 발표처럼. 띠의 대표 행동이라 코랄은 이쪽(규칙 A1), 되돌리기는 회색 테두리(규칙 ⑧ 따로 보이는 단추는 그대로) */}
           <button data-testid="example-tour" onClick={() => ed.current?.startPresent(ed.current?.frameIds()[0])} title="1번 프레임부터 한 장씩 크게 보기 · → 다음 · ← 이전 · Esc 끝" style={{ all: 'unset', cursor: 'pointer', padding: '4px 10px', borderRadius: 6, background: C.accent, color: '#fff', fontWeight: 600 }}>▶ 발표로 보기</button>
-          <button data-testid="example-reset" onClick={() => setExAsk(true)} title="이 칠판·KAIROS 대화·예시 심볼을 처음 모습으로" style={{ all: 'unset', cursor: 'pointer', padding: '3px 10px', borderRadius: 6, border: `1px solid ${C.line}`, color: C.ink, fontWeight: 500 }}>↺ 처음 모습으로</button>
+          <button data-testid="example-reset" onClick={() => setExAsk(true)} title="이 칠판·KAIROS 대화·예시 심볼을 처음 모습으로" style={{ all: 'unset', cursor: 'pointer', padding: '3px 10px', borderRadius: 6, border: `1px solid ${C.line}`, color: C.ink, fontWeight: 400 }}>↺ 처음 모습으로</button>
           <button aria-label="띠 닫기" title="띠 닫기 — 칠판을 다시 열면 또 보여요" onClick={() => setExHide(true)} style={{ all: 'unset', cursor: 'pointer', padding: '0 6px', color: C.muted, fontSize: 15 }}>×</button></div>}
         {exAsk && <Confirm testid="example-ask" okTestid="example-reset-ok" danger={false} okLabel="되돌리기" title="예시 칠판을 처음 모습으로 되돌릴까요?" onOk={resetExample} onClose={() => setExAsk(false)}>
           이 칠판에서 고친 것과 KAIROS 대화가 처음 예시로 바뀌고, 지운 예시 심볼도 돌아와요. 다른 사람의 예시 칠판은 그대로예요.</Confirm>}   {/* 엔터 = 되돌리기(칠판 지우기 창과 같게), Esc·바깥 = 취소 */}
@@ -968,7 +968,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
           onMeet={() => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : ed.current?.meetStart())} />}
         <span data-testid="save-note" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{saveNote}</span>
         {status && <div data-testid="status-toast" role="status" title={status} style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 6, maxWidth: 'min(640px, max(240px, calc(100% - 480px)))', padding: '6px 14px', borderRadius: 99,
-          background: 'rgba(24,24,27,.86)', color: '#fff', font: "500 13px 'Pretendard', sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', pointerEvents: 'none', opacity: toastOn ? 1 : 0, transition: 'opacity .3s' }}>{status}</div>}
+          background: 'rgba(24,24,27,.86)', color: '#fff', font: "400 13px 'Pretendard', sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', pointerEvents: 'none', opacity: toastOn ? 1 : 0, transition: 'opacity .3s' }}>{status}</div>}
         {aiBusy && <div data-testid="ai-busy" role="status" style={{ position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 6, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 99,
           background: 'var(--mb-card)', border: '1px solid var(--mb-line)', boxShadow: '0 2px 8px rgba(0,0,0,.12)', font: "600 13px 'Pretendard', sans-serif", color: 'var(--mb-ink)', pointerEvents: 'none', whiteSpace: 'nowrap' }}><Spinner />{aiBusy}</div>}   {/* 정돈·정리 문서 중 — 칠판만 보고 있어도 도는 게 보이게(2026-10-20 사용자) */}
         {cmdOpen > 0 && !phone && <CommandBar key={cmdOpen} getCommands={commandList} onClose={() => setCmdOpen(0)} />}
@@ -977,7 +977,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
       {chatOpen && srvKnown && <ChatPanel ed={ed} selKey={selKey} floating={narrow} full={phone} onClose={() => setChatOpen(false)} request={chatAsk} focus={chatFocus} onBusy={setAiBusy} width={chatW} setWidth={setChatW} fromTop={!!example} />}
       </div>
       {phone && undoSnack && <div data-testid="phone-undo-snack" role="status" style={{ position: 'relative', zIndex: 6 }}>
-        <div style={{ position: 'absolute', left: 10, right: 10, bottom: 8, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 6px 6px 14px', borderRadius: 12, background: 'rgba(24,24,27,.92)', color: '#fff', font: "500 14px 'Pretendard', sans-serif", boxShadow: '0 4px 14px rgba(0,0,0,.25)' }}>
+        <div style={{ position: 'absolute', left: 10, right: 10, bottom: 8, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 6px 6px 14px', borderRadius: 12, background: 'rgba(24,24,27,.92)', color: '#fff', font: "400 14px 'Pretendard', sans-serif", boxShadow: '0 4px 14px rgba(0,0,0,.25)' }}>
           <span style={{ flex: 1 }}>칠판에 붙였어요</span>
           <button data-testid="phone-undo" onClick={() => { setUndoSnack(false); ed.current?.undo() }} style={{ all: 'unset', cursor: 'pointer', padding: '8px 12px', borderRadius: 8, color: '#ffb38f', fontWeight: 700 }}>되돌리기</button></div></div>}
       {phone && <div data-testid="phone-bar" style={{ touchAction: 'none', display: 'flex', gap: 8, padding: '8px 10px calc(8px + env(safe-area-inset-bottom))', background: C.bar, borderTop: `1px solid ${C.line}` }}>   {/* 휴대폰 아래 = 엄지로 누르는 큰 버튼 셋 */}

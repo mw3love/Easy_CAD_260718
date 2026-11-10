@@ -69,10 +69,10 @@ export function DeepAsk({ m, set, go, busy, css, slides = false, shape = null, c
     return <div key={q} data-q={q} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <div style={{ font: "800 15px/1.4 'Pretendard', sans-serif" }}>{q}{multi && <span style={{ ...css.meta, marginLeft: 6 }}>여럿</span>}</div>
       {all.map((x, i) => <button key={x} data-v={x} aria-pressed={isOn(x)} disabled={lock} onClick={() => pick(x)} className="mb-mi"
-        style={{ all: 'unset', cursor: lock ? 'default' : 'pointer', display: 'flex', gap: 8, alignItems: 'baseline', padding: '6px 9px', borderRadius: 7, font: "500 13.5px 'Pretendard', sans-serif", ...(isOn(x) ? { background: 'var(--mb-pick)', fontWeight: 700 } : null) }}>
+        style={{ all: 'unset', cursor: lock ? 'default' : 'pointer', display: 'flex', gap: 8, alignItems: 'baseline', padding: '6px 9px', borderRadius: 7, font: "400 13.5px 'Pretendard', sans-serif", ...(isOn(x) ? { background: 'var(--mb-pick)', fontWeight: 700 } : null) }}>
         <span style={{ ...css.meta, fontWeight: 700, width: 14, flex: 'none' }}>{i + 1}</span>{isOn(x) ? `✓ ${x}` : x}</button>)}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '2px 9px' }}><span style={{ ...css.meta, fontWeight: 700, width: 14, flex: 'none' }}>{all.length + 1}</span>
-        <input data-testid="ask-own" key={q} defaultValue={own} disabled={lock} placeholder="직접 적기…" aria-label={`${q} — 직접 적기`}
+        <input data-testid="ask-own" className="mb-field" key={q} defaultValue={own} disabled={lock} placeholder="직접 적기…" aria-label={`${q} — 직접 적기`}
           onChange={e => { const t = e.target.value.trim(); set(q, multi ? [...picks, ...(t ? [t] : [])] : t || AUTO) }}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); next() } }}
           style={{ flex: 1, minWidth: 0, font: "400 13px 'Pretendard', sans-serif", color: 'var(--mb-ink)', background: 'transparent', border: 0, borderBottom: '1px solid var(--mb-line)', padding: '3px 0', outline: 'none' }} /></div>

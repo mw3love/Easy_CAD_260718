@@ -14,14 +14,15 @@
     [data-folded]>:not(:first-child){display:none!important}   /* 접은 카드 = 제목 줄만(fold.jsx) */
     html,body,#root{margin:0;height:100%;overflow:hidden}
     /* 화면 색 — 어두운 쪽은 데스크톱 `_dark_palette`·`_CANVAS_BG["dark"]`와 같은 값 */
-    :root{--mb-icon-acc:#2563eb;color-scheme:light;--mb-bar:#f4f4f5;--mb-group:#e9e9ec;--mb-ink:#27272a;--mb-muted:#63636b;--mb-icon:#39434f;--mb-board:#ffffff;--mb-line:#e4e4e7;--mb-card:#ffffff;--mb-seg:#f4f4f5;--mb-onbg:#fbeee8;--mb-editbg:rgba(255,255,255,.9);--mb-accent:#da7756;--mb-pick:#e4e4e7;--mb-danger-ink:#b9342f;--mb-link:#1d4ed8}
+    :root{--mb-icon-acc:#2563eb;--mb-on:rgba(218,119,86,.22);color-scheme:light;--mb-bar:#f4f4f5;--mb-group:#e9e9ec;--mb-ink:#27272a;--mb-muted:#63636b;--mb-icon:#39434f;--mb-board:#ffffff;--mb-line:#e4e4e7;--mb-card:#ffffff;--mb-seg:#f4f4f5;--mb-onbg:#fbeee8;--mb-editbg:rgba(255,255,255,.9);--mb-accent:#da7756;--mb-pick:#e4e4e7;--mb-danger-ink:#b9342f;--mb-link:#1d4ed8}
     :root[data-theme=dark]{--mb-icon-acc:#7aa8ff;color-scheme:dark;--mb-bar:#171e26;--mb-group:#1d2632;--mb-ink:#ffffff;--mb-muted:#8a98a8;--mb-icon:#cdd8e3;--mb-board:#1e2731;--mb-line:#2a3542;--mb-card:#171e26;--mb-seg:#1d2632;--mb-onbg:#4a2c22;--mb-editbg:rgba(30,39,49,.92);--mb-pick:#2c3846;--mb-danger-ink:#f2766f;--mb-link:#6ea8ff}
     /* 2026-11-09 better-interface 점검: 라이트 보조 글 #71717a는 회색 칸·판 바탕에서 대비 4.5 미만(3.99·4.40) → #63636b. 빨간 글은 글 전용 색(--mb-danger-ink — 단추 바탕 #d44c47은 그대로) */
     /* 글쇠로 옮겨 다닐 때 초점 표시 — 단추들이 all:unset이라 브라우저 기본 테두리가 지워졌음(같은 점검). 마우스로 누를 땐 안 뜸(:focus-visible). data-own-ring = 확인 창처럼 제 테두리가 있는 단추 */
     button:not([data-own-ring]):focus-visible,[role=button]:focus-visible,[role=switch]:focus-visible,[role=separator]:focus-visible{outline:2px solid var(--mb-icon-acc)!important;outline-offset:2px}
     .mb-chat button:disabled{opacity:.45;cursor:default!important}   /* 대화창 못 누르는 단추 — 색·커서가 누를 수 있는 단추와 똑같았음(2026-11-09 점검) */
-    .mb-field:focus,div.mb-field:focus-within{border-color:var(--mb-icon-acc)!important}   /* 글 칸 초점 = 테두리 파랑(대화창 — 2026-11-09 점검, outline:none이라 아무 표시 없었음) */
+    .mb-field:focus,.mb-field:focus-within{border-color:var(--mb-icon-acc)!important}   /* 글 칸 초점 = 테두리 파랑(대화창 — 2026-11-09 점검, outline:none이라 아무 표시 없었음) */
     .mb-chat button.mb-send:disabled{opacity:1}   /* 입력부 ↑ — 못 누를 땐 회색 원 자체가 표시(더 흐리면 안 보임) */
+    label:has(>input[type=color]:focus-visible){outline:2px solid var(--mb-icon-acc);outline-offset:2px}   /* 색 창 「다른 색」 — 진짜 칸은 투명이라 둘레에 */
     .mb-row:focus-visible{outline-offset:-2px!important}   /* 목록 칸이 굴림 칸이라 바깥 테두리는 잘림 — 줄 안쪽에 */
     .mb-row:focus-within .mb-more{visibility:visible!important}   /* 줄 ⋯는 마우스 올림 때만(규칙 ④) + 글쇠로 그 줄에 왔을 때도 */
     .mb-hit::after{content:'';position:absolute;inset:var(--hit,-3px)}   /* 겉모양은 작게 두고 누르는 자리만 24px로(2026-11-09 점검 — ⋯ 18·▾ 22×20) */

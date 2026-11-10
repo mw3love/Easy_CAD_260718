@@ -314,7 +314,7 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
           return <button key={fr.id} data-testid="slide-thumb" onClick={() => { setI(j); setList(null) }} style={{ all: 'unset', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
             <svg width={200} height={120} viewBox={`${bb.x} ${bb.y} ${bb.w} ${bb.h}`} style={{ background: th['--mb-board'], borderRadius: 6, outline: j === list.pick ? '3px solid #da7756' : j === i ? '2px solid rgba(255,255,255,.7)' : '1px solid rgba(255,255,255,.25)', outlineOffset: 2 }}>
               <g style={{ '--z': Math.min(200 / bb.w, 120 / bb.h) }}>{order.map(([it, idx]) => <Item key={it._id} it={it} idx={idx} onBoard={onBoard[idx]} route={routes.get(idx)} labels="inline" dark={dark} />)}</g></svg>
-            <span style={{ color: j === i ? 'var(--mb-accent)' : '#fff', font: "500 12px 'Pretendard', sans-serif" }}>{j + 1}{fr.name ? ` · ${fr.name}` : ''}</span></button> })}
+            <span style={{ color: j === i ? 'var(--mb-accent)' : '#fff', font: "400 12px 'Pretendard', sans-serif" }}>{j + 1}{fr.name ? ` · ${fr.name}` : ''}</span></button> })}
       </div></div>}
     {zoom?.card && show && <button data-testid="big-close" title="원래 크기로 (영상 밖을 눌러도 됨)" onPointerDown={e => e.stopPropagation()} onClick={() => { setZoom(null); setBigHover(false) }} onPointerEnter={() => { setBigHover(true); barHover.current = true }} onPointerLeave={() => { setBigHover(false); barHover.current = false; wake() }}
       style={{ all: 'unset', cursor: 'pointer', position: 'absolute', right: Math.max(16, W - (zoom.right || W)), top: Math.max((BIG_BAND - 40) / 2, (zoom.top ?? BIG_BAND) - 52), height: 40, padding: '0 18px', display: 'flex', alignItems: 'center', gap: 6, borderRadius: 20,
@@ -323,7 +323,7 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
       style={{ all: 'unset', cursor: 'pointer', position: 'absolute', right: 16, top: 16, padding: '6px 12px', borderRadius: 16, background: 'rgba(24,24,27,.86)', color: '#fff', font: "600 12px 'Pretendard', sans-serif", boxShadow: '0 2px 10px rgba(0,0,0,.4)' }}>
       {Math.round(zoom.s * 100)}% · 원래대로</button>}
     {qr && <QrBig link={qr.link} view={qr.view} code={qr.view ? '' : boardLabel(DOC_NAME).code} title={boardLabel(DOC_NAME).title} onClose={() => setQr(null)} />}
-    {toast && <div style={{ position: 'absolute', left: '50%', top: 24, transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: 8, background: 'rgba(24,24,27,.9)', color: '#fff', font: "500 13px 'Pretendard', sans-serif", pointerEvents: 'none' }}>{toast}</div>}
+    {toast && <div style={{ position: 'absolute', left: '50%', top: 24, transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: 8, background: 'rgba(24,24,27,.9)', color: '#fff', font: "400 13px 'Pretendard', sans-serif", pointerEvents: 'none' }}>{toast}</div>}
     {trail.length > 1 && <svg data-testid="laser-trail" width={W} height={H} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>{trail.slice(1).map((q, j) => { const a = trail[j], f = Math.max(0, 1 - (Date.now() - q.t) / TRAIL_MS)
       return <line key={q.t + ':' + j} x1={a.x} y1={a.y} x2={q.x} y2={q.y} stroke="#ff2a2a" strokeWidth={3 + 5 * f} strokeLinecap="round" opacity={f} style={{ filter: 'drop-shadow(0 0 4px rgba(255,40,40,.8))' }} /> })}</svg>}
     {textAt && <input autoFocus placeholder="글 쓰고 Enter" onPointerDown={e => e.stopPropagation()} onKeyDown={e => { if (e.key === 'Enter') commitText(e.currentTarget.value); if (e.key === 'Escape') setTextAt(null) }} onBlur={e => commitText(e.currentTarget.value)}
@@ -332,12 +332,12 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
       return <div data-testid="present-menu" onPointerDown={e => e.stopPropagation()} onContextMenu={e => e.preventDefault()}
         style={{ position: 'absolute', left: Math.min(menu.x, W - 200), top: Math.min(menu.y, H - 330), minWidth: 180, padding: 4, borderRadius: 10, background: 'rgba(24,24,27,.94)', boxShadow: '0 6px 20px rgba(0,0,0,.5)', display: 'flex', flexDirection: 'column' }}>
         {items.map((m, j) => m === '-' ? <div key={j} style={{ height: 1, background: 'rgba(255,255,255,.15)', margin: '4px 6px' }} />
-          : <button key={j} onClick={m[1]} style={{ all: 'unset', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, color: m[2] ? 'var(--mb-accent)' : 'rgba(255,255,255,.9)', font: "500 13px 'Pretendard', sans-serif" }}
+          : <button key={j} onClick={m[1]} style={{ all: 'unset', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, color: m[2] ? 'var(--mb-accent)' : 'rgba(255,255,255,.9)', font: "400 13px 'Pretendard', sans-serif" }}
             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,.1)' }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>{m[0]}</button>)}
       </div> })()}
     {/* 아래 막대 — 마우스를 움직이면 나타남, 2초 가만히 있으면 숨음(도구를 쓰는 중엔 계속) */}
     {(links[i] || []).length > 1 && <div data-testid="present-fork" onPointerDown={e => e.stopPropagation()}   // 갈림길 = 갈 곳을 늘 보여 줌(누르면 그 장)
-      style={{ position: 'absolute', left: '50%', bottom: 76, transform: 'translateX(-50%)', zoom: barZoom, display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 10, background: 'rgba(24,24,27,.78)', color: '#fff', font: "500 13px 'Pretendard', sans-serif" }}>
+      style={{ position: 'absolute', left: '50%', bottom: 76, transform: 'translateX(-50%)', zoom: barZoom, display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 10, background: 'rgba(24,24,27,.78)', color: '#fff', font: "400 13px 'Pretendard', sans-serif" }}>
       <span style={{ opacity: 0.7 }}>갈림길</span>
       {links[i].map(o => <button key={o.j} data-j={o.j} onClick={() => { hist.current.push(i); setI(o.j) }} title={o.dir === 'down' ? '아래 판 (↓)' : '옆 장 (→)'}
         style={{ all: 'unset', cursor: 'pointer', padding: '3px 9px', borderRadius: 7, background: 'rgba(255,255,255,.14)', whiteSpace: 'nowrap' }}>{o.dir === 'down' ? '↓' : '→'} {frames[o.j]?.name || `${o.j + 1}장`}</button>)}
@@ -346,16 +346,16 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
       style={{ position: 'absolute', left: '50%', bottom: simple ? 'max(36px, calc(16px + env(safe-area-inset-bottom)))' : 16, transform: 'translateX(-50%)', ...(simple ? { maxWidth: 'calc(100vw - 16px)', boxSizing: 'border-box' } : {}), zoom: barZoom, display: 'flex', alignItems: 'center', gap: 2, padding: 4, borderRadius: 10, background: 'rgba(24,24,27,.86)',
         boxShadow: '0 4px 16px rgba(0,0,0,.4)', opacity: barShow || simple ? 1 : 0, pointerEvents: barShow || simple ? 'auto' : 'none', transition: 'opacity .25s' }}>
       <button title="이전 (←)" onClick={() => go(-1)} style={btn(false)}>◀</button>
-      <button title="장 목록 (Tab) — 눌러서 바로 가기 · 방향키 + Enter · 번호 + Enter" onClick={() => setList(l => (l ? null : { typed: '', pick: i }))} style={{ ...btn(!!list), font: "500 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap', ...(simple ? { flex: '0 1 auto', minWidth: 0, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: '44px' } : {}) }}>{i + 1} / {n}{f.name ? ` · ${f.name}` : ''} ▴</button>
+      <button title="장 목록 (Tab) — 눌러서 바로 가기 · 방향키 + Enter · 번호 + Enter" onClick={() => setList(l => (l ? null : { typed: '', pick: i }))} style={{ ...btn(!!list), font: "400 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap', ...(simple ? { flex: '0 1 auto', minWidth: 0, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: '44px' } : {}) }}>{i + 1} / {n}{f.name ? ` · ${f.name}` : ''} ▴</button>
       <button title="다음 (→ · 스페이스 · 클릭)" onClick={() => go(1)} style={btn(false)}>▶</button>
       {simple ? <button title="끝" onClick={onClose} style={btn(false)}>✕ 끝</button> : <>{sep}
       {TOOLS.map(([id, icon, name, key]) => <button key={id} title={`${name} (${key}) — 다시 누르면 끄기(끄면 클릭 = 다음 장)${id === 'arrow' ? ' · Shift = 45° · X = 방금 그린 화살표 뒤집기' : id === 'erase' ? ' · 판서만, 스치면 지움' : ''} · Ctrl+Z 되돌리기`}
-        onClick={() => setTool(t => (t === id ? null : id))} style={tbtn(tool === id)}>{icon}<span style={{ fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' }}>{name}</span></button>)}
+        onClick={() => setTool(t => (t === id ? null : id))} style={tbtn(tool === id)}>{icon}<span style={{ fontSize: 11, fontWeight: 400, whiteSpace: 'nowrap' }}>{name}</span></button>)}
       {sep}
       <button title="레이저 (` · L) — 켜 두면 커서가 빨간 점, 누른 채 끌면 빨간 자취 · 펜·네모 등을 켜면 그 도구 커서, 끄면 다시 레이저" onClick={() => setLaserOn(v => !v)} style={tbtn(laserOn)}>
-        {I(<><circle cx="9" cy="9" r="2.6" fill="currentColor" /><circle cx="9" cy="9" r="6" opacity=".5" /></>)}<span style={{ fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' }}>레이저</span></button>
+        {I(<><circle cx="9" cy="9" r="2.6" fill="currentColor" /><circle cx="9" cy="9" r="6" opacity=".5" /></>)}<span style={{ fontSize: 11, fontWeight: 400, whiteSpace: 'nowrap' }}>레이저</span></button>
       {hasNotes && <button data-testid="present-voice" aria-pressed={voice} title="읽어 주기 (N) — 장이 열리면 그 장 발표자 메모를 KAIROS 목소리로 읽어요(장마다 처음 한 번만 만들고 다음부턴 다시 씀)" onClick={() => setVoice(v => !v)} style={tbtn(voice)}>
-        {I(<><path d="M3 7h3l4-3v10l-4-3H3z" fill="currentColor" /><path d="M12.5 6.5a3.5 3.5 0 0 1 0 5M14.5 4.5a6.5 6.5 0 0 1 0 9" /></>)}<span style={{ fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' }}>읽어 주기</span></button>}
+        {I(<><path d="M3 7h3l4-3v10l-4-3H3z" fill="currentColor" /><path d="M12.5 6.5a3.5 3.5 0 0 1 0 5M14.5 4.5a6.5 6.5 0 0 1 0 9" /></>)}<span style={{ fontSize: 11, fontWeight: 400, whiteSpace: 'nowrap' }}>읽어 주기</span></button>}
       {sep}
       {COLORS.map(([c, name, code]) => { const cur = tool === 'hl' ? hlColor : penColor
         return <button key={c} title={`${name} (${code.slice(3)})${tool === 'hl' ? ' — 형광펜' : ' — 펜·네모·화살표·글자'}`} onClick={() => pickColor(c)}
@@ -367,7 +367,7 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
       {sep}
       {seg('넘길 때', [[true, '이동', '칠판 위를 0.4초 미끄러져 감'], [false, '바로', '곧장 바뀜']], glide, setGlide, 'M')}
       {seg('화면', [[false, '밝게', ''], [true, '어둡게', '']], dark, setDark, 'D')}
-      <button title="끝 (Esc)" onClick={onClose} style={tbtn(false)}>{I(<><path d="M5 5 L13 13" /><path d="M13 5 L5 13" /></>)}<span style={{ fontSize: 11, fontWeight: 500 }}>끝</span></button></>}
+      <button title="끝 (Esc)" onClick={onClose} style={tbtn(false)}>{I(<><path d="M5 5 L13 13" /><path d="M13 5 L5 13" /></>)}<span style={{ fontSize: 11, fontWeight: 400 }}>끝</span></button></>}
     </div>
   </div>
 }

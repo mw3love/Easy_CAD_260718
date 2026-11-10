@@ -169,13 +169,13 @@ export function DocView({ it, size, readOnly, threads = {}, onThread, onClose, o
           {msgs.map((m, i) => m.role === 'user'
             ? <div key={i} style={{ alignSelf: 'flex-end', maxWidth: '88%', background: 'rgba(218,119,86,.12)', borderRadius: 10, padding: '4px 9px', whiteSpace: 'pre-wrap' }}>{m.content}</div>
             : <div key={i} data-testid="block-a" style={{ alignSelf: 'flex-start', maxWidth: '96%', background: C.seg, borderRadius: 10, padding: '5px 9px' }}>{m.content}
-              {swaps.current[m.swap] && <div style={{ marginTop: 4 }}><button data-testid="block-flip" style={{ ...btn, font: `500 11.5px ${F}`, padding: '2px 7px', color: C.muted }} onClick={() => flip(m.swap)}>{swaps.current[m.swap].on ? '원래대로' : '바꾼 것으로'}</button></div>}
+              {swaps.current[m.swap] && <div style={{ marginTop: 4 }}><button data-testid="block-flip" style={{ ...btn, font: `400 11.5px ${F}`, padding: '2px 7px', color: C.muted }} onClick={() => flip(m.swap)}>{swaps.current[m.swap].on ? '원래대로' : '바꾼 것으로'}</button></div>}
               {m.model && <div style={{ font: `400 10.5px ${F}`, color: C.muted, marginTop: 2 }}>{m.model}{m.credits ? ` · 약 ${Math.round(m.credits * 10) / 10}크레딧` : ''}</div>}</div>)}
           {busy === pick.bid && <div data-testid="block-busy" style={{ display: 'flex', gap: 6, alignItems: 'center', color: C.muted, fontSize: 12.5 }}><Spinner />이 블록만 다시 쓰는 중…</div>}
           {err && <div data-testid="block-err" style={{ color: '#dc2626', fontSize: 12.5 }}>{err}</div>}
         </div>}
         <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', padding: '8px 10px 10px', borderTop: msgs.length ? `1px solid ${C.line}` : 0 }}>
-          <textarea data-testid="block-input" autoFocus rows={2} value={draft} placeholder={pick.live ? '움직이는 칸을 어떻게 고칠까요? 예: 느리게 · 값 하나 더' : '이 부분을 어떻게 할까요? 예: 쉬운 말로 · 그림 넣어 줘 · 움직이게'} onChange={e => setDraft(e.target.value)}
+          <textarea data-testid="block-input" className="mb-field" autoFocus rows={2} value={draft} placeholder={pick.live ? '움직이는 칸을 어떻게 고칠까요? 예: 느리게 · 값 하나 더' : '이 부분을 어떻게 할까요? 예: 쉬운 말로 · 그림 넣어 줘 · 움직이게'} onChange={e => setDraft(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }}
             style={{ flex: 1, minWidth: 0, resize: 'none', border: `1px solid ${C.line}`, borderRadius: 8, padding: '6px 8px', font: `400 13px/1.5 ${F}`, background: 'transparent', color: C.ink, outline: 'none' }} />
           <button data-testid="block-send" disabled={!!busy} onClick={send} style={{ all: 'unset', cursor: busy ? 'default' : 'pointer', height: 30, padding: '0 12px', display: 'flex', alignItems: 'center', borderRadius: 7, background: 'var(--mb-accent)', color: '#fff', font: `700 12.5px ${F}`, opacity: busy ? 0.6 : 1 }}>보내기</button>

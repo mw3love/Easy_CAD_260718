@@ -16,7 +16,7 @@ export const boardName = tag => `e2e_${tag}_${Date.now().toString(36)}${n++}`
 export const routeCall = b => !b.kind && !b.deep && !b.slides
 // ✨ AI 칩 창(2026-11-09) — 우클릭 메뉴가 열린 상태에서 「AI로 만들기」 → 단추(doc·slide·design·html) → 보내기
 export async function aiMake(page, kind, text = '') {
-  await page.getByRole('button', { name: /AI로 만들기/ }).click()
+  await page.getByRole('menuitem', { name: /AI로 만들기/ }).click()
   if (kind) await page.locator(`[data-testid="ai-kind"][data-kind="${kind}"]`).click()
   if (text) await page.getByTestId('ai-input').fill(text)
   await page.getByTestId('ai-send').click()

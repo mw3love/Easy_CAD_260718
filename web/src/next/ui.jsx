@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)' }
-export const ACCENT = 'var(--mb-accent)', DANGER = '#d44c47', HOVER = 'var(--mb-group)'
+export const ACCENT = 'var(--mb-accent)', DANGER = '#b9342f', HOVER = 'var(--mb-group)'
 const F = "'Pretendard', sans-serif"
 
 // 휴대폰 = 손가락 기기 + 짧은 변이 700 미만(2026-10-27 저녁 사용자 — 폭만 보면 PC 창을 반으로 나눴을 때도 고치기가 막혔음).
@@ -24,9 +24,9 @@ export const hoverBg = { onMouseEnter: e => { e.currentTarget.style.background =
 
 // 규칙 A1 — 코랄 채움 = 판마다 대표 행동 하나. 그 밖은 회색 테두리
 export const btnPrimary = { all: 'unset', cursor: 'pointer', padding: '3px 10px', borderRadius: 6, background: ACCENT, color: '#fff', font: `600 12px ${F}` }
-export const btnSecondary = { all: 'unset', cursor: 'pointer', padding: '3px 10px', borderRadius: 6, border: `1px solid ${C.line}`, color: C.ink, font: `500 12px ${F}` }
+export const btnSecondary = { all: 'unset', cursor: 'pointer', padding: '3px 10px', borderRadius: 6, border: `1px solid ${C.line}`, color: C.ink, font: `400 12px ${F}` }
 // 규칙 B1 — 머리줄 오른쪽 작은 단추(「＋ 새 폴더」·「＋ 새 레이어」)
-export const btnHead = { all: 'unset', cursor: 'pointer', padding: '1px 6px', borderRadius: 4, border: `1px solid ${C.line}`, color: C.ink, font: `500 11px ${F}`, whiteSpace: 'nowrap' }
+export const btnHead = { all: 'unset', cursor: 'pointer', padding: '1px 6px', borderRadius: 4, border: `1px solid ${C.line}`, color: C.ink, font: `400 11px ${F}`, whiteSpace: 'nowrap' }
 // 규칙 ④ — ⋯: 머리줄은 늘 보이고 테두리 없음, 줄은 마우스를 올렸을 때만(`show`)
 // 누르는 자리 24×24(WCAG 2.5.8) = 겉모양 18 그대로, 둘레 3px을 `.mb-hit`(index.html)이 넓힘(2026-11-09 점검)
 export const moreBtn = show => ({ all: 'unset', position: 'relative', '--hit': '-3px', cursor: 'pointer', flex: 'none', width: 18, textAlign: 'center', borderRadius: 4, color: C.muted, fontWeight: 700, lineHeight: '18px', visibility: show ? 'visible' : 'hidden' })

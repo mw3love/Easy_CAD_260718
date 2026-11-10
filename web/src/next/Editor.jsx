@@ -2744,7 +2744,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
             const ids = m.items.filter(it => it.layer_id === PEN_LAYER && inBox(it)).map(it => it._id); if (ids.length) commit(removeItems(m.items, ids), R.current.sel, '이 장 판서 지움') }}
           onErase={(p, tol, key) => { const m = R.current.model, hit = topHit(m.items.filter(it => it.layer_id === PEN_LAYER), p, tol, textBox); if (hit) commit(removeItems(m.items, [hit._id]), R.current.sel, '판서 지움', key) }} /> })()}
       {notesGone && present == null && <div data-testid="notes-gone" onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', bottom: 54, left: '50%', transform: 'translateX(-50%)', zIndex: 7, display: 'flex', alignItems: 'center', gap: 10, padding: '4px 6px 4px 14px', borderRadius: 99,
-        background: 'rgba(24,24,27,.9)', color: '#fff', font: "500 13px 'Pretendard', sans-serif", whiteSpace: 'nowrap', boxShadow: '0 2px 10px rgba(0,0,0,.25)' }}>
+        background: 'rgba(24,24,27,.9)', color: '#fff', font: "400 13px 'Pretendard', sans-serif", whiteSpace: 'nowrap', boxShadow: '0 2px 10px rgba(0,0,0,.25)' }}>
         발표 판서 {notesGone.items.length}개 지움
         <button onClick={keepNotes} style={{ all: 'unset', cursor: 'pointer', padding: '3px 12px', borderRadius: 99, background: 'var(--mb-accent)', color: '#fff', fontWeight: 600 }}>남기기</button></div>}
       {tagEdit && (() => { const it = byId.get(tagEdit); if (!it) return null; const b = frameTagBox(it), o = scr({ x: b.x, y: b.y })   // 프레임 이름표 바로 고치기(치는 대로 — 2026-10-18 사용자)

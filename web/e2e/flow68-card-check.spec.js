@@ -96,7 +96,7 @@ test('움직이는 장 — 잘리면 알리기만 하고, 단추를 눌러야 �
   await page.keyboard.press('Escape')
   const p = await toPage(page, fr.pos[0] + 6, fr.pos[1] + 6)
   await page.mouse.click(p.x, p.y); await page.mouse.click(p.x, p.y, { button: 'right' })
-  await page.getByRole('button', { name: /이 장 움직이게/ }).click()
+  await page.getByRole('menuitem', { name: /이 장 움직이게/ }).click()
   const fix = page.getByTestId('card-fix')
   await expect(fix).toBeVisible({ timeout: 30_000 })
   await expect(page.getByTestId('card-check')).toContainText('마지막에 잘림')

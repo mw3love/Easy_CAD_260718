@@ -378,7 +378,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, con
         {w.frameable && !w.embed && <Row label="배율"><div style={{ flex: 1, display: 'flex', gap: 2, background: C.seg, borderRadius: 8, padding: 2 }}>
           {WEB_ZOOMS.map(v => { const on = (w.zoom || 1) === v
             return <button key={v} title={v < 1 ? `페이지를 ${v * 100}%로 — 카드 크기는 그대로, 더 많이 보임` : '원래 크기'} onClick={() => set(() => ({ zoom: v < 1 ? v : undefined }), '웹 카드 배율')}
-              style={{ all: 'unset', cursor: 'pointer', flex: 1, textAlign: 'center', padding: '2px 0', borderRadius: 6, fontSize: 11, background: on ? 'rgba(218,119,86,.22)' : 'transparent', color: on ? 'var(--mb-accent)' : C.ink, fontWeight: on ? 600 : 400 }}>{v * 100}%</button> })}</div></Row>}
+              style={{ all: 'unset', cursor: 'pointer', flex: 1, textAlign: 'center', padding: '2px 0', borderRadius: 6, fontSize: 11, background: on ? 'var(--mb-on)' : 'transparent', color: on ? 'var(--mb-accent)' : C.ink, fontWeight: on ? 600 : 400 }}>{v * 100}%</button> })}</div></Row>}
         <div style={{ fontSize: 11, color: C.muted }}>{w.frameable ? (w.embed ? '누르면 바로 재생 · 위 띠를 끌면 이동' : '누르면 칸 안을 조작(바깥을 누르면 끝) · 위 띠를 끌면 이동') : '이 사이트는 칸 안에 넣기를 막아요 — 두 번 누르면 새 탭'}</div>
       </> })()}
     {items.length === 1 && items[0].type === 'legend' && (() => { const L = items[0], rows = L.rows || []   // 범례(2026-10-19) — 줄은 도면에서 저절로. 이름은 적고, 색·모양·굵기를 고르면 도면 속 그 선이 전부 바뀜
