@@ -4,6 +4,7 @@
 // 글쇠(2026-11-10 0단계 점검): 열면 첫 줄로 초점 · ↑↓ Home End · → 하위 목록 열기 · ← 닫기 · Esc = 닫고 연 단추로 · Tab = 닫힘. 화면보다 길면 칸 안에서 굴림(200% 확대에서 4줄이 화면 밖이었음)
 // — 그래서 하위 목록은 굴림 칸에 잘리지 않게 화면 기준(fixed)으로 띄움
 import { useEffect, useRef, useState } from 'react'
+import { keyLabel } from './keylabel.js'
 
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)' }
 const box = { position: 'absolute', zIndex: 30, pointerEvents: 'auto',minWidth: 190, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 4, boxShadow: 'var(--mb-shadow)', font: "400 12.5px 'Pretendard', sans-serif", color: C.ink,
@@ -59,7 +60,7 @@ export function ContextMenu({ at, entries, onClose, testid, touch = false }) {  
         <button role="menuitem" data-sub={en[3] ? i : undefined} aria-haspopup={en[3] ? 'menu' : undefined} aria-expanded={en[3] ? sub?.i === i : undefined}
           onClick={en[3] ? e => openSub(i, e.currentTarget.parentElement) : en[2]} onMouseEnter={hover} onMouseLeave={leave} style={{ ...row(false), ...(touch ? { minHeight: 44, padding: '0 14px 0 10px', borderRadius: 8 } : {}) }}>
           <span style={{ flex: 1, ...(touch ? { display: 'flex', alignItems: 'center', gap: 10, whiteSpace: 'nowrap' } : {}) }}>{en[0]}</span>
-          {en[1] && <span style={{ color: C.muted, fontSize: 11 }}>{en[1]}</span>}
+          {en[1] && <span style={{ color: C.muted, fontSize: 11 }}>{keyLabel(en[1])}</span>}
           {en[3] && <span aria-hidden="true" style={{ color: C.muted }}>▸</span>}
         </button>
         {en[3] && sub?.i === i && <div ref={fitSub} role="menu" aria-label={typeof en[0] === 'string' ? en[0] : undefined} style={{ ...box, position: 'fixed', zIndex: 71, left: sub.r.right + 2, top: sub.r.top - 4, maxHeight: 'calc(100vh - 8px)' }}>

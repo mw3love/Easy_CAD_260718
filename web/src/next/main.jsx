@@ -16,7 +16,8 @@ import { Layers, layersOf, layerIdOf } from './layers.jsx'
 import { Frames } from './frames.jsx'
 import { UNTITLED, boardFromText, boardLabel, boardTitle, forgetBoard, isMyBoard, knownTitle, moveBoard, myBoards, newBoardName, noteBoards, rememberBoard } from './myboards.js'
 import { FloatMenu } from './ctxmenu.jsx'
-import { Confirm, DANGER, HOVER, hoverBg, isPhone, menuBelow, moreBtn, usePhoneViewport } from './ui.jsx'
+import { Confirm, DANGER, HOVER, btnPrimary, btnSecondary, hoverBg, isPhone, menuBelow, moreBtn, usePhoneViewport } from './ui.jsx'
+import { keyLabel } from './keylabel.js'
 import { QrBig } from './qr.jsx'
 import { Minimap } from './minimap.jsx'
 import { ChatPanel, CHAT_W, chatClamp, Spinner } from './chat.jsx'
@@ -50,13 +51,13 @@ const SPECIAL_BG = on => (on ? '#c4613f' : 'var(--mb-accent)')
 // 자물쇠였다가 반복으로(2026-11-04 사용자 — 레이어 「잠금」과 뜻이 겹침), 켜짐은 버튼 바탕(코랄)이 보여 줌
 const KEEP_ICONS = { keep: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11V9.5A3.5 3.5 0 0 1 7.5 6H19"/><path d="M16 3l3 3-3 3"/><path d="M20 13v1.5a3.5 3.5 0 0 1-3.5 3.5H5"/><path d="M8 21l-3-3 3-3"/></svg>' }
 // 묶음 안 버튼(넓은 창) = 큰 버튼 + 작은 버튼 2단(2026-11-08 사용자 선택 — RustGIS 리본 비교 시안 D: 높이 54 그대로, 버튼 줄 약 400px 짧게). small = 자주 안 누르는 것 · 좁은 창은 예전처럼 아이콘 한 줄
-const Btn = ({ icon, label, onClick, onDown, title, on, disabled, special, small }) => { const narrow = useContext(Narrow); const inGroup = useContext(InGroup) && !narrow, sz = inGroup && small ? 15 : 18
+const Btn = ({ icon, label, onClick, onDown, title, on, disabled, special, small }) => { const narrow = useContext(Narrow); const grp = useContext(InGroup), inGroup = grp && !narrow, sz = inGroup && small ? 15 : 18
   const slot = !inGroup ? null : small ? { flexDirection: 'row', justifyContent: 'flex-start', height: 24, minWidth: 0, gap: 5, padding: '1px 6px', boxSizing: 'border-box' } : { gridRow: 'span 2', justifyContent: 'center', height: 48, minWidth: 44, padding: '2px 6px', boxSizing: 'border-box' }
   const bg = o => (special ? SPECIAL_BG(o) : o ? 'var(--mb-on)' : 'transparent'); return (
-  <button onClick={onClick} onPointerDown={onDown} title={title || label} aria-label={label} disabled={disabled} aria-pressed={on === undefined ? undefined : !!on} style={{ all: 'unset', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.35 : 1,
+  <button onClick={onClick} onPointerDown={onDown} title={keyLabel(title || label)} aria-label={label} disabled={disabled} aria-pressed={on === undefined ? undefined : !!on} style={{ all: 'unset', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.35 : 1,
     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: narrow ? '4px 4px' : '4px 8px', borderRadius: 6, minWidth: narrow ? 24 : 40, ...slot,   // 좁은 창 옆 여백 6 → 4px: 「칠판」 버튼이 늘며 960px에서 상태 글이 0px로 눌렸음(2026-10-19)
     background: bg(on), boxShadow: on && !special ? 'var(--mb-on-ring)' : 'none', font: special ? "700 11px 'Pretendard', sans-serif" : "400 11px 'Pretendard', sans-serif", color: special ? '#fff' : C.ink }}
-    onMouseEnter={e => { if (!disabled && (special || !on)) e.currentTarget.style.background = special ? SPECIAL_BG(true) : inGroup ? 'var(--mb-group-hover)' : HOVER }} onMouseLeave={e => { e.currentTarget.style.background = bg(on) }}>
+    onMouseEnter={e => { if (!disabled && (special || !on)) e.currentTarget.style.background = special ? SPECIAL_BG(true) : grp ? 'var(--mb-group-hover)' : HOVER }} onMouseLeave={e => { e.currentTarget.style.background = bg(on) }}>
     {(ICONS[icon] || KEEP_ICONS[icon]) ? <span aria-hidden className={special ? undefined : 'mb-btn-icon'} style={{ width: sz, height: sz, display: 'block', color: special ? '#fff' : 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: (ICONS[icon] || KEEP_ICONS[icon]).replace('<svg ', `<svg width="${sz}" height="${sz}" `) }} />
       : <span style={{ fontSize: 16, lineHeight: '18px' }}>{icon}</span>}{!narrow && <span style={{ whiteSpace: 'nowrap' }}>{label}</span>}   {/* 이름은 한 줄(「전체 화면」이 두 줄로 꺾여 위 막대가 높아졌음 — 2026-10-20) */}
   </button>
@@ -67,22 +68,28 @@ const Group = ({ children }) => { const narrow = useContext(Narrow); return <InG
 const SMALL_TOOLS = new Set(['line', 'polygon', 'pen', 'badge'])
 const TOOLS = [['select', 'select', '선택', '1'], ['arrow', 'sarrow', '화살표', '2'], ['text', 'text', '글자', '3'], ['line', 'line', '선', '4'], ['polygon', 'polygon', '다각형', '5'], ['pen', 'pen', '펜', '6'], ['badge', 'badge', '번호', '7']]   // [도구, 아이콘(icons.json), 이름, 글쇠]
 
+// 위 막대 작은 창(표·웹·내보내기)을 화면 안으로 — 오른쪽으로 넘치면 왼쪽으로 밀고, 아래가 모자라면 남은 높이까지만(안은 굴림). 2026-11-10 2단계(200% 확대·폭 320에서 단추가 화면 밖)
+const fitPop = el => { if (!el || el.dataset.fit) return; el.dataset.fit = '1'; el.style.maxWidth = 'calc(100vw - 16px)'; el.style.boxSizing = 'border-box'
+  const r = el.getBoundingClientRect(), W = window.innerWidth, H = window.innerHeight
+  if (r.right > W - 8) el.style.left = `${parseFloat(getComputedStyle(el).left) - (r.right - (W - 8))}px`
+  el.style.maxHeight = `${Math.max(160, H - r.top - 8)}px`; el.style.overflowY = el.querySelector('[data-pop-body]') ? 'hidden' : 'auto'
+  el.querySelector('input, button')?.closest('[role=dialog]') && !el.contains(document.activeElement) && el.querySelector('input:not([type=checkbox]), button')?.focus({ preventScroll: true }) }   // 열면 첫 칸으로
 // 표 넣기 — 행·열·첫 행 머리(데스크톱 `_TableSizeDialog`: 기본 3×3, 머리 켬, 행 1~100·열 1~50)
 function TableForm({ onInsert, onLegend, onClose }) {   // onLegend = 범례 넣기(2026-10-19 사용자: 표 기반, 자주 안 쓰니 우클릭 메뉴 대신 여기 — 10-27부터 선 우클릭에도)
   const [r, setR] = useState(3), [c, setC] = useState(3), [h, setH] = useState(true)
-  const num = (v, set, max) => <input type="number" min={1} max={max} value={v} onChange={e => set(Math.max(1, Math.min(max, +e.target.value || 1)))} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') onInsert(r, c, h); if (e.key === 'Escape') onClose() }}
-    style={{ width: 52, height: 24, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px' }} />
-  return <div style={{ position: 'absolute', top: 48, left: 0, zIndex: 20, width: 170, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, boxShadow: 'var(--mb-shadow)', display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif" }}>
+  const num = (v, set, max) => <input type="number" className="mb-field" min={1} max={max} value={v} onChange={e => set(Math.max(1, Math.min(max, +e.target.value || 1)))} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') onInsert(r, c, h); if (e.key === 'Escape') onClose() }}
+    style={{ width: 52, height: 24, boxSizing: 'border-box', border: '1px solid var(--mb-ctl)', borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px', font: 'inherit' }} />
+  return <div ref={fitPop} role="dialog" aria-label="표 넣기" style={{ position: 'absolute', top: 48, left: 0, zIndex: 20, width: 170, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, boxShadow: 'var(--mb-shadow)', display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif" }}>
     <div style={{ font: "700 13px 'Pretendard', sans-serif" }}>표 넣기</div>
     <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>행 {num(r, setR, 100)}</label>
     <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>열 {num(c, setC, 50)}</label>
     <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}><input type="checkbox" checked={h} onChange={e => setH(e.target.checked)} />첫 행을 머리로(굵게)</label>
     <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-      <button onClick={onClose} style={{ all: 'unset', cursor: 'pointer', padding: '4px 10px', borderRadius: 6, color: C.muted }}>취소</button>
-      <button onClick={() => onInsert(r, c, h)} style={{ all: 'unset', cursor: 'pointer', padding: '4px 12px', borderRadius: 6, background: 'var(--mb-accent)', color: '#fff', fontWeight: 600 }}>넣기</button>
+      <button onClick={onClose} style={btnSecondary}>취소</button>
+      <button onClick={() => onInsert(r, c, h)} style={btnPrimary}>넣기</button>
     </div>
     <div style={{ borderTop: `1px solid ${C.line}`, paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <button data-testid="insert-legend" onClick={onLegend} style={{ all: 'unset', cursor: 'pointer', textAlign: 'center', padding: '4px 0', borderRadius: 6, background: C.group, fontWeight: 600 }}>범례 넣기</button>
+      <button data-testid="insert-legend" onClick={onLegend} style={{ ...btnSecondary, textAlign: 'center' }}>범례 넣기</button>
       <span style={{ fontSize: 11, color: C.muted }}>도면의 선 종류를 표로 — 선이 바뀌면 저절로 따라가요</span>
     </div>
   </div>
@@ -92,14 +99,14 @@ function TableForm({ onInsert, onLegend, onClose }) {   // onLegend = 범례 넣
 function WebForm({ onInsert, onClose }) {
   const [u, setU] = useState('')
   const go = () => { if (u.trim()) onInsert(u.trim()) }
-  return <div style={{ position: 'absolute', top: 48, left: 0, zIndex: 20, width: 300, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, boxShadow: 'var(--mb-shadow)', display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif" }}>
+  return <div ref={fitPop} role="dialog" aria-label="웹 카드 넣기" style={{ position: 'absolute', top: 48, left: 0, zIndex: 20, width: 300, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, boxShadow: 'var(--mb-shadow)', display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif" }}>
     <div style={{ font: "700 13px 'Pretendard', sans-serif" }}>웹 카드 넣기</div>
-    <input autoFocus value={u} onChange={e => setU(e.target.value)} placeholder="https://… (유튜브·웹페이지 주소)" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') go(); if (e.key === 'Escape') onClose() }}
-      style={{ height: 26, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: 'inherit' }} />
+    <input autoFocus className="mb-field" aria-label="웹 주소" value={u} onChange={e => setU(e.target.value)} placeholder="https://… (유튜브·웹페이지 주소)" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') go(); if (e.key === 'Escape') onClose() }}
+      style={{ height: 26, boxSizing: 'border-box', border: '1px solid var(--mb-ctl)', borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: 'inherit' }} />
     <div style={{ fontSize: 11, color: C.muted }}>들어가는 사이트는 칸 안에 페이지, 막는 사이트는 제목·그림 카드 + 새 탭. 칠판에 주소를 Ctrl+V 해도 돼요</div>
     <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-      <button onClick={onClose} style={{ all: 'unset', cursor: 'pointer', padding: '4px 10px', borderRadius: 6, color: C.muted }}>취소</button>
-      <button onClick={go} style={{ all: 'unset', cursor: 'pointer', padding: '4px 12px', borderRadius: 6, background: 'var(--mb-accent)', color: '#fff', fontWeight: 600 }}>넣기</button>
+      <button onClick={onClose} style={btnSecondary}>취소</button>
+      <button onClick={go} style={btnPrimary}>넣기</button>
     </div>
   </div>
 }
@@ -432,16 +439,17 @@ function Dock({ tab, setTab, panes, mini, width, setWidth, help, onHelp }) {   /
 
 // 내보내기 — 형식·범위·용지·방향·여백·투명(데스크톱 `_PdfExportDialog`; 여백은 네 변 한 값으로)
 // 쪽 미리보기 그림 하나(svg → img). 프레임 쪽이면 끌어서 순서 바꾸기
-const Thumb = ({ pg, i, drag, onDrag, onDrop }) => <div draggable={!!pg.frameId} onDragStart={() => onDrag(i)} onDragOver={e => pg.frameId && e.preventDefault()} onDrop={e => { e.preventDefault(); onDrop(i) }}
-  data-testid="export-thumb" title={pg.frameId ? '끌어서 순서 바꾸기(프레임 순서가 바뀌어요)' : ''} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: pg.frameId ? 'grab' : 'default', opacity: drag === i ? 0.4 : 1 }}>
+const Thumb = ({ pg, i, drag, onDrag, onDrop, onMove }) => <div draggable={!!pg.frameId} tabIndex={pg.frameId ? 0 : undefined} role={pg.frameId ? 'button' : undefined} aria-label={pg.frameId ? `${i + 1}쪽${pg.name ? ' ' + pg.name : ''} — Alt+←→로 순서 바꾸기` : undefined}
+  onKeyDown={e => { if (pg.frameId && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); onMove(i, e.key === 'ArrowLeft' ? -1 : 1) } }} onDragStart={() => onDrag(i)} onDragOver={e => pg.frameId && e.preventDefault()} onDrop={e => { e.preventDefault(); onDrop(i) }}
+  data-testid="export-thumb" title={pg.frameId ? '끌거나 Alt+←→로 순서 바꾸기(프레임 순서가 바뀌어요)' : ''} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: pg.frameId ? 'grab' : 'default', opacity: drag === i ? 0.4 : 1 }}>
   <img alt="" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(pg.svg)}`} style={{ width: 118, height: Math.min(160, 118 * pg.ph / pg.pw), objectFit: 'contain', background: '#fff', border: `1px solid ${C.line}`, borderRadius: 4, boxShadow: '0 1px 3px rgba(0,0,0,.12)' }} />
   <span style={{ fontSize: 11, color: C.muted }}>{i + 1}쪽{pg.name ? ` · ${pg.name}` : ''}</span></div>
 
 function ExportForm({ hasSel, selFrames, frameCount, items, onExport, onPreview, onReorder, onClose }) {   // selFrames = 고른 프레임(옛 종이틀 포함) 수, frameCount = 칠판의 프레임 수
   const [f, setF] = useState('pdf'), [scope, setScope] = useState(hasSel ? 'sel' : 'all'),   // 범위 기본 = 고른 게 있으면 그것, 없으면 전체(2026-10-18 사용자와 정함)
   [page, setPage] = useState('A4'), [orient, setOrient] = useState(''), [margin, setMargin] = useState(10), [tr, setTr] = useState(false), [busy, setBusy] = useState(false)
-  const seg = (v, cur, set, label, dis) => <button key={v} disabled={dis} onClick={() => set(v)} style={{ all: 'unset', cursor: dis ? 'default' : 'pointer', opacity: dis ? 0.4 : 1, flex: 1, textAlign: 'center', padding: '3px 0', borderRadius: 6,
-    background: cur === v ? 'var(--mb-on)' : 'transparent', color: cur === v ? 'var(--mb-accent)' : C.ink, fontWeight: cur === v ? 600 : 400 }}>{label}</button>
+  const seg = (v, cur, set, label, dis) => <button key={v} disabled={dis} aria-pressed={cur === v} onClick={() => set(v)} style={{ all: 'unset', cursor: dis ? 'default' : 'pointer', opacity: dis ? 0.4 : 1, flex: 1, textAlign: 'center', padding: '3px 0', borderRadius: 6,
+    background: cur === v ? 'var(--mb-on)' : 'transparent', boxShadow: cur === v ? 'var(--mb-on-ring)' : 'none', color: C.ink, fontWeight: cur === v ? 600 : 400 }}>{label}</button>   // 고른 칸 = 위 막대 켜짐과 같게(2026-11-10 2단계 — 코랄 글자 대비 2.11)
   const row = (label, el) => <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ width: 34, color: C.muted }}>{label}</span><div style={{ flex: 1, display: 'flex', gap: 2, background: C.group, borderRadius: 8, padding: 2 }}>{el}</div></div>
   const [split, setSplit] = useState('frames')   // 고른 것에 종이틀이 있을 때 — 틀마다 쪽 / 고른 것 전체를 한 쪽에(2026-10-18 사용자)
   const [order, setOrder] = useState('rows')   // 종이틀 쪽 순서 — 줄 우선(위 줄 왼→오, 지그재그) / 칸 우선(왼 칸 위→아래)
@@ -454,9 +462,11 @@ function ExportForm({ hasSel, selFrames, frameCount, items, onExport, onPreview,
   useEffect(() => { let live = true; const t = setTimeout(async () => { const r = await onPreview({ ...opts, preview: true }); if (live) setPrev(r) }, 200); return () => { live = false; clearTimeout(t) } }, [key, items])   // eslint-disable-line react-hooks/exhaustive-deps
   const dropAt = to => { const pg = prev?.pages; if (drag == null || !pg || drag === to) return setDrag(null)
     const ids = pg.filter(q => q.frameId).map(q => q.frameId), [m] = ids.splice(drag, 1); ids.splice(to, 0, m); setDrag(null); onReorder(ids) }
+  const moveBy = (i, d) => { const pg = prev?.pages; if (!pg) return; const ids = pg.filter(q => q.frameId).map(q => q.frameId), j = i + d; if (j < 0 || j >= ids.length) return; [ids[i], ids[j]] = [ids[j], ids[i]]; onReorder(ids) }   // 끌기 대신 글쇠(2026-11-10 2단계)
   const sel = scope === 'sel'
-  return <div onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }} style={{ position: 'absolute', top: 48, left: 0, zIndex: 20, width: 280, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, boxShadow: 'var(--mb-shadow)', display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif" }}>
+  return <div ref={fitPop} role="dialog" aria-label="내보내기" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }} style={{ position: 'absolute', top: 48, left: 0, zIndex: 20, width: 280, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, boxShadow: 'var(--mb-shadow)', display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif" }}>
     <div style={{ font: "700 13px 'Pretendard', sans-serif" }}>내보내기</div>
+    <div data-pop-body style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: 8, margin: '0 -4px', padding: '0 4px' }}>   {/* 좁은 화면 = 가운데만 굴림, 머리·단추 줄은 늘 보임(2026-11-10 2단계 사용자 고름) */}
     {row('형식', [seg('pdf', f, setF, 'PDF'), seg('png', f, setF, 'PNG'), seg('svg', f, setF, 'SVG'), seg('html', f, setF, 'HTML')])}
     {row('범위', [seg('all', scope, setScope, '전체'), seg('sel', scope, setScope, '고른 것', !hasSel), seg('frames', scope, setScope, `프레임만${frameCount ? ' ' + frameCount : ''}`, !frameCount)])}
     {sel && selFrames > 0 && row('쪽', [seg('frames', split, setSplit, '프레임마다'), seg('one', split, setSplit, '고른 것 한 쪽에')])}
@@ -466,19 +476,20 @@ function ExportForm({ hasSel, selFrames, frameCount, items, onExport, onPreview,
     {pg === 'frame' ? <div data-testid="export-frame-page" style={{ fontSize: 11, color: 'var(--mb-accent)' }}>쪽마다 그 프레임 크기 그대로 — 여백 없이(그림 장·발표 장 책으로)</div> : <>
     {row('방향', [seg('', orient, setOrient, '자동'), seg('landscape', orient, setOrient, '가로'), seg('portrait', orient, setOrient, '세로')])}
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ width: 34, color: C.muted }}>여백</span>
-      <input type="number" min={0} max={50} value={margin} onChange={e => setMargin(Math.max(0, Math.min(50, +e.target.value || 0)))} style={{ width: 56, height: 24, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px' }} />mm</div></>}
+      <input type="number" className="mb-field" aria-label="여백(mm)" min={0} max={50} value={margin} onChange={e => setMargin(Math.max(0, Math.min(50, +e.target.value || 0)))} style={{ width: 56, height: 24, boxSizing: 'border-box', border: '1px solid var(--mb-ctl)', borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px', font: 'inherit' }} />mm</div></>}
     {f !== 'pdf' && <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}><input type="checkbox" checked={tr} onChange={e => setTr(e.target.checked)} />투명 배경(다른 문서에 얹어 쓰기)</label>}
     <div data-testid="export-preview" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <span style={{ color: C.muted }}>미리보기{prev?.pages ? ` · ${prev.pages.length}쪽` : ''}{prev?.pages?.filter(q => q.frameId).length > 1 ? ' — 끌어서 순서' : ''}</span>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 280, overflowY: 'auto', padding: 6, background: C.group, borderRadius: 8, minHeight: 40 }}>
         {prev?.error ? <span style={{ color: C.muted }}>{prev.error}</span> : !prev?.pages ? <div data-testid="export-skeleton" className="mb-pulse" style={{ display: 'flex', gap: 8 }}><style>{'@keyframes mb-pulse{50%{opacity:.45}}.mb-pulse{animation:mb-pulse 1.6s ease-in-out infinite}'}</style>
             {[0, 1, 2].map(i => <div key={i} style={{ width: 118, height: 160, borderRadius: 4, background: 'rgba(128,128,128,.14)' }} />)}</div>
-          : prev.pages.map((pg, i) => <Thumb key={i} pg={pg} i={i} drag={drag} onDrag={setDrag} onDrop={dropAt} />)}
+          : prev.pages.map((pg, i) => <Thumb key={i} pg={pg} i={i} drag={drag} onDrag={setDrag} onDrop={dropAt} onMove={moveBy} />)}
       </div></div>
     <div style={{ fontSize: 11, color: C.muted }}>{f === 'pdf' ? '인쇄 창이 뜨면 「PDF로 저장」을 고르세요' : f === 'png' ? '200dpi 그림으로 내려받아요' : f === 'html' ? '파일 하나 — 앱·서버·인터넷 없이 열림. 전체 그림(확대·이동) + 프레임 = 발표 장(방송 예비본)' : '선·글이 그대로인 그림 파일'}</div>
+    </div>
     <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-      <button onClick={onClose} style={{ all: 'unset', cursor: 'pointer', padding: '4px 10px', borderRadius: 6, color: C.muted }}>닫기</button>
-      <button disabled={busy} onClick={go} style={{ all: 'unset', cursor: 'pointer', padding: '4px 12px', borderRadius: 6, background: 'var(--mb-accent)', color: '#fff', fontWeight: 600, opacity: busy ? 0.6 : 1 }}>{busy ? '만드는 중…' : '내보내기'}</button>
+      <button onClick={onClose} style={btnSecondary}>닫기</button>
+      <button disabled={busy} onClick={go} style={{ ...btnPrimary, opacity: busy ? 0.6 : 1 }}>{busy ? '만드는 중…' : '내보내기'}</button>
     </div>
   </div>
 }
@@ -783,7 +794,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
     if (!anyPop) return
     const close = (keep = '') => { if (keep !== 'export') setExportOpen(false); if (keep !== 'table') setTableOpen(false); if (keep !== 'web') setWebOpen(false); if (keep !== 'share') setShareOpen(false) }
     const down = e => close(e.target.closest?.('[data-pop]')?.dataset.pop || '')   // 그 팝업(버튼 포함) 안이면 그것만 남김 — 다른 팝업 버튼 = 앞 것 닫고 새로 열기
-    const key = e => { if (e.key === 'Escape' && !document.querySelector('[data-qr-big]')) { e.stopImmediatePropagation(); close() } }   // 칠판의 Esc(고른 것 풀기)보다 먼저 — 팝업만 닫음. 큰 QR이 떠 있으면 Esc는 QR만(qr.jsx)
+    const key = e => { if (e.key === 'Escape' && !document.querySelector('[data-qr-big]') && !document.querySelector('dialog[open]')) { e.stopImmediatePropagation(); const w = exportOpen ? 'export' : tableOpen ? 'table' : webOpen ? 'web' : 'share'; close(); document.querySelector(`[data-pop="${w}"] button`)?.focus({ preventScroll: true }) } }   // 닫으면 연 단추로(2026-11-10 2단계 — 초점이 사라졌음)   // 칠판의 Esc(고른 것 풀기)보다 먼저 — 팝업만 닫음. 큰 QR이 떠 있으면 Esc는 QR만(qr.jsx)
     window.addEventListener('pointerdown', down, true); window.addEventListener('keydown', key, true)
     return () => { window.removeEventListener('pointerdown', down, true); window.removeEventListener('keydown', key, true) }
   }, [anyPop])
@@ -793,12 +804,15 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
   useEffect(() => {
     const on = e => {
       if (document.querySelector('[data-testid=presenter]')) return
-      if (e.key === 'F1') { e.preventDefault(); setHelpOpen(o => !o); return }
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return
       const k = { Digit0: 'zoom100', KeyS: 'save', KeyP: 'export', KeyF: 'find' }[e.code]; if (!k || (k === 'save' && e.shiftKey)) return
       e.preventDefault(); if (k === 'export') setExportOpen(true); else if (k === 'find') setFindOpen(n => n + 1); else keyAct.current[k]()
     }
     window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on)
+  }, [])
+  useEffect(() => {   // F1 = 도움말 — 잡기 단계에서(입력 칸 안에서도 열리게, Ctrl+K와 같게 — 2026-11-10 2단계: 닫으면 초점이 도형 검색 칸으로 돌아오자 F1이 안 먹었음)
+    const on = e => { if (e.key !== 'F1' || document.querySelector('[data-testid=presenter]')) return; e.preventDefault(); setHelpOpen(o => !o) }
+    window.addEventListener('keydown', on, true); return () => window.removeEventListener('keydown', on, true)
   }, [])
 
   const toggleCmd = () => { setExportOpen(false); setTableOpen(false); setWebOpen(false); setShareOpen(false); setHelpOpen(false); setFindOpen(0); setCmdOpen(n => (n ? 0 : Date.now())) }
@@ -884,9 +898,9 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
           style={{ flexShrink: 0, marginLeft: -4, padding: '2px 8px', borderRadius: 10, background: C.group, color: C.muted, font: "600 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap' }}>{team}</span>}
         <Group>
  {/* 칠판·열기·내려받기는 왼쪽 판 「칠판」 칸으로(2026-10-23 사용자) */}
-          <Btn small icon="save" label="저장" onClick={server ? saveServer : saveFile} title={server ? `서버 「${DOC_NAME}」에 저장` : '.ecad로 내려받기'} />
+          <Btn small icon="save" label="저장" onClick={server ? saveServer : saveFile} title={server ? `서버 「${DOC_NAME}」에 저장 (Ctrl+S)` : '.ecad로 내려받기 (Ctrl+S)'} />
           <div data-pop="export" style={{ position: 'relative' }}>
-            <Btn small icon="pdf" label="내보내기" on={exportOpen} onClick={() => setExportOpen(o => !o)} title="PDF·PNG·SVG로 내보내기 — 전체 또는 고른 것" />
+            <Btn small icon="pdf" label="내보내기" on={exportOpen} onClick={() => setExportOpen(o => !o)} title="PDF·PNG·SVG·HTML로 내보내기 — 전체 또는 고른 것 (Ctrl+P)" />
             {exportOpen && <ExportForm hasSel={!!ed.current?.getSel().length} selFrames={ed.current?.selFrames() || 0} frameCount={model.items.filter(it => it.type === 'frame' || (it.type === 'titleblock' && it.plain)).length} items={model.items}
             onPreview={o => ed.current?.exportPages(o) ?? Promise.resolve({ error: '' })} onReorder={ids => ed.current?.reorderFrames(ids)} onClose={() => setExportOpen(false)} onExport={async o => { const ok = await ed.current?.exportDoc({ ...o, name: DOC_NAME || 'magic-board' }); if (ok) setExportOpen(false) }} />}
           </div>

@@ -39,8 +39,8 @@ export function wordHits(items, q) {
 
 export function FindBar({ items, server, onMarks, onGo, onClose }) {
   const [q, setQ] = useState(''), [sem, setSem] = useState(null), [busy, setBusy] = useState(false), [err, setErr] = useState(''), [at, setAt] = useState(0)
-  const inp = useRef(null), ask = useRef(0)
-  useEffect(() => { inp.current?.focus() }, [])
+  const inp = useRef(null), ask = useRef(0), [back] = useState(() => document.activeElement)
+  useEffect(() => { inp.current?.focus(); return () => { if (back?.isConnected && !document.activeElement?.closest?.('input, textarea, [contenteditable=true]')) back.focus({ preventScroll: true }) } }, [])   // 닫으면 연 자리로(2026-11-10 2단계)
   const words = q.trim() ? wordHits(items, q.trim()) : []
   // 뜻 결과가 오면 그 차례(낱말이 다 든 것은 서버가 점수를 더 줌) + 뜻 결과에 없는 낱말 결과는 뒤에. 지운 도형은 뺌
   const live = new Set(items.map(it => it._id)), wordSet = new Set(words.map(r => r.uid))
@@ -54,7 +54,7 @@ export function FindBar({ items, server, onMarks, onGo, onClose }) {
         const r = await fetch(`/api/find/${encodeURIComponent(DOC_NAME)}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() }, body: JSON.stringify({ q: t, k: 8 }) })
         const d = await r.json().catch(() => ({}))
         if (my !== ask.current) return
-        if (!r.ok || d.error) setErr(d.error || `서버 응답 ${r.status}`); else setSem(d.results || [])
+        if (!r.ok || d.error) setErr('뜻으로 찾기를 못 했어요 — 낱말로 찾은 것만 보여요. 다시 치면 다시 찾아요'); else setSem(d.results || [])   // 서버 원문·번호 대신 고칠 길(2026-11-10 2단계)
       } catch { if (my === ask.current) setErr('서버 연결 안 됨 — 낱말 찾기만') } finally { if (my === ask.current) setBusy(false) }
     }, 400)
     return () => clearTimeout(h)
@@ -67,22 +67,22 @@ export function FindBar({ items, server, onMarks, onGo, onClose }) {
     background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, boxShadow: 'var(--mb-shadow)', font: "400 12.5px 'Pretendard', sans-serif", color: C.ink, overflow: 'hidden' }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderBottom: rows.length || q ? `1px solid ${C.line}` : 'none' }}>
       <span style={{ color: C.muted }}>🔍</span>
-      <input ref={inp} value={q} onChange={e => setQ(e.target.value)} placeholder="칠판에서 찾기 — 낱말이 달라도 뜻으로 (↑↓ · Enter · Esc)"
+      <input ref={inp} role="combobox" aria-label="칠판에서 찾기" aria-expanded={rows.length > 0} aria-controls="find-list" aria-activedescendant={rows.length ? `find-${at}` : undefined} aria-autocomplete="list" value={q} onChange={e => setQ(e.target.value)} placeholder="칠판에서 찾기 — 낱말이 달라도 뜻으로"
         onKeyDown={e => { e.stopPropagation()
           if (e.key === 'Escape') { e.preventDefault(); onClose() }
           else if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); go(at) }
           else if (e.key === 'ArrowDown') { e.preventDefault(); go(Math.min(rows.length - 1, at + 1)) }
           else if (e.key === 'ArrowUp') { e.preventDefault(); go(Math.max(0, at - 1)) } }}
         style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: C.ink, font: "400 13.5px 'Pretendard', sans-serif" }} />
-      <span style={{ color: C.muted, fontSize: 11, whiteSpace: 'nowrap' }}>{busy ? '뜻으로 찾는 중…' : q.trim() ? `${rows.length}개` : ''}</span>
+      <span role="status" style={{ color: C.muted, fontSize: 11, whiteSpace: 'nowrap' }}>{busy ? '뜻으로 찾는 중…' : q.trim() ? `${rows.length}개` : ''}</span>
     </div>
-    {err && <div style={{ padding: '4px 12px', color: '#d97706', fontSize: 11 }}>{err}</div>}
-    {rows.length > 0 && <div style={{ maxHeight: 300, overflowY: 'auto', padding: 4 }}>
-      {rows.map((r, i) => <button key={r.uid} data-testid="find-row" onClick={() => go(i)} onMouseEnter={() => setAt(i)}
-        style={{ all: 'unset', boxSizing: 'border-box', width: '100%', display: 'flex', gap: 8, alignItems: 'baseline', padding: '5px 8px', borderRadius: 6, cursor: 'pointer', background: i === at ? 'rgba(245,158,11,.14)' : 'transparent' }}>
+    {err && <div role="alert" style={{ padding: '4px 12px', color: 'var(--mb-danger-ink)', fontSize: 11 }}>{err}</div>}
+    {rows.length > 0 && <div id="find-list" role="listbox" aria-label="찾은 것" style={{ maxHeight: 'min(300px, calc(100vh - 140px))', overflowY: 'auto', overscrollBehavior: 'contain', padding: 4 }}>
+      {rows.map((r, i) => <button key={r.uid} id={`find-${i}`} role="option" aria-selected={i === at} tabIndex={-1} data-testid="find-row" onClick={() => go(i)} onMouseEnter={() => setAt(i)}
+        style={{ all: 'unset', boxSizing: 'border-box', width: '100%', display: 'flex', gap: 8, alignItems: 'baseline', padding: '5px 8px', borderRadius: 6, cursor: 'pointer', background: i === at ? 'rgba(245,158,11,.14)' : 'transparent', boxShadow: i === at ? 'inset 0 0 0 1px var(--mb-ctl)' : 'none' }}>
         <span style={{ flex: 'none', fontSize: 11, color: C.muted, width: 46 }}>{r.kind}</span>
         <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.text.split('\n')[0]}</span>
-        <span style={{ flex: 'none', fontSize: 10.5, color: r.word ? '#2f80ed' : '#d97706' }} title={r.word ? '친 낱말이 들어 있음' : '낱말은 달라도 뜻이 가까움'}>{r.word ? '낱말' : '뜻'}</span>
+        <span style={{ flex: 'none', fontSize: 10.5, color: r.word ? 'var(--mb-link)' : 'light-dark(#a15c07, #f0a640)' }} title={r.word ? '친 낱말이 들어 있음' : '낱말은 달라도 뜻이 가까움'}>{r.word ? '낱말' : '뜻'}</span>
       </button>)}
     </div>}
     {q.trim() && !rows.length && !busy && <div style={{ padding: '8px 12px', color: C.muted }}>{server ? '칠판에서 못 찾았어요' : '못 찾았어요 — 서버가 없으면 낱말 찾기만 돼요'}</div>}
