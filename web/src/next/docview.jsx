@@ -136,7 +136,7 @@ export function DocView({ it, size, readOnly, threads = {}, onThread, onClose, o
   return <div data-testid="doc-view" onPointerDown={e => { e.stopPropagation(); if (edit.current) fin.current(true) }} onWheel={e => e.stopPropagation()} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') esc.current() }}
     style={{ position: 'absolute', inset: 0, zIndex: 9, background: 'rgba(24,24,27,.42)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 12 }}
     onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-    <div role="dialog" aria-label={`문서 — ${it.title || ''}`} style={{ position: 'relative', width: winW, height: winH, background: C.card, color: C.ink, borderRadius: 12, boxShadow: '0 8px 28px rgba(0,0,0,.28)', display: 'flex', flexDirection: 'column', overflow: 'hidden', font: `400 13px/1.5 ${F}` }}>
+    <div role="dialog" aria-label={`문서 — ${it.title || ''}`} style={{ position: 'relative', width: winW, height: winH, background: C.card, color: C.ink, borderRadius: 12, boxShadow: 'var(--mb-shadow-lg)', display: 'flex', flexDirection: 'column', overflow: 'hidden', font: `400 13px/1.5 ${F}` }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px 9px 14px', borderBottom: `1px solid ${C.line}`, flex: 'none' }}>
         <b style={{ font: `700 14px ${F}`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📄 {it.title || '문서'}</b>
         <span data-testid="doc-hint" style={{ flex: 1, minWidth: 0, color: editBid ? 'var(--mb-accent)' : C.muted, font: `400 12px ${F}`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right', paddingRight: 4 }}>
@@ -160,7 +160,7 @@ export function DocView({ it, size, readOnly, threads = {}, onThread, onClose, o
           </div>)}
         </div>
       </div>
-      {pick && <div data-testid="block-bubble" data-block={pick.bid} style={{ position: 'absolute', left: bx, top: by, width: BUB_W, zIndex: 2, background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, boxShadow: '0 6px 20px rgba(0,0,0,.2)', display: 'flex', flexDirection: 'column', maxHeight: 360 }}>
+      {pick && <div data-testid="block-bubble" data-block={pick.bid} style={{ position: 'absolute', left: bx, top: by, width: BUB_W, zIndex: 2, background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, boxShadow: 'var(--mb-shadow)', display: 'flex', flexDirection: 'column', maxHeight: 360 }}>
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 8px 7px 12px', borderBottom: `1px solid ${C.line}` }}>
           <b style={{ fontSize: 13 }}>{pick.bid} · {KIND[pick.kind] || '블록'}</b>
           <button title="닫기(Esc)" onClick={() => setPick(null)} style={{ all: 'unset', cursor: 'pointer', marginLeft: 'auto', color: C.muted, padding: '0 6px', fontSize: 14 }}>✕</button>

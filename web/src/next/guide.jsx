@@ -26,7 +26,7 @@ export function EmptyGuide({ onAsk, onDeep, onMeet, onExample, phone = false }) 
     ...(onExample ? [['frame', '예시 칠판 보기', '기능마다 KAIROS로 진짜 만든 예시 — 새 칠판으로 열려서 마음껏 고쳐 봐도 돼요.', onExample]] : [])]   // 2026-11-04 — 처음 방문이 예시 사본 대신 빈 칠판이 되며
   return <div ref={box} data-testid="empty-guide" style={{ position: 'absolute', zIndex: tight ? 6 : 5, top: '50%', left: tight ? '50%' : 'calc((100% - var(--mb-right-inset, 0px)) / 2)', transform: 'translate(-50%, -50%)',
     width: 'min(420px, calc(100% - 32px))', boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: '16px 18px 12px',
-    boxShadow: '0 8px 24px rgba(0,0,0,.12)', font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
+    boxShadow: 'var(--mb-shadow)', font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
     <div style={{ display: 'flex', alignItems: 'center', marginBottom: 2 }}>
       <span style={{ font: "700 17px 'Pretendard', sans-serif", flex: 1 }}>무엇부터 해 볼까요?</span>
       <button data-testid="empty-guide-close" onClick={close} title="이 안내 다시 보지 않기(이 브라우저)" className="mb-hit" style={{ position: 'relative', '--hit': '0 -4px', border: 'none', background: 'none', color: C.muted, cursor: 'pointer', fontSize: 15, padding: 2 }}>✕</button>

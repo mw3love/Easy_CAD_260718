@@ -28,11 +28,11 @@ export function FormatBar({ ed, onTurn }) {   // onTurn = 줄 종류 바꾸기 �
   const left = Math.max(8, Math.min(window.innerWidth - W - 8, Math.min(a.left, b.left)))
   const st = edState(ed)
   const colorBtnEl = <span ref={colorBtn} data-ppop="fmtcolor" style={{ display: 'flex' }}><button title="글자색" aria-label="글자색" aria-pressed={pal || undefined} data-testid="fmt-글자색" onClick={() => setPal(p => !p)}
-    style={{ all: 'unset', cursor: 'pointer', minWidth: 24, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 5, fontSize: 13, color: C.ink, background: pal ? 'var(--mb-on)' : 'transparent' }}>
+    style={{ all: 'unset', cursor: 'pointer', minWidth: 24, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 5, fontSize: 13, color: C.ink, background: pal ? 'var(--mb-on)' : 'transparent', boxShadow: pal ? 'var(--mb-on-ring)' : 'none' }}>
     <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '13px' }}>A<span style={{ width: 12, height: 3, borderRadius: 1, background: st.color || C.ink }} /></span></button>
     {pal && <ColorPop anchor={colorBtn} id="fmtcolor" align="left" keepEdit value={st.color || undefined} onPick={c => edRun(ed, ch => (c ? ch.setColor(c) : ch.unsetColor()))} onReset={() => edRun(ed, ch => ch.unsetColor())} />}</span>
   return createPortal(<div data-keep-edit data-testid="format-bar" onMouseDown={e => { if (e.target.tagName !== 'INPUT') e.preventDefault() }} onPointerDown={e => e.stopPropagation()}
-    style={{ position: 'fixed', left, top, zIndex: 60, display: 'flex', alignItems: 'center', gap: 2, padding: '4px 6px', background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, boxShadow: '0 4px 14px rgba(0,0,0,.18)', font: "400 12px 'Pretendard', sans-serif", userSelect: 'none' }}>
+    style={{ position: 'fixed', left, top, zIndex: 60, display: 'flex', alignItems: 'center', gap: 2, padding: '4px 6px', background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, boxShadow: 'var(--mb-shadow)', font: "400 12px 'Pretendard', sans-serif", userSelect: 'none' }}>
     {onTurn && <><button title="줄 종류 — 제목·목록·할 일·코드…" data-testid="fmt-줄" onClick={onTurn} style={{ all: 'unset', cursor: 'pointer', height: 26, display: 'flex', alignItems: 'center', borderRadius: 5, fontSize: 12, padding: '0 4px', color: C.ink }}>줄 ▾</button>
       <span style={{ width: 1, height: 18, background: C.line, margin: '0 2px' }} /></>}
     <FmtButtons st={st} act={k => edAct(ed, k)} color={colorBtnEl} />

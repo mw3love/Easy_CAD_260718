@@ -13,7 +13,7 @@ export function HelpCard({ onClose }) {
     return () => { window.removeEventListener('pointerdown', down, true); window.removeEventListener('keydown', key, true) }
   }, [onClose])
   return <div ref={ref} data-testid="help-card" role="dialog" aria-label="글쇠 도움말" style={{ position: 'absolute', zIndex: 40, left: '50%', top: 56, transform: 'translateX(-50%)', width: 'min(560px, calc(100% - 32px))',
-    maxHeight: 'calc(100% - 80px)', overflowY: 'auto', boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: '14px 16px', boxShadow: '0 8px 24px rgba(0,0,0,.22)',
+    maxHeight: 'calc(100% - 80px)', overflowY: 'auto', boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: '14px 16px', boxShadow: 'var(--mb-shadow)',
     font: "400 12.5px 'Pretendard', sans-serif", color: C.ink }}>
     <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
       <span style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1 }}>글쇠 도움말</span>

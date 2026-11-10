@@ -24,9 +24,9 @@ export const hoverBg = { onMouseEnter: e => { e.currentTarget.style.background =
 
 // 규칙 A1 — 코랄 채움 = 판마다 대표 행동 하나. 그 밖은 회색 테두리
 export const btnPrimary = { all: 'unset', cursor: 'pointer', padding: '3px 10px', borderRadius: 6, background: ACCENT, color: '#fff', font: `600 12px ${F}` }
-export const btnSecondary = { all: 'unset', cursor: 'pointer', padding: '3px 10px', borderRadius: 6, border: `1px solid ${C.line}`, color: C.ink, font: `400 12px ${F}` }
+export const btnSecondary = { all: 'unset', cursor: 'pointer', padding: '3px 10px', borderRadius: 6, border: '1px solid var(--mb-ctl)', color: C.ink, font: `400 12px ${F}` }
 // 규칙 B1 — 머리줄 오른쪽 작은 단추(「＋ 새 폴더」·「＋ 새 레이어」)
-export const btnHead = { all: 'unset', cursor: 'pointer', padding: '1px 6px', borderRadius: 4, border: `1px solid ${C.line}`, color: C.ink, font: `400 11px ${F}`, whiteSpace: 'nowrap' }
+export const btnHead = { all: 'unset', cursor: 'pointer', padding: '1px 6px', borderRadius: 4, border: '1px solid var(--mb-ctl)', color: C.ink, font: `400 11px ${F}`, whiteSpace: 'nowrap' }
 // 규칙 ④ — ⋯: 머리줄은 늘 보이고 테두리 없음, 줄은 마우스를 올렸을 때만(`show`)
 // 누르는 자리 24×24(WCAG 2.5.8) = 겉모양 18 그대로, 둘레 3px을 `.mb-hit`(index.html)이 넓힘(2026-11-09 점검)
 export const moreBtn = show => ({ all: 'unset', position: 'relative', '--hit': '-3px', cursor: 'pointer', flex: 'none', width: 18, textAlign: 'center', borderRadius: 4, color: C.muted, fontWeight: 700, lineHeight: '18px', visibility: show ? 'visible' : 'hidden' })
@@ -54,7 +54,7 @@ export function Confirm({ title, children, okLabel = '지우기', danger = true,
   const ring = c => ({ onFocus: e => { e.currentTarget.style.outline = `2px solid ${c}` }, onBlur: e => { e.currentTarget.style.outline = 'none' } })   // all: unset이 초점 테두리를 지움
   return <dialog ref={dlg} className="mb-dlg" aria-labelledby="mb-confirm-title" onCancel={e => e.preventDefault() /* Esc는 위 글쇠 듣기가 닫음 */}
     style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', maxWidth: 'none', maxHeight: 'none', margin: 0, padding: 0, border: 0, zIndex: 60, background: 'rgba(0,0,0,.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onPointerDown={e => { e.stopPropagation(); if (e.target === e.currentTarget) onClose() }}>
-    <div ref={box} data-testid={testid} onKeyDown={e => e.stopPropagation()} style={{ width: 320, display: 'flex', flexDirection: 'column', gap: 10, padding: 18, borderRadius: 12, background: C.card, border: `1px solid ${C.line}`, boxShadow: '0 8px 28px rgba(0,0,0,.25)', font: `400 13px ${F}`, color: C.ink }}>
+    <div ref={box} data-testid={testid} onKeyDown={e => e.stopPropagation()} style={{ width: 320, display: 'flex', flexDirection: 'column', gap: 10, padding: 18, borderRadius: 12, background: C.card, border: `1px solid ${C.line}`, boxShadow: 'var(--mb-shadow-lg)', font: `400 13px ${F}`, color: C.ink }}>
       <div id="mb-confirm-title" style={{ font: `700 15px ${F}` }}>{title}</div>
       {children && <div style={{ color: C.muted, fontSize: 12, lineHeight: 1.55 }}>{children}</div>}
       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>

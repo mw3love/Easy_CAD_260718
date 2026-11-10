@@ -40,7 +40,7 @@ export function AiChip({ box, size, n, open, setOpen, onRun }) {
   const run = () => { const t = draft.trim(); if (!kind && !t) { ta.current?.focus(); return } onRun(kind, t); setOpen(false) }
   const pick = k => { setKind(kind === k ? null : k); ta.current?.focus() }
   return <div data-testid="ai-panel" role="dialog" aria-label="고른 것으로 만들기" onPointerDown={stop} onWheel={stop} onKeyDown={e => { stop(e); if (e.key === 'Escape') setOpen(false) }}
-    style={{ position: 'absolute', left: wx, top: wy, width: WIN_W, zIndex: 8, background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 12, boxShadow: '0 6px 20px rgba(0,0,0,.18)', font: `400 13px/1.5 ${F}` }}>
+    style={{ position: 'absolute', left: wx, top: wy, width: WIN_W, zIndex: 8, background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 12, boxShadow: 'var(--mb-shadow)', font: `400 13px/1.5 ${F}` }}>
     <div style={{ display: 'flex', alignItems: 'center', padding: '8px 8px 7px 12px', borderBottom: `1px solid ${C.line}` }}>
       <b style={{ fontSize: 13 }}>고른 것 {n}개</b>
       <button data-testid="ai-close" title="닫기(Esc)" onClick={() => setOpen(false)} style={{ all: 'unset', marginLeft: 'auto', cursor: 'pointer', color: C.muted, fontSize: 14, padding: '0 6px', borderRadius: 6 }}>✕</button>

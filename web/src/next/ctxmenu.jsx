@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)' }
-const box = { position: 'absolute', zIndex: 30, pointerEvents: 'auto',minWidth: 190, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 4, boxShadow: '0 6px 18px rgba(0,0,0,.22)', font: "400 12.5px 'Pretendard', sans-serif", color: C.ink,
+const box = { position: 'absolute', zIndex: 30, pointerEvents: 'auto',minWidth: 190, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 4, boxShadow: 'var(--mb-shadow)', font: "400 12.5px 'Pretendard', sans-serif", color: C.ink,
   boxSizing: 'border-box', maxHeight: 'calc(100% - 8px)', overflowY: 'auto', overscrollBehavior: 'contain' }
 const row = dis => ({ all: 'unset', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '5px 10px', borderRadius: 5, cursor: dis ? 'default' : 'pointer', opacity: dis ? 0.4 : 1 })
 const Sep = () => <div role="separator" style={{ height: 1, background: C.line, margin: '4px 6px' }} />

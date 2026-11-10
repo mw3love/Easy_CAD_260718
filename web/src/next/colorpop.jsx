@@ -56,7 +56,7 @@ export function FloatPanel({ anchor, id, width, maxHeight = 360, children, testi
   useLayoutEffect(place)
   useEffect(() => { window.addEventListener('resize', place); return () => window.removeEventListener('resize', place) })
   return createPortal(<div ref={el} data-ppop={id} data-keep-edit data-testid={testid} onPointerDown={e => e.stopPropagation()}
-    style={{ position: 'fixed', zIndex: 70, left: at?.left ?? -9999, top: at?.top ?? -9999, width: at?.w ?? width ?? 160, boxSizing: 'border-box', maxHeight, overflowY: 'auto', background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 8, padding: 3, boxShadow: '0 8px 24px rgba(0,0,0,.18)', font: "400 12px 'Pretendard', sans-serif" }}>{children}</div>, document.body)
+    style={{ position: 'fixed', zIndex: 70, left: at?.left ?? -9999, top: at?.top ?? -9999, width: at?.w ?? width ?? 160, boxSizing: 'border-box', maxHeight, overflowY: 'auto', background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 8, padding: 3, boxShadow: 'var(--mb-shadow)', font: "400 12px 'Pretendard', sans-serif" }}>{children}</div>, document.body)
 }
 
 // 색 창. anchor = 기준 요소 ref, id = data-ppop 이름(여는 쪽의 바깥 누르기 판정), value·fill은 ColorChip과 같음, onPick(색, 끌기 중)
@@ -76,7 +76,7 @@ export function ColorPop({ anchor, id, value, fill, onPick, align, keepEdit, onR
     const c = m[1].length === 8 && fill ? '#' + m[1].toLowerCase() : '#' + m[1].slice(-6).toLowerCase(); pick(fill ? (c.length === 9 ? c : withAlpha(c, value ? a : 255)) : c) }
   return createPortal(<div ref={popEl} data-ppop={id} data-keep-edit data-testid={'pop-' + id} onPointerDown={e => e.stopPropagation()}
     onMouseDown={e => { if (keepEdit && e.target.tagName !== 'INPUT') e.preventDefault() }}   // 글 고치는 중 = 편집기 포커스(고른 글자)를 지킴
-    style={{ position: 'fixed', zIndex: 70, left: at?.left ?? -9999, top: at?.top ?? -9999, width: 172, boxSizing: 'border-box', background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 10, padding: 8, boxShadow: '0 8px 24px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', gap: 6, font: "400 12px 'Pretendard', sans-serif" }}>
+    style={{ position: 'fixed', zIndex: 70, left: at?.left ?? -9999, top: at?.top ?? -9999, width: 172, boxSizing: 'border-box', background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 10, padding: 8, boxShadow: 'var(--mb-shadow)', display: 'flex', flexDirection: 'column', gap: 6, font: "400 12px 'Pretendard', sans-serif" }}>
     <label className="mb-field" style={{ display: 'flex', alignItems: 'center', gap: 2, height: 26, padding: '0 6px', boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, font: MONO, color: C.muted }}>#
       <input ref={codeEl} data-testid="color-code" value={shown} placeholder={onReset ? '기본' : mixed ? '서로 다름' : '코드'} spellCheck={false} title={fill ? '색 코드 — 치고 Enter(8자리면 진하기까지)' : '색 코드 — 치고 Enter'}
         onChange={e => setTxt(e.target.value)} onFocus={e => e.currentTarget.select()} onBlur={() => txt != null && applyCode()}

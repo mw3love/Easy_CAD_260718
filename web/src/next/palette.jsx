@@ -139,7 +139,7 @@ export function Palette({ lib, tool, onDown, onClick, dark, docked, mine, say })
     {!lib && !mine && <div style={{ fontSize: 11, color: C.muted }}>내 심볼은 저장 서버를 켜면 보여요</div>}
     {menu && <FloatMenu testid="mine-menu" at={menu} onClose={() => setMenu(null)} entries={menu.entries} />}
     {/* 이름 칸 — Enter·바깥 = 저장, Esc = 취소(칠판 줄 이름 고치기와 같게, 규칙 ⑦) */}
-    {ask && <div data-testid="mine-pop" onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} style={{ position: 'fixed', left: ask.x, top: Math.min(ask.y, window.innerHeight - 90), zIndex: 45, minWidth: 150, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 4, boxShadow: '0 6px 20px rgba(0,0,0,.16)', display: 'flex', flexDirection: 'column', gap: 2 }}>
+    {ask && <div data-testid="mine-pop" onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} style={{ position: 'fixed', left: ask.x, top: Math.min(ask.y, window.innerHeight - 90), zIndex: 45, minWidth: 150, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 4, boxShadow: 'var(--mb-shadow)', display: 'flex', flexDirection: 'column', gap: 2 }}>
       <span style={{ font: "600 11px 'Pretendard', sans-serif", color: C.muted, padding: '2px 4px' }}>{ask.label}</span>
       <input autoFocus defaultValue={ask.value} onFocus={e => e.target.select()} onBlur={e => { const v = e.currentTarget.value, a = ask; setAsk(null); if (a.cancel) return; a.ok(v) }}
         onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { ask.cancel = true; setAsk(null) } }}
@@ -147,7 +147,7 @@ export function Palette({ lib, tool, onDown, onClick, dark, docked, mine, say })
     </div>}
     {del && <Confirm testid="mine-delete" okTestid="mine-delete-ok" title={del.title} onOk={del.ok} onClose={() => setDel(null)}>{del.body}</Confirm>}
     {peek && <div data-testid="sym-peek" style={{ position: 'fixed', left: peek.x + 8, top: Math.max(8, Math.min(peek.r.top + peek.r.height / 2 - 86, window.innerHeight - 180)), zIndex: 40, pointerEvents: 'none',
-      width: 160, boxSizing: 'border-box', padding: '12px 12px 10px', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, boxShadow: '0 6px 20px rgba(0,0,0,.16)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+      width: 160, boxSizing: 'border-box', padding: '12px 12px 10px', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, boxShadow: 'var(--mb-shadow)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
       <SymIcon e={peek.e} dark={dark} size={120} />
       <span style={{ font: "600 13px 'Pretendard', sans-serif", color: C.ink, textAlign: 'center' }}>{peek.e.name}</span>
       <span style={{ font: "400 11px 'Pretendard', sans-serif", color: C.muted }}>클릭 그리기 · 끌어 놓기</span></div>}   {/* 크게 보기(2026-10-27 실검증 — 데스크톱 「크게 보기」 창 대신 마우스 올림, 툴팁은 끔) */}

@@ -107,7 +107,7 @@ const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line
 const CLIP = '<svg viewBox="0 0 24 24"><path d="M20 11.5 12.6 19a4.8 4.8 0 0 1-6.8-6.8l7.9-7.9a3.2 3.2 0 0 1 4.5 4.5l-7.9 7.9a1.6 1.6 0 0 1-2.3-2.3l7.2-7.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 const Glyph = ({ svg, s = 18 }) => <span aria-hidden="true" style={{ width: s, height: s, display: 'inline-block', flex: 'none' }} dangerouslySetInnerHTML={{ __html: svg.replace('<svg ', `<svg width="${s}" height="${s}" `) }} />
 const css = {
-  float: { position: 'absolute', right: 12, top: 12, bottom: 12, zIndex: 5, maxWidth: 'calc(100% - 24px)', border: `1px solid ${C.line}`, borderRadius: 10, overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,.12)' },
+  float: { position: 'absolute', right: 12, top: 12, bottom: 12, zIndex: 5, maxWidth: 'calc(100% - 24px)', border: `1px solid ${C.line}`, borderRadius: 10, overflow: 'hidden', boxShadow: 'var(--mb-shadow)' },
   panel: { width: CHAT_W, flex: 'none', position: 'relative', display: 'flex', flexDirection: 'column', background: C.bar, borderLeft: `1px solid ${C.line}`, font: `400 13.5px/1.55 ${F}`, color: C.ink, minHeight: 0 },
   head: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '10px 12px', borderBottom: `1px solid ${C.line}` },
   msgs: { flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 10 },
@@ -125,7 +125,7 @@ const css = {
   input: { font: `400 13.5px/1.5 ${F}`, border: `1px solid ${C.line}`, borderRadius: 8, padding: '8px 10px', resize: 'none', minHeight: 40, maxHeight: 200, outline: 'none', background: C.card, color: C.ink },
   kind: { font: `600 11px ${F}`, color: C.muted, background: C.seg, borderRadius: 99, padding: '1px 8px' },
   bar: { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderBottom: `1px solid ${C.line}` },
-  menu: { position: 'absolute', left: 0, bottom: 'calc(100% + 4px)', zIndex: 3, display: 'flex', flexDirection: 'column', minWidth: 170, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, boxShadow: '0 6px 18px rgba(0,0,0,.18)', padding: 4 },
+  menu: { position: 'absolute', left: 0, bottom: 'calc(100% + 4px)', zIndex: 3, display: 'flex', flexDirection: 'column', minWidth: 170, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, boxShadow: 'var(--mb-shadow)', padding: 4 },
   item: { all: 'unset', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, font: `400 12.5px ${F}`, color: C.ink, whiteSpace: 'nowrap' },
   drop: { display: 'flex', flexDirection: 'column', maxHeight: 260, overflowY: 'auto', borderBottom: `1px solid ${C.line}`, background: C.card },
   row: { all: 'unset', cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'center', padding: '6px 12px', font: `400 12.5px ${F}`, color: C.ink, borderBottom: `1px solid ${C.line}` },

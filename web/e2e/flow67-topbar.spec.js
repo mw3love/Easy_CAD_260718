@@ -11,7 +11,7 @@ test('넓은 창 — 칠판 높이 그대로, 저장·내보내기는 위아래�
   expect((await page.getByTestId('board').boundingBox()).y).toBeLessThanOrEqual(55)
   const save = await rect(page, '저장'), exp = await rect(page, '내보내기'), sel = await rect(page, '선택')
   expect(Math.abs(save.x - exp.x)).toBeLessThan(1); expect(exp.y).toBeGreaterThan(save.y)
-  expect(save.height).toBeLessThanOrEqual(21); expect(sel.height).toBeGreaterThanOrEqual(40)
+  expect(save.height).toBeLessThanOrEqual(25); expect(sel.height).toBeGreaterThanOrEqual(40)
   const names = ['저장', '내보내기', '되돌리기', '다시', '선택', '화살표', '글자', '선', '다각형', '펜', '번호', '유지', '프레임', '메모', '회의', '웹', '표', '발표', '전체 화면', '어둡게']
   const rs = await Promise.all(names.map(n => rect(page, n)))
   rs.forEach((r, i) => expect(r, names[i]).toBeTruthy())

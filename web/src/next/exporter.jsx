@@ -60,7 +60,7 @@ export function exportPdf(res, title) {   // res = 한 쪽 { svg, pw, ph } 또�
   const d = f.contentDocument
   const css = pages.map((p, i) => `@page p${i}{size:${p.pw}mm ${p.ph}mm;margin:0}.p${i}{page:p${i};width:${p.pw}mm;height:${p.ph}mm}`).join('')
   const body = pages.map((p, i) => `<div class="p${i}" style="${i < pages.length - 1 ? 'break-after:page;' : ''}">${p.svg.replace('<svg ', `<svg style="display:block;width:${p.pw}mm;height:${p.ph}mm" `)}</div>`).join('')
-  d.open(); d.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><link rel="stylesheet" href="${location.origin}/fonts.css?v=2">
+  d.open(); d.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><link rel="stylesheet" href="${location.origin}/fonts.css?v=3">
     <style>@page{margin:0}${css}html,body{margin:0;padding:0}</style></head><body>${body}</body></html>`); d.close()
   const go = () => { f.contentWindow.focus(); f.contentWindow.print(); setTimeout(() => f.remove(), 60000) }
   ;(d.fonts?.ready || Promise.resolve()).then(() => setTimeout(go, 100))

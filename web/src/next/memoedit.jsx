@@ -189,7 +189,7 @@ ${S} .mb-url{color:#2f80ed;text-decoration:underline}${S} code{font-family:${MON
       style={{ position: 'absolute', left: hx, top: hov.y - HH / 2, width: HW, height: HH, borderRadius: 4, background: 'rgba(127,127,127,.16)', cursor: 'grab', display: 'grid', placeItems: 'center', color: '#8a8f98', font: '700 12px sans-serif', lineHeight: 1, userSelect: 'none' }}>⠿</div>}
     {!turn && <FormatBar ed={edInst} onTurn={() => turnOpenR.current?.()} />}
     {turn && <div data-testid="memo-turn" onMouseDown={e => e.preventDefault()}
-      style={{ position: 'absolute', left: turn.x, top: turn.y, zIndex: 2, minWidth: 170, background: 'var(--mb-card)', color: 'var(--mb-ink)', border: '1px solid var(--mb-line)', borderRadius: 8, padding: 4, boxShadow: '0 6px 18px rgba(0,0,0,.22)', font: "400 12.5px 'Pretendard', sans-serif", colorScheme: 'normal' }}>
+      style={{ position: 'absolute', left: turn.x, top: turn.y, zIndex: 2, minWidth: 170, background: 'var(--mb-card)', color: 'var(--mb-ink)', border: '1px solid var(--mb-line)', borderRadius: 8, padding: 4, boxShadow: 'var(--mb-shadow)', font: "400 12.5px 'Pretendard', sans-serif", colorScheme: 'normal' }}>
       <div style={{ padding: '3px 10px 5px', color: 'var(--mb-muted)', fontSize: 11 }}>전환 · ↑↓ Enter</div>
       {LINE_KINDS.map(([k, name], j) => <button key={k} onClick={() => { turnInto(ed.current, k); setTurn(null) }} onMouseEnter={() => setTurn(t => ({ ...t, at: j }))}
         style={{ ...item, background: j === turn.at ? 'rgba(218,119,86,.14)' : 'transparent' }}>{name}</button>)}

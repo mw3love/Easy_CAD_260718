@@ -64,7 +64,7 @@ export function FindBar({ items, server, onMarks, onGo, onClose }) {
   useEffect(() => () => onMarks([]), [])   // eslint-disable-line react-hooks/exhaustive-deps
   const go = i => { const r = rows[i]; if (r) { setAt(i); onGo(r.uid) } }
   return <div data-testid="find-bar" onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', zIndex: 25, left: '50%', top: 12, transform: 'translateX(-50%)', width: 'min(440px, calc(100% - 32px))',
-    background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, boxShadow: '0 6px 18px rgba(0,0,0,.18)', font: "400 12.5px 'Pretendard', sans-serif", color: C.ink, overflow: 'hidden' }}>
+    background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, boxShadow: 'var(--mb-shadow)', font: "400 12.5px 'Pretendard', sans-serif", color: C.ink, overflow: 'hidden' }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderBottom: rows.length || q ? `1px solid ${C.line}` : 'none' }}>
       <span style={{ color: C.muted }}>🔍</span>
       <input ref={inp} value={q} onChange={e => setQ(e.target.value)} placeholder="칠판에서 찾기 — 낱말이 달라도 뜻으로 (↑↓ · Enter · Esc)"

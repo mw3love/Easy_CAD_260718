@@ -35,7 +35,7 @@ export function Composer({ value, onChange, onSend, onStop, canSend, busy, input
   const input = <textarea ref={ta} data-testid={inputId} aria-label={label} rows={2} value={value} placeholder={placeholder} onChange={onChange} onKeyDown={key} onPaste={onPaste}
     style={{ flex: tools ? 'none' : 1, display: 'block', width: '100%', minWidth: 0, boxSizing: 'border-box', resize: 'none', border: 0, outline: 'none', padding: '2px 0', background: 'transparent', color: C.ink, font: `400 ${fs}px/${lh}px ${F}` }} />
   return <div className="mb-field" data-testid="composer" onClick={e => { if (e.target === e.currentTarget || e.target.dataset.composerRow != null) ta.current?.focus() }}   // 상자의 빈 곳을 눌러도 글 칸으로
-    style={{ display: 'flex', flexDirection: tools ? 'column' : 'row', alignItems: tools ? 'stretch' : 'flex-end', gap: tools ? 2 : 4, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 12, background: C.card, padding: tools ? '8px 6px 4px 12px' : '5px 5px 5px 10px' }}>
+    style={{ display: 'flex', flexDirection: tools ? 'column' : 'row', alignItems: tools ? 'stretch' : 'flex-end', gap: tools ? 2 : 4, boxSizing: 'border-box', border: '1px solid var(--mb-ctl)', borderRadius: 12, background: C.card, padding: tools ? '8px 6px 4px 12px' : '5px 5px 5px 10px' }}>
     {input}
     {tools ? <div data-composer-row="" style={{ display: 'flex', alignItems: 'center', gap: 2, marginLeft: -6 }}>{tools}{button}</div> : button}
   </div>
