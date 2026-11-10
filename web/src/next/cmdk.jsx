@@ -29,7 +29,7 @@ export function menuToCommands(entries, group) {
 export function CommandBar({ getCommands, onClose }) {
   const [all] = useState(getCommands), [q, setQ] = useState(''), [at, setAt] = useState(0)   // 목록은 열 때 한 번(그때 고른 것 기준)
   const box = useRef(null), inp = useRef(null), on = useRef(null), list = useRef(null), [back] = useState(() => document.activeElement)
-  useEffect(() => { inp.current?.focus(); return () => { if (back?.isConnected && !document.activeElement?.closest?.('input, textarea, [contenteditable=true]')) back.focus({ preventScroll: true }) } }, [])   // 닫으면 연 자리로(2026-11-10 2단계)
+  useEffect(() => { inp.current?.focus(); return () => { if (back?.isConnected && !back.isContentEditable && !back.closest?.('[data-armed], [data-testid=board]') && !document.activeElement?.closest?.('input, textarea, [contenteditable=true]')) back.focus({ preventScroll: true }) } }, [])   // 닫으면 연 자리로(2026-11-10 2단계)
   useEffect(() => { const down = e => { if (box.current && !box.current.contains(e.target) && !e.target.closest?.('[data-cmd-btn]')) onClose() }; window.addEventListener('pointerdown', down, true); return () => window.removeEventListener('pointerdown', down, true) }, [onClose])
   const rows = rankCommands(all, q)
   const cur = Math.min(at, Math.max(0, rows.length - 1))

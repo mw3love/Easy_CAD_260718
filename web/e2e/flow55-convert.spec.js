@@ -20,7 +20,7 @@ test('네모 글 → 메모(화살표 그대로·자리 가운데·Ctrl+Z 한 �
 
   // 속성 카드 머리말 → 목록 맨 위 「메모로 바꾸기」
   await clickScene(page, 160, 140)
-  await page.getByTitle('클릭: 다른 도형으로 바꾸기', { exact: false }).click()
+  await page.getByTitle('다른 도형으로 바꾸기', { exact: false }).click()
   const list = page.getByTestId('pop-swap'), first = list.locator('button').first()
   await expect(first).toHaveAttribute('data-testid', 'convert-memo')
   await first.click()

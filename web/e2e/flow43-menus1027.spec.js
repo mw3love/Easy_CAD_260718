@@ -18,7 +18,7 @@ test('감싼 그대로는 다시 감싸기 없음(일부만 고르면 있음) ·
   await page.keyboard.press('Control+a'); await page.keyboard.press('Alt+g')
   await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'frame').length).toBe(1)
   await page.keyboard.press('Control+a'); expect(await menuAt(page, 60, 40, true)).not.toContain('프레임으로 감싸기')   // 프레임 + 안의 것 = 이미 감쌈
-  expect(await names(page)).not.toContain('그룹')                                                                // 프레임은 원래 안의 것을 같이 옮김
+  expect(await names(page)).not.toContain('묶기')                                                                // 프레임은 원래 안의 것을 같이 옮김
   await page.keyboard.press('Escape'); await page.keyboard.press('Escape')
   expect(await menuAt(page, 60, 40)).toContain('프레임으로 감싸기')                                               // 둘 중 하나만 = 확대 장(그대로)
   const fr = await menuAt(page, -16, 40)                                                                          // 프레임 테두리(여백 16)
@@ -44,7 +44,7 @@ test('상자 하나 = 반전 없음(그림은 진짜로 뒤집힘), 선·둘 이
   await page.locator(MENU, { hasText: '좌우 반전' }).click()
   await expect.poll(async () => (await liveDoc(page)).items.find(it => it.type === 'image')?.flip_h).toBe(true)
   const grp = await menuAt(page, 60, 240)
-  expect(grp).not.toContain('그룹'); expect(grp).toContain('그룹 해제'); expect(grp).toContain('좌우 반전')        // 묶음 둘 = 자리 맞바꿈은 뜻이 있음
+  expect(grp).not.toContain('묶기'); expect(grp).toContain('묶기 풀기'); expect(grp).toContain('좌우 반전')        // 묶음 둘 = 자리 맞바꿈은 뜻이 있음
   expect(await menuAt(page, 460, 240)).toContain('AI로 만들기 (KAIROS)…')                                       // 글 있는 도형
   const memo = await menuAt(page, 700, 40); expect(memo).not.toContain('내 심볼에 추가…'); expect(memo).not.toContain('좌우 반전')
 })

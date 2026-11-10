@@ -61,7 +61,7 @@ test('고른 것 — 우클릭 명령이 맨 위에, 안 고르면 없음, 실�
   await bar(page).locator('input').fill('왼쪽 맞춤'); await expect(rows(page).first()).toContainText('정렬 / 분배 › 왼쪽 맞춤')
   await page.keyboard.press('Enter'); await expect(bar(page)).toHaveCount(0)
   await expect.poll(async () => { const r = (await liveDoc(page)).items.filter(it => it.type === 'rect'); return Math.abs(r[0].pos[0] - r[1].pos[0]) }).toBeLessThan(1)
-  await page.keyboard.press('Control+k'); await bar(page).locator('input').fill('ㄱㄹ'); await expect(bar(page)).toContainText('그룹'); await page.keyboard.press('Enter')
+  await page.keyboard.press('Control+k'); await bar(page).locator('input').fill('묶기'); await expect(bar(page)).toContainText('묶기'); await page.keyboard.press('Enter')
   await expect.poll(async () => new Set((await liveDoc(page)).items.filter(it => it.type === 'rect').map(it => it.group_id)).size).toBe(1)
 })
 

@@ -114,7 +114,7 @@ export function Bubble({ id, info, cam, size, thread = [], first, onThread, onCl
 export function BubbleBadge({ id, info, cam, count, onOpen }) {
   if (!info) return null
   const x = (info.box.x + info.box.w) * cam.z + cam.x + 8, y = info.box.y * cam.z + cam.y - 22   // 오른쪽 위 바깥 — 고른 물건의 크기 조절 손잡이를 덮지 않게
-  return <button data-testid="bubble-badge" data-id={id} title={`AI 말풍선 열기 — 대화 ${count}개`} onPointerDown={e => e.stopPropagation()} onClick={onOpen}
+  return <button data-testid="bubble-badge" data-id={id} aria-label={`AI 말풍선 열기 — 대화 ${count}개`} title={`AI 말풍선 열기 — 대화 ${count}개`} onPointerDown={e => e.stopPropagation()} onClick={onOpen}
     style={{ all: 'unset', position: 'absolute', left: x, top: y, zIndex: 7, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '1px 6px', borderRadius: 99,
       background: 'var(--mb-accent)', color: '#fff', font: `600 11px ${F}`, boxShadow: '0 1px 4px rgba(0,0,0,.25)' }}>💬 {count}</button>
 }

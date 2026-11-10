@@ -52,7 +52,7 @@ import { applyDelta, itemDelta, mergeDelta } from './sync.js'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
 const ZOOM_TAU = 40   // 휠 한 칸이 미끄러지는 빠르기(ms) — 0.12초쯤에 거의 다 감
-const BLUE = '#89b4fa', PEACH = '#fab387', GUIDE = 'rgb(230,60,160)'   // 데스크톱 theme BLUE·PEACH, 가이드선 마젠타
+const BLUE_DARK = '#89b4fa', BLUE = BLUE_DARK, PEACH = '#fab387', GUIDE = 'rgb(230,60,160)'   // 데스크톱 theme BLUE·PEACH, 가이드선 마젠타
 const HANDLE = 10, HIT_PX = 4, EDGE_PX = 5
 const INK = '#ff1f1f1f'   // 새로 그리는 선·글 기본색(밝은 칠판)
 // 다른 사람 색 — 접속 id로 늘 같은 색(테두리·이름표)
@@ -110,6 +110,7 @@ const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0]
 export const rightInset = el => (el ? parseFloat(getComputedStyle(el).getPropertyValue('--mb-right-inset')) || 0 : 0)
 
 export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, onAddSymbol, onFit, onDark, onHelp, onAsk, onMeet, onBubble, onOpenDoc, marks = [], readOnly = false, phone = false, keepTool = false, onKeepTool }, ref) {   // keepTool = 「도구 유지」(그린 뒤에도 그 도구 — 2026-10-27 사용자, Excalidraw 자물쇠)   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
+  const BLUE = dark ? BLUE_DARK : '#3b82f6'   // 고른 테두리·손잡이 — 흰 칠판 위 2.11 → 3.68(2026-11-10 4단계 사용자 고름), 어둡게는 데스크톱 색 그대로
   const [sel, setSel] = useState([])
   useEffect(() => { if (phone && sel.length) setSel([]) }, [phone, sel])   // 휴대폰 = 고치기 없음 — 답을 붙인 뒤 고른 표시·속성 카드가 남지 않게(2026-10-27)
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
@@ -162,7 +163,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, liveModel: () => R.current.model, startToolDrag, selCommands: () => (R.current.sel.length ? menuEntries({}) : []), busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, skipFrames, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, selImageIds, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, printDoc, saveHwpx, setImage, slidesBoard, slideBranch, motionInfo, motionPlace, flowBoard, flowTarget, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, liveModel: () => R.current.model, startToolDrag, placeShape, selCommands: () => (R.current.sel.length ? menuEntries({}) : []), busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, skipFrames, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, selImageIds, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, printDoc, saveHwpx, setImage, slidesBoard, slideBranch, motionInfo, motionPlace, flowBoard, flowTarget, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -1255,6 +1256,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   const memoProto = () => { const s = +(1 / R.current.cam.z).toPrecision(2), it = base([0, 0], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#fffff8c5', lines: [{ k: 'p', t: '' }], scale: s, z: topZ(R.current.model.items) + 1 }); return { ...it, rect: [0, 0, MEMO.W, memoHeight(it)] } }
   const tableProto = (rows, cols, header) => base([0, 0], { type: 'table', rows, cols, header, rect: [0, 0, cols * 40, rows * 14], cells: Array.from({ length: rows }, () => Array(cols).fill('')), col_widths: Array(cols).fill(1 / cols), z: topZ(R.current.model.items) + 1 })
+  function placeShape(t) {   // 도형 칸에서 글쇠로 놓기 — 화면 가운데 빈자리, 끌어 놓을 때와 같은 기본 크기(2026-11-10 4단계)
+    const m = R.current.model, protos = t.startsWith('customsym:') ? customItems(t) : [{ ...boxItem(t, 0, 0, ...boxDefault(t)), z: topZ(m.items) + 1 }]; if (!protos) return
+    const b0 = unionBox(protos.map(it => sceneBox(it, textBox))), at = spotNear(b0.w, b0.h), its = moveItems(protos, protos.map(it => it._id), at.x - b0.x, at.y - b0.y)
+    commit([...m.items, ...its], its.map(it => it._id), '도형'); setTool('select') }
   function insertMemo() {
     const m = R.current.model, p0 = memoProto(), s = p0.scale, at = spotNear(p0.rect[2] * s, p0.rect[3] * s), it = { ...p0, pos: [at.x, at.y] }
     commit([...m.items, it], [it._id], '메모'); setTool('select')   // 만들면 고른 채(바로 끌어 옮기기) — 치면 바로 글(2026-10-20 사용자: 도형처럼)
@@ -1755,6 +1760,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const onKey = e => {
       if (readOnly || R.current.editing || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || '')) return
       const m = R.current.model, ids = R.current.sel, mod = e.ctrlKey || e.metaKey, k = e.key
+      if ((k === 'Enter' || k === ' ') && e.target?.closest?.('button, a[href], [role=menuitem], [role=option], [role=tab], [role=button]')) return   // 단추에서 누른 Enter·Space는 그 단추 몫(2026-11-10 4단계 — 속성 카드 단추가 글 고치기로 갔음)
       if (k === ' ') { st.current.space = true; if (armTarget()) e.preventDefault(); return }   // Space+끌기 = 화면 이동 — 대기 편집기에 빈칸이 들어가 고치기로 바뀌지 않게
       const act = (f, label) => { e.preventDefault(); f(label) }
       const pdfOn = R.current.webOn && m.items.find(it => it._id === R.current.webOn && it.type === 'pdf'), pbox = pdfOn && document.querySelector(`[data-pdfid="${pdfOn._id}"]`)
@@ -1822,7 +1828,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (!mod && !e.altKey && !e.shiftKey && TOOL_KEYS[k]) return act(() => setTool(TOOL_KEYS[k]))
       if (!mod && !e.altKey && !e.shiftKey && e.code === 'KeyQ') return act(() => onKeepTool?.())   // Q = 도구 유지 켜기/끄기(Excalidraw와 같은 글쇠, 한글 입력이어도 자리로)
       if (mod && k.toLowerCase() === 'v') return   // 붙여넣기는 브라우저 붙여넣기 신호에서(주소면 웹 카드, 아니면 칠판 붙여넣기 — 아래 onPaste). 여기서 막으면 그 신호가 안 옴
-      if (!ids.length) return
+      if (!ids.length) { const pan = { ArrowLeft: [1, 0], ArrowRight: [-1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[k]   // 안 골랐을 때 화살표 = 화면 이동(2026-11-10 4단계 사용자 고름 — 글쇠로 옮길 길이 없었음), Shift = 크게
+        if (pan && !mod && !e.altKey) { const d = e.shiftKey ? 400 : 80; return act(() => setCam(c => ({ ...c, x: c.x + pan[0] * d, y: c.y + pan[1] * d }))) } return }
       const LOCK_MSG = '잠긴 도형이에요 — 옮기기·지우기·고치기는 막혀 있어요(풀기 Ctrl+L)'
       if (ids.length && ids.every(id => m.items.find(x => x._id === id)?.locked) && ['Delete', 'Backspace', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(k)) return act(() => setStatus(LOCK_MSG))   // 잠긴 것만 고름 = 말로만 알림
       if (k === 'Delete' || k === 'Backspace') return act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))
@@ -2578,7 +2585,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         const lockedSel = selIt.filter(it => it.locked && !layerLocked(it))   // 고른 것 중 잠긴 것 — 한 번에 풀기(2026-10-25 사용자, 잠긴 레이어의 것은 레이어 카드에서)
         if (lockedSel.length) { const uids = new Set(lockedSel.map(it => it._id)); out.push([`잠금 해제 (${lockedSel.length}개)`, '', act(() => commit(m.items.map(it => (uids.has(it._id) ? { ...it, locked: false } : it)), ids, '잠금 해제'))], '-') }
         if (has && lockedSel.length === selIt.length) {   // 잠긴 것만 고름 = 안 바뀌는 일만(복사·내보내기·정리 문서)
-          out.push(['복사', 'Ctrl+C', act(copy)], ['잠금 전환', 'Ctrl+L', act(() => commit(toggleLock(m.items, ids), ids, '잠금'))], '-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
+          out.push(['복사', 'Ctrl+C', act(copy)], ['잠그기 · 풀기', 'Ctrl+L', act(() => commit(toggleLock(m.items, ids), ids, '잠금'))], '-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
           if (onAsk && (selTexts().length || selImages().length)) out.push(aiMenu())
           return out }
         const pin = menu.pdfIn && m.items.find(it => it._id === menu.pdfIn.id)
@@ -2614,14 +2621,14 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           ['가로 균등 분배', act(() => distributeSel('x')), alignTargets().length < 3], ['세로 균등 분배', act(() => distributeSel('y')), alignTargets().length < 3],
           ['가로 첫 간격 반복', act(() => distributeSel('x', true)), alignTargets().length < 3], ['세로 첫 간격 반복', act(() => distributeSel('y', true)), alignTargets().length < 3]]])
         if (has) {
-          out.push('-', ['맨 앞으로 보내기', 'Ctrl+]', act(() => commit(zOrder(m.items, ids, true), ids, '맨 앞으로'))], ['맨 뒤로 보내기', 'Ctrl+[', act(() => commit(zOrder(m.items, ids, false), ids, '맨 뒤로'))],
-            ['잠금 전환', 'Ctrl+L', act(() => commit(toggleLock(m.items, ids), ids, '잠금'))])
+          out.push('-', ['맨 앞으로', 'Ctrl+]', act(() => commit(zOrder(m.items, ids, true), ids, '맨 앞으로'))], ['맨 뒤로', 'Ctrl+[', act(() => commit(zOrder(m.items, ids, false), ids, '맨 뒤로'))],
+            ['잠그기 · 풀기', 'Ctrl+L', act(() => commit(toggleLock(m.items, ids), ids, '잠금'))])
           // 반전 = 모양을 뒤집는 건 선·화살표·다각형·펜·그림·심볼, 다른 상자류(네모·원·글·메모·표)는 여럿의 자리만 맞바꿈(`mirror`) — 그런 상자 하나면 아무 일도 없어서 숨김
           if (!card && (selIt.length >= 2 || selIt.some(it => FLIP_SHAPE.has(it.type)))) out.push(['좌우 반전', 'Shift+H', act(() => commit(mirror(m.items, ids, true, textBox), ids, '반전'))], ['상하 반전', 'Shift+V', act(() => commit(mirror(m.items, ids, false, textBox), ids, '반전'))])   // 글 도형을 고른 채 Shift+H/V는 글로 들어가므로 메뉴에도(2026-10-19)
           const oneGroup = selIt.every(it => it.group_id && it.group_id === selIt[0].group_id)   // 이미 한 묶음
           const frs = selIt.filter(it => it.type === 'frame'), inFrames = frs.length > 0 && (s => selIt.every(it => s.has(it._id)))(new Set(withContents(frs.map(f => f._id))))   // 프레임 + 그 안의 것 = 이미 같이 움직임
-          if (ids.length >= 2 && !oneGroup && !inFrames) out.push(['그룹', 'Ctrl+G', act(() => commit(groupItems(m.items, ids), ids, '묶음'))])
-          if (selIt.some(it => it.group_id)) out.push(['그룹 해제', 'Ctrl+Shift+G', act(() => commit(ungroupItems(m.items, ids), ids, '묶음 풂'))])
+          if (ids.length >= 2 && !oneGroup && !inFrames) out.push(['묶기', 'Ctrl+G', act(() => commit(groupItems(m.items, ids), ids, '묶음'))])
+          if (selIt.some(it => it.group_id)) out.push(['묶기 풀기', 'Ctrl+Shift+G', act(() => commit(ungroupItems(m.items, ids), ids, '묶음 풂'))])
           out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
           if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame') && !wrapDup(m.items, ids)) out.push('-', ['프레임으로 감싸기', 'Alt+G', act(() => wrapFrame())])
           if (frs.length) { const off = frs.every(f => f.skip); out.push([off ? '발표에 넣기' : '발표에서 빼기', '', act(() => skipFrames(frs.map(f => f._id), !off))]) }   // 칠판엔 그대로(2026-10-28)
@@ -2631,7 +2638,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           if (onAddSymbol && !card && selIt.every(it => !NOT_SYMBOL.has(it.type))) out.push(['내 심볼에 추가…', '', act(() => addToMySymbols())])   // 2026-10-27 사용자 — KAIROS 아이콘 등을 심볼 칸에(이 브라우저). 메모·표는 그림 조각이 아니라 뺌(전수조사)
           if (selIt.some(it => isLegendLine(it))) out.push(['범례 넣기', '', act(insertLegend)])   // 선·화살표를 고르고 우클릭(2026-10-27 실검증 — 「표」 창 안에만 있으면 못 찾음, 표 창 단추도 그대로)
           out.push('-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
-          if (onBubble && ids.length === 1) out.push(['AI 말풍선 (KAIROS)', '', act(() => onBubble(ids[0]))])   // 이 물건만의 작은 대화창(2026-10-28 사용자)
+          if (onBubble && ids.length === 1) out.push(['AI 말풍선 (KAIROS)…', '', act(() => onBubble(ids[0]))])   // 이 물건만의 작은 대화창(2026-10-28 사용자)
           else if (onBubble && !readOnly && selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame') && !inFrames) out.push(['프레임으로 감싸고 AI 말풍선 (KAIROS)', '', act(() => { const id = wrapFrame(true); if (id) onBubble(id) })])   // 여럿 = 대화가 붙을 자리(프레임)를 먼저 — 발표엔 안 나옴
           if (onAsk && (selTexts().length || selImages().length)) out.push(aiMenu())   // 슬라이드(옛 「발표 자료 만들기」)·문서·디자인·HTML — 고른 것이 재료
         }
@@ -2748,8 +2755,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         발표 판서 {notesGone.items.length}개 지움
         <button onClick={keepNotes} style={{ all: 'unset', cursor: 'pointer', padding: '3px 12px', borderRadius: 99, background: 'var(--mb-accent)', color: '#fff', fontWeight: 600 }}>남기기</button></div>}
       {tagEdit && (() => { const it = byId.get(tagEdit); if (!it) return null; const b = frameTagBox(it), o = scr({ x: b.x, y: b.y })   // 프레임 이름표 바로 고치기(치는 대로 — 2026-10-18 사용자)
-        return <input key={tagEdit} autoFocus defaultValue={it.name || ''} placeholder="이름" onPointerDown={e => e.stopPropagation()} onChange={e => renameFrame(it._id, e.target.value)}
-          onBlur={() => setTagEdit(null)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') setTagEdit(null) }}
+        return <input key={tagEdit} autoFocus className="mb-field" aria-label="프레임 이름" defaultValue={it.name || ''} placeholder="이름" onFocus={e => { if (e.currentTarget.dataset.w == null) e.currentTarget.dataset.w = it.name || '' }} onPointerDown={e => e.stopPropagation()} onChange={e => renameFrame(it._id, e.target.value)}
+          onBlur={() => setTagEdit(null)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') renameFrame(it._id, e.currentTarget.dataset.w ?? ''); if (e.key === 'Enter' || e.key === 'Escape') setTagEdit(null) }}   /* Esc = 처음 이름으로(규칙 ⑦ — 2026-11-10 4단계) */
           style={{ position: 'absolute', left: o.x, top: o.y, height: Math.max(20, b.h * cam.z), minWidth: 120, width: Math.max(120, b.w * cam.z + 40), boxSizing: 'border-box', zIndex: 20,
             font: `600 ${Math.max(12, b.fs * cam.z)}px 'Pretendard', sans-serif`, color: '#fff', background: '#3f3f46', border: '1.5px solid #89b4fa', borderRadius: 4, padding: '0 6px', outline: 'none' }} /> })()}
       {(editing => { if (!editing) return null; const it = byId.get(editing.id); if (!it) return null   // armed = 칸만 고른 대기(보이지 않음) — 고치기와 같은 자리·같은 편집기

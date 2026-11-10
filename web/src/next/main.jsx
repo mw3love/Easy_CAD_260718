@@ -800,9 +800,9 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
     window.addEventListener('pointerdown', down, true); window.addEventListener('keydown', key, true)
     return () => { window.removeEventListener('pointerdown', down, true); window.removeEventListener('keydown', key, true) }
   }, [anyPop])
-  // 알림 = 칠판 아래 가운데에 잠깐(글 길이만큼 2~6초). 다 지나도 글은 남기고 투명하게만(시험이 글을 찾음)
+  // 알림 = 칠판 아래 가운데에 잠깐(글 길이만큼 3~10초 — 2026-11-10 4단계: 긴 안내가 2~6초에 사라졌음, 두 줄까지 보임). 다 지나도 글은 남기고 투명하게만(시험이 글을 찾음)
   const [toastOn, setToastOn] = useState(false)
-  useEffect(() => { if (!status) return; setToastOn(true); const t = setTimeout(() => setToastOn(false), Math.min(6000, 2000 + status.length * 50)); return () => clearTimeout(t) }, [status])
+  useEffect(() => { if (!status) return; setToastOn(true); const t = setTimeout(() => setToastOn(false), Math.min(10000, 3000 + status.length * 80)); return () => clearTimeout(t) }, [status])
   useEffect(() => {
     const on = e => {
       if (document.querySelector('[data-testid=presenter]')) return
@@ -959,7 +959,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
               <button key={l} onClick={f} title={t} style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px 4px 7px', borderRadius: 6, border: `1px solid ${C.line}`, font: "400 12px 'Pretendard', sans-serif" }}>
                 <span aria-hidden style={{ width: 16, height: 16, display: 'block', color: 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ICONS[ic].replace('<svg ', '<svg width="16" height="16" ') }} />{l}</button>)}
           </div>}</BoardForm>,
-        shape: <Palette docked lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} mine={{ mine: mySyms, api: myApi }} say={setStatus} />,
+        shape: <Palette docked lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} onPlace={k => ed.current?.placeShape(k)} mine={{ mine: mySyms, api: myApi }} say={setStatus} />,
         frame: orderedFrames(model.items).length ? <Frames docked items={model.items} sel={selKey ? selKey.split(',') : []} onReorder={ids => ed.current?.reorderFrames(ids)} onRename={(id, n) => ed.current?.renameFrame(id, n)} onGo={id => ed.current?.goFrame(id)} onPresent={id => ed.current?.startPresent(id)}
           onExport={id => { ed.current?.setSel([id]); setTimeout(() => setExportOpen(true)) /* 내보내기 창은 열 때 고른 것을 읽음 — 고른 것이 바뀐 다음에 열기 */ }} onRemove={id => ed.current?.removeFrame(id)} onSkip={(id, s) => ed.current?.skipFrames([id], s)} dark={dark} />
           : <div data-testid="frames-empty" style={{ padding: '10px 12px', color: C.muted, fontSize: 12, lineHeight: 1.6 }}><div style={{ font: "700 15px 'Pretendard', sans-serif", color: C.ink, marginBottom: 6 }}>프레임</div>아직 없어요 — 위 막대 「프레임」을 눌러 칠판에서 영역을 감싸면 여기에 쌓여요(순서 = 출력·발표 순서).</div>,
@@ -1002,8 +1002,8 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
         {!model.items.length && !meetSt && !aiBusy && <EmptyGuide phone={phone} onExample={() => openExample()} onAsk={() => { setChatOpen(true); setChatFocus({ id: Date.now() }) }} onDeep={() => { setChatOpen(true); setChatFocus({ id: Date.now(), draft: '슬라이드 만들어 줘 — 주제: ' }) }}
           onMeet={() => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : ed.current?.meetStart())} />}
         <span data-testid="save-note" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{saveNote}</span>
-        {status && <div data-testid="status-toast" role="status" title={status} style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 6, maxWidth: 'min(640px, max(240px, calc(100% - 480px)))', padding: '6px 14px', borderRadius: 99,
-          background: 'rgba(24,24,27,.86)', color: '#fff', font: "400 13px 'Pretendard', sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', pointerEvents: 'none', opacity: toastOn ? 1 : 0, transition: 'opacity .3s' }}>{status}</div>}
+        {status && <div data-testid="status-toast" role="status" title={status} style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 6, maxWidth: 'min(640px, max(240px, calc(100% - 480px)))', padding: '6px 14px', borderRadius: 12, whiteSpace: 'normal', textAlign: 'center',
+          background: 'rgba(24,24,27,.86)', color: '#fff', font: "400 13px 'Pretendard', sans-serif", pointerEvents: 'none', opacity: toastOn ? 1 : 0, transition: 'opacity .3s' }}>{status}</div>}
         {aiBusy && <div data-testid="ai-busy" role="status" style={{ position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 6, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 99,
           background: 'var(--mb-card)', border: '1px solid var(--mb-line)', boxShadow: '0 2px 8px rgba(0,0,0,.12)', font: "600 13px 'Pretendard', sans-serif", color: 'var(--mb-ink)', pointerEvents: 'none', whiteSpace: 'nowrap' }}><Spinner />{aiBusy}</div>}   {/* 정돈·정리 문서 중 — 칠판만 보고 있어도 도는 게 보이게(2026-10-20 사용자) */}
         {cmdOpen > 0 && !phone && <CommandBar key={cmdOpen} getCommands={commandList} onClose={() => setCmdOpen(0)} />}

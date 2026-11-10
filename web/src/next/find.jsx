@@ -40,7 +40,7 @@ export function wordHits(items, q) {
 export function FindBar({ items, server, onMarks, onGo, onClose }) {
   const [q, setQ] = useState(''), [sem, setSem] = useState(null), [busy, setBusy] = useState(false), [err, setErr] = useState(''), [at, setAt] = useState(0)
   const inp = useRef(null), ask = useRef(0), [back] = useState(() => document.activeElement)
-  useEffect(() => { inp.current?.focus(); return () => { if (back?.isConnected && !document.activeElement?.closest?.('input, textarea, [contenteditable=true]')) back.focus({ preventScroll: true }) } }, [])   // 닫으면 연 자리로(2026-11-10 2단계)
+  useEffect(() => { inp.current?.focus(); return () => { if (back?.isConnected && !back.isContentEditable && !back.closest?.('[data-armed], [data-testid=board]') && !document.activeElement?.closest?.('input, textarea, [contenteditable=true]')) back.focus({ preventScroll: true }) } }, [])   // 닫으면 연 자리로(2026-11-10 2단계)
   const words = q.trim() ? wordHits(items, q.trim()) : []
   // 뜻 결과가 오면 그 차례(낱말이 다 든 것은 서버가 점수를 더 줌) + 뜻 결과에 없는 낱말 결과는 뒤에. 지운 도형은 뺌
   const live = new Set(items.map(it => it._id)), wordSet = new Set(words.map(r => r.uid))

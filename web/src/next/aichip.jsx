@@ -21,7 +21,8 @@ const CHIP_W = 52, WIN_W = 340
 // box = 고른 것 전체의 화면 자리(px), size = 칠판 판 크기, n = 고른 개수
 export function AiChip({ box, size, n, open, setOpen, onRun }) {
   const [kind, setKind] = useState(null), [draft, setDraft] = useState(''), ta = useRef(null), me = useRef(null), [dodge, setDodge] = useState(null)
-  useEffect(() => { if (open) ta.current?.focus(); else { setKind(null); setDraft('') } }, [open])
+  const was = useRef(false)
+  useEffect(() => { if (open) ta.current?.focus(); else { setKind(null); setDraft(''); if (was.current) me.current?.focus({ preventScroll: true }) } was.current = open }, [open])   // 닫으면 칩으로 초점(2026-11-10 4단계 — body로 갔음)
   const cx0 = Math.max(8, Math.min(box.x + box.w - CHIP_W, size.w - CHIP_W - 8)), cy = Math.max(8, box.y - 32)
   // 오른쪽 위 속성 카드와 겹치면 그 카드 왼쪽으로 비킴(2026-11-09 진짜 확인 — 오른쪽 끝에 닿은 판에서 칩이 카드 위에 올라탐)
   useLayoutEffect(() => {
@@ -43,12 +44,12 @@ export function AiChip({ box, size, n, open, setOpen, onRun }) {
     style={{ position: 'absolute', left: wx, top: wy, width: WIN_W, zIndex: 8, background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 12, boxShadow: 'var(--mb-shadow)', font: `400 13px/1.5 ${F}` }}>
     <div style={{ display: 'flex', alignItems: 'center', padding: '8px 8px 7px 12px', borderBottom: `1px solid ${C.line}` }}>
       <b style={{ fontSize: 13 }}>고른 것 {n}개</b>
-      <button data-testid="ai-close" title="닫기(Esc)" onClick={() => setOpen(false)} style={{ all: 'unset', marginLeft: 'auto', cursor: 'pointer', color: C.muted, fontSize: 14, padding: '0 6px', borderRadius: 6 }}>✕</button>
+      <button data-testid="ai-close" aria-label="AI 창 닫기" className="mb-hit" title="닫기(Esc)" onClick={() => setOpen(false)} style={{ all: 'unset', position: 'relative', marginLeft: 'auto', cursor: 'pointer', color: C.muted, fontSize: 14, padding: '0 6px', borderRadius: 6 }}>✕</button>
     </div>
     <div style={{ display: 'grid', gridTemplateColumns: `repeat(${AI_KINDS.length},1fr)`, gap: 6, padding: '10px 10px 4px' }}>
       {AI_KINDS.map(([k, name]) => <button key={k} data-testid="ai-kind" data-kind={k} aria-pressed={kind === k} onClick={() => pick(k)} className="mb-ai-kind"
         style={{ all: 'unset', cursor: 'pointer', boxSizing: 'border-box', height: 56, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3, borderRadius: 8,
-          border: `1px solid ${kind === k ? 'transparent' : C.line}`, background: kind === k ? C.pick : 'transparent', font: `${kind === k ? 700 : 500} 12.5px ${F}`, color: C.ink }}><Icon k={k} s={20} />{name}</button>)}
+          border: `1px solid ${kind === k ? 'transparent' : C.line}`, background: kind === k ? C.pick : 'transparent', font: `${kind === k ? 700 : 400} 12.5px ${F}`, color: C.ink }}><Icon k={k} s={20} />{name}</button>)}
     </div>
     <div style={{ padding: '6px 10px 10px' }}>
       <Composer inputRef={ta} inputId="ai-input" sendId="ai-send" label="고른 것으로 만들기" value={draft} placeholder={kind ? `${NAME[kind]} — 바라는 점 (없으면 Enter)` : '무엇을 할까요? 물어봐도 돼요'} onChange={e => setDraft(e.target.value)}

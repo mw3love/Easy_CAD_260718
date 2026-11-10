@@ -101,7 +101,7 @@ export function MemoEditor({ spec, onDone }) {
         Finish.configure({ onDone: sel => (turnR.current ? setTurn(null) : finish(sel ? { caret: caretLine(ed.current.state) } : null)), onTurn: openTurn })],
       content: linesToDoc(spec.lines),
       editorProps: {
-        attributes: { spellcheck: 'false' },
+        attributes: { spellcheck: 'false', 'aria-label': '메모 글' },
         // 고치는 중 Shift+다른 줄 클릭 = 커서 줄부터 그 줄까지 줄 고르기, Ctrl·Alt+Shift 클릭 = 커서 줄 + 그 줄 따로(노션 — 2026-10-18 사용자). 같은 줄 Shift = 글자 고르기 그대로
         handleDOMEvents: { mousedown: (v, e) => {
           if (e.button !== 0) return false

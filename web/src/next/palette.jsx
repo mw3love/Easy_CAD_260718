@@ -44,8 +44,8 @@ export const shapeIcon = (key, W = 30, H = 20, sw = 1.4) => { const k = key.repl
   return <svg width={W} height={H} viewBox={`-1 -1 ${W + 2} ${H + 2}`} fill="none" stroke="currentColor" strokeWidth={sw}><g transform={`translate(${(W - w) / 2} ${(H - h) / 2})`}>
     {k === 'rect' ? <rect x="0" y="0" width={w} height={h} /> : k === 'ellipse' ? <ellipse cx={w / 2} cy={h / 2} rx={w / 2} ry={h / 2} /> : <path d={symbolPath(k, w, h).d} />}</g></svg> }
 
-function Cell({ k, name, icon, on, onDown, onClick, onPeek, onMenu }) {   // onMenu(e) = 우클릭(이 브라우저 심볼 — 이름 바꾸기·지우기)   // onPeek(칸 자리 | null) = 내 심볼 크게 보기(마우스 올림)
-  return <button title={onPeek ? undefined : `${name} — 클릭하면 그리기, 칠판으로 끌면 바로 놓기`} aria-label={name} aria-pressed={on} onPointerDown={e => { onPeek?.(null); onDown(e, k) }} onClick={() => onClick(k)}
+function Cell({ k, name, icon, on, onDown, onClick, onPeek, onMenu, onPlace }) {   // onMenu(e) = 우클릭(이 브라우저 심볼 — 이름 바꾸기·지우기)   // onPeek(칸 자리 | null) = 내 심볼 크게 보기(마우스 올림)
+  return <button title={onPeek ? undefined : `${name} — 클릭하면 그리기, 칠판으로 끌면 바로 놓기`} aria-label={name} aria-pressed={on} onPointerDown={e => { onPeek?.(null); onDown(e, k) }} onClick={() => onClick(k)} onKeyDown={onPlace && (e => { if (e.key === 'Enter') { e.preventDefault(); onPlace(k) } })}   /* Enter = 화면 가운데에 놓기(2026-11-10 4단계 — 끌기·칠판 누르기 말고 길이 없었음) */
     onContextMenu={onMenu && (e => { e.preventDefault(); onPeek?.(null); onMenu(e) })} onPointerEnter={onPeek && (e => onPeek(e.currentTarget.getBoundingClientRect()))} onPointerLeave={onPeek && (() => onPeek(null))}
     style={{ all: 'unset', boxSizing: 'border-box', cursor: 'pointer', width: 38, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, padding: '3px 0', borderRadius: 6,
       background: on ? 'var(--mb-on)' : 'transparent', color: C.ink }}>
@@ -74,7 +74,7 @@ function Section({ title, color, count, children, shut, onToggle, onMenu, folder
 }
 
 // lib = 서버 심볼 파일(없으면 기본 도형만), tool = 지금 도구, onDown/onClick = 끌기 시작/클릭(main.jsx paletteDown·setTool)
-export function Palette({ lib, tool, onDown, onClick, dark, docked, mine, say }) {   // mine = { mine, api } 이 브라우저 심볼(`useMySymbols`), say = 알림
+export function Palette({ lib, tool, onDown, onClick, onPlace, dark, docked, mine, say }) {   // mine = { mine, api } 이 브라우저 심볼(`useMySymbols`), say = 알림
   const [f0, toggleFold] = useFold('shapes'), folded = !docked && f0
   const [q, setQ] = useState('')
   const [shut, toggle] = useSectionFold()
@@ -103,8 +103,8 @@ export function Palette({ lib, tool, onDown, onClick, dark, docked, mine, say })
   const basicName = Object.fromEntries(BASIC)
   const thumb = e => <SymIcon e={e} dark={dark} />
   const cellOf = key => {
-    if (key.startsWith('customsym:')) { const e = syms.find(s => 'customsym:' + s.id === key); return e && <Cell key={key} k={key} name={e.name} icon={thumb(e)} on={tool === key} onDown={onDown} onClick={onClick} onPeek={peekAt(e)} onMenu={mine && isMine(e.folder) ? symMenu(e) : undefined} /> }
-    const name = basicName[key] || SYMBOLS[key.replace(/^sym:/, '')]?.name; return name && <Cell key={key} k={key} name={name} icon={shapeIcon(key)} on={tool === key} onDown={onDown} onClick={onClick} />
+    if (key.startsWith('customsym:')) { const e = syms.find(s => 'customsym:' + s.id === key); return e && <Cell key={key} k={key} name={e.name} icon={thumb(e)} on={tool === key} onDown={onDown} onClick={onClick} onPlace={onPlace} onPeek={peekAt(e)} onMenu={mine && isMine(e.folder) ? symMenu(e) : undefined} /> }
+    const name = basicName[key] || SYMBOLS[key.replace(/^sym:/, '')]?.name; return name && <Cell key={key} k={key} name={name} icon={shapeIcon(key)} on={tool === key} onDown={onDown} onClick={onClick} onPlace={onPlace} />
   }
   return <div ref={root} data-folded={folded || undefined} data-symdrop={mine ? '' : undefined} onPointerDown={e => e.stopPropagation()} style={{ pointerEvents: 'auto', width: 192, boxSizing: 'border-box', minHeight: 0, flex: '0 1 auto', overflowY: 'auto',
     background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 8px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', color: C.ink, display: 'flex', flexDirection: 'column', gap: 8, userSelect: 'none', ...(docked ? { ...DOCKED, flex: '1 1 auto' } : {}), ...(drop ? { boxShadow: `inset 0 0 0 2px ${C.on}` } : {}) }}>   {/* 끄는 도형이 위 = 코랄 테두리 */}

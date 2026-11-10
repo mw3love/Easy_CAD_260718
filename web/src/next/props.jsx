@@ -161,7 +161,7 @@ function ImageAlt({ alt }) {
 const Row = ({ label, children }) => <div style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 28 }}>
   <span style={{ width: 40, flex: 'none', color: C.muted, fontSize: 12 }}>{label}</span>{children}</div>
 const btn = (on, extra) => ({ all: 'unset', boxSizing: 'border-box', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3, height: 26, borderRadius: 6,
-  color: on ? C.on : C.ink, background: on ? C.onBg : 'transparent', outline: on ? `1px solid ${C.on}` : 'none', ...extra })
+  color: C.ink, background: on ? 'var(--mb-on)' : 'transparent', boxShadow: on ? 'var(--mb-on-ring)' : 'none', ...extra })   // 켜짐 = 위 막대와 같은 모양(2026-11-10 4단계 — 코랄 글·테두리였음)
 // 정렬·분배 아이콘 줄(2026-10-23 사용자: 우클릭 「정렬 / 분배」를 못 찾음 — Figma처럼 여러 개 고르면 속성 카드 맨 위에). align = { n, align(mode), dist(axis) }
 const AL = (bar, rects) => <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">{bar}{rects.map(([x, y, w, h], i) => <rect key={i} x={x} y={y} width={w} height={h} rx="0.8" fill="currentColor" fillOpacity=".25" />)}</svg>
 const ALIGNS = [
@@ -173,16 +173,16 @@ const ALIGNS = [
   ['bottom', '아래쪽 맞춤', AL(<path d="M1.5 14h13" />, [[3.5, 6.5, 3, 7], [9.5, 2.5, 3, 11]])],
 ]
 const DISTS = [['x', '가로 균등 분배(3개부터)', AL(<path d="M1.5 2v12M14.5 2v12" />, [[6.5, 4, 3, 8]])], ['y', '세로 균등 분배(3개부터)', AL(<path d="M2 1.5h12M2 14.5h12" />, [[4, 6.5, 8, 3]])]]
-function AlignRow({ align }) {
-  const b = dis => btn(false, { width: 20, height: 24, opacity: dis ? 0.35 : 1, cursor: dis ? 'default' : 'pointer' })
-  return <div data-testid="align-row" style={{ display: 'flex', gap: 1, justifyContent: 'space-between', paddingBottom: 4, marginBottom: 2, borderBottom: `1px solid ${C.line}` }}>
-    {ALIGNS.map(([m, t, ic]) => <button key={m} title={t} aria-label={t} onClick={() => align.align(m)} style={b(false)}>{ic}</button>)}
-    {DISTS.map(([a, t, ic]) => <button key={a} title={t} aria-label={t.replace(/\(.*\)/, '')} disabled={align.n < 3} onClick={() => align.dist(a)} style={b(align.n < 3)}>{ic}</button>)}
+function AlignRow({ align }) {   // 정렬 여섯 한 줄 + 분배 둘 아랫줄(2026-11-10 4단계 사용자 고름 — 20px 여덟 개가 누르기 작았음)
+  const b = dis => btn(false, { width: 28, height: 26, flex: 'none', opacity: dis ? 0.35 : 1, cursor: dis ? 'default' : 'pointer' })
+  return <div data-testid="align-row" style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingBottom: 4, marginBottom: 2, borderBottom: `1px solid ${C.line}` }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between' }}>{ALIGNS.map(([m, t, ic]) => <button key={m} title={t} aria-label={t} onClick={() => align.align(m)} style={b(false)}>{ic}</button>)}</div>
+    <div style={{ display: 'flex', gap: 2 }}>{DISTS.map(([a, t, ic]) => <button key={a} title={t} aria-label={t.replace(/\(.*\)/, '')} disabled={align.n < 3} onClick={() => align.dist(a)} style={b(align.n < 3)}>{ic}</button>)}</div>
   </div>
 }
 // 표 글자 「자동」 켜고 끄기(2026-10-18 사용자: 끄려고 크기를 일부러 바꿔야 했음) — 켜짐 = 칸에 맞춰 줄어듦, 끄면 지금 보이는 크기 그대로 고정
 function AutoToggle({ on, onClick }) {
-  return <button title={on ? '자동 — 칸에 맞춰 글자 크기가 바뀌어요. 누르면 지금 크기로 고정' : '고정 — 누르면 칸에 맞춰 자동으로'} onClick={onClick}
+  return <button aria-pressed={on} title={on ? '자동 — 칸에 맞춰 글자 크기가 바뀌어요. 누르면 지금 크기로 고정' : '고정 — 누르면 칸에 맞춰 자동으로'} onClick={onClick}
     style={btn(on, { padding: '0 6px', fontSize: 11, flex: 'none', whiteSpace: 'nowrap', ...(on ? {} : { background: C.seg }) })}>자동</button>   // 줄바꿈 금지 — 폭이 모자라 「자/동」 두 줄로 꺾였음(2026-10-23)
 }
 // 여러 개 중 하나(켜진 것만 코랄)
@@ -211,7 +211,7 @@ function Stepper({ values, step = 1, fmt = v => v, onStep, onSet, title, grow, t
     timer.current = setTimeout(tick, 400) }
   const commit = v => { setTyping(null); const x = parseFloat(String(v).replace(/[^\d.\-]/g, '')); if (!Number.isFinite(x)) return; if (onSet) onSet(x); else if (!mixed) onStep(x - lo) }
   const pm = (d, label) => <button aria-label={title + (d < 0 ? ' 줄이기' : ' 늘리기')} onPointerDown={hold(d)} onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop}
-    onClick={e => { if (e.detail === 0) onStep(d) }} style={btn(false, { width: 22 })}>{label}</button>   // 글쇠(Enter·Space)로 누르면 한 번
+    onClick={e => { if (e.detail === 0) onStep(d) }} style={btn(false, { width: 22, flex: 'none' })}>{label}</button>   // 글쇠(Enter·Space)로 누르면 한 번
   return <div data-testid={testid} title={mixed ? `${title} — 서로 다름(±는 각자에 더함, 숫자 두 번 누르면 모두 같은 값)` : `${title} — 숫자 두 번 누르면 직접 입력`} onWheel={e => onStep(e.deltaY < 0 ? step : -step)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: C.seg, borderRadius: 8, padding: 2, ...(grow ? { flex: 1, minWidth: 0 } : {}) }}>
     {pm(-step, '−')}
     {typing != null ? <input data-testid={testid ? testid + '-input' : 'step-input'} autoFocus value={typing} onChange={e => setTyping(e.target.value)} onFocus={e => e.currentTarget.select()}
@@ -266,7 +266,8 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, con
     window.addEventListener('pointerdown', down, true); window.addEventListener('keydown', key, true)
     return () => { window.removeEventListener('pointerdown', down, true); window.removeEventListener('keydown', key, true) }
   }, [pop])
-  const [folded, toggleFold] = useFold('props')
+  const [f0, toggleFold] = useFold('props'), narrow = (document.querySelector('[data-testid=board]')?.clientWidth || 999) < 400, [open1, setOpen1] = useState(false)
+  const folded = narrow ? !open1 : f0   // 칠판 폭 400 미만 = 접힌 채 시작(2026-11-10 4단계 사용자 고름 — 고른 도형을 덮었음), 펼치면 이번만
   const one = v => (v.length && v.every(x => x === v[0]) ? v[0] : null)
   const arrows = items.filter(isArrow), allArrows = arrows.length === items.length
   const lineItems = items.filter(lineKey), wItems = items.filter(hasWidth), fillItems = items.filter(fillKey)
@@ -316,16 +317,16 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, con
     {(hlItems.length > 0 || edLive) && <div data-testid="props-fmt" style={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'space-between', background: C.seg, borderRadius: 8, padding: 2 }}><FmtButtons prefix="pfmt" w={20} st={fmtSt} act={fmtAct} /></div>}
   </>
 
-  return <div data-testid="props-card" data-folded={folded || undefined} data-keep-edit={edLive ? '' : undefined} onPointerDown={e => e.stopPropagation()} onMouseDown={e => { if (edLive && e.target.tagName !== 'INPUT') e.preventDefault() }} style={{ position: 'absolute', right: 'calc(12px + var(--mb-right-inset, 0px))', top: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
-    padding: '8px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', maxHeight: 'calc(100% - 24px)', overflowY: 'auto' }}>   {/* 높이 = 칠판 끝까지(미니맵은 왼쪽 판으로 감 — 전엔 아래 180을 비워 일찍 스크롤) */}
+  return <div data-testid="props-card" role="region" aria-label="속성" data-folded={folded || undefined} data-keep-edit={edLive ? '' : undefined} onPointerDown={e => e.stopPropagation()} onMouseDown={e => { if (edLive && e.target.tagName !== 'INPUT') e.preventDefault() }} style={{ position: 'absolute', right: 'calc(12px + var(--mb-right-inset, 0px))', top: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
+    padding: '8px 10px 10px', boxShadow: 'var(--mb-shadow)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', maxHeight: 'calc(100% - 24px)', overflowY: 'auto' }}>   {/* 높이 = 칠판 끝까지(미니맵은 왼쪽 판으로 감 — 전엔 아래 180을 비워 일찍 스크롤) */}
     {/* 머리말 = 고른 것의 종류(2026-10-23 사용자 검토: 「속성」 제목과 「종류」 줄이 같은 말 — 한 줄로). 도형이면 눌러서 다른 도형으로 */}
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: folded ? 0 : 2 }}>
       {(swapOne || swapGrp) && !folded ? <div ref={swapRef} data-ppop="swap" style={{ flex: 1, minWidth: 0 }}>
-        <button title="클릭: 다른 도형으로 바꾸기(크기·연결 유지)" aria-expanded={pop === 'swap'} onClick={() => setPop(pop === 'swap' ? null : 'swap')} style={btn(pop === 'swap', { width: '100%', justifyContent: 'flex-start', gap: 6, padding: '0 4px', height: 28 })}>
+        <button title="다른 도형으로 바꾸기(크기·연결 유지)" aria-haspopup="true" aria-expanded={pop === 'swap'} onClick={() => setPop(pop === 'swap' ? null : 'swap')} style={btn(pop === 'swap', { width: '100%', justifyContent: 'flex-start', gap: 6, padding: '0 4px', height: 28 })}>
           {swapOne ? shapeIcon(kindOf(swapOne)) : null}<span data-testid="prop-type" title={symName && items.length > 1 ? `${symName} · 조각 ${items.length}개` : undefined} style={{ font: "700 15px 'Pretendard', sans-serif", overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{swapOne ? title : symName || `묶음 ${items.length}개`}</span><span style={{ color: C.muted, marginLeft: 'auto' }}>▾</span></button>
         {pop === 'swap' && <FloatPanel anchor={swapRef} id="swap" width={180} testid="pop-swap">   {/* 떠 있는 목록 — 카드 안에 펼쳐 스크롤이 생겼음(2026-10-23 전수조사) */}
           {convert.length > 0 && <ConvertList convert={convert} onConvert={to => { onConvert(to); setPop(null) }} />}   {/* 맨 위 — 끝에 두면 내 심볼 밑이라 스크롤해야 보였음(2026-11-02 실검증) */}
-          {SWAP_KINDS.map(k => <button key={k} onClick={() => { if (swapGrp) onSwapTo(swapGrp, k === 'rect' || k === 'ellipse' ? k : 'sym:' + k); else if (k !== kindOf(swapOne)) set(it => (it._id === swapOne._id ? swapPatch(k) : null), '도형 바꾸기'); setPop(null) }}
+          {SWAP_KINDS.map(k => <button key={k} aria-current={!!swapOne && k === kindOf(swapOne) ? 'true' : undefined} onClick={() => { if (swapGrp) onSwapTo(swapGrp, k === 'rect' || k === 'ellipse' ? k : 'sym:' + k); else if (k !== kindOf(swapOne)) set(it => (it._id === swapOne._id ? swapPatch(k) : null), '도형 바꾸기'); setPop(null) }}
             style={btn(!!swapOne && k === kindOf(swapOne), { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>{shapeIcon(k)}<span style={{ fontSize: 12 }}>{kindName(k)}</span></button>)}
           {/* 내 심볼 — 폴더마다 구분선(데스크톱 `_fill_swap_menu`). 묶음으로 바뀌고 라벨은 안 옮김(여러 조각 중 어디에 둘지 애매 — 데스크톱과 같음) */}
           {(library?.folders || []).map(f => { const list = (library.symbols || []).filter(s => s.folder === f); if (!list.length) return null
@@ -341,7 +342,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, con
         {pop === 'swap' && <FloatPanel anchor={swapRef} id="swap" width={180} testid="pop-swap"><ConvertList convert={convert} onConvert={to => { onConvert(to); setPop(null) }} top /></FloatPanel>}
       </div>
       : <span data-testid="prop-type" style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</span>}
-      <FoldBtn minus folded={folded} onClick={toggleFold} /></div>
+      <FoldBtn minus folded={folded} onClick={narrow ? () => setOpen1(o => !o) : toggleFold} /></div>
     {!folded && align?.n >= 2 && <AlignRow align={align} />}
     {allArrows && <Row label="종류"><Seg value={kind} onPick={onKind} items={[['straight', ICONS.straight, '직선'], ['curved', ICONS.curved, '곡선'], ['ortho', ICONS.ortho, '직각']]} /></Row>}
     {allText && textRows}
