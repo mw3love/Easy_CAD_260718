@@ -93,7 +93,7 @@ test('받아 적던 회의는 새로 열어도 남음 → 정리하기 / 버리�
   await expect(live).toHaveAttribute('data-state', 'saved')
   await expect(live).toContainText('받아 적던 회의 · 1구간')
   await expect(page.getByRole('button', { name: '정리하기' }).first()).toBeVisible()
-  await page.getByTestId('meeting-live-drop').click()
+  await page.getByTestId('meeting-live-drop').click(); await page.getByTestId('meeting-drop-ok').click()   // 버리기 = 확인 창 먼저(2026-11-10 6단계)
   await expect(live).toBeHidden()
   expect(await page.evaluate(n => localStorage.getItem(`mb-meet:${n}`), name)).toBeNull()
 

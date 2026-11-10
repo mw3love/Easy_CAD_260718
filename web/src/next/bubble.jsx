@@ -7,6 +7,7 @@ import { DOC_NAME } from './doc.js'
 import { keyHeaders } from './kairosKey.js'
 import { Spinner, shrinkImage } from './chat.jsx'
 import { Composer } from './composer.jsx'
+import { aiError } from '../chatFormat.js'
 
 const F = "'Pretendard', sans-serif"
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', seg: 'var(--mb-seg)' }
@@ -38,9 +39,9 @@ export function Bubble({ id, info, cam, size, thread = [], first, onThread, onCl
   useEffect(() => { list.current?.scrollTo(0, list.current.scrollHeight) }, [thread.length, busy])
   if (!info) return null
   const pos = bubblePos(info.box, cam, size)
-  async function send(said) {
+  async function send(said, base = thread, at = Date.now()) {   // base·at = 「다시 보내기」 — 실패한 마지막 질문을 같은 시각으로 다시(서버 합치기는 메시지를 안 지워서 새 시각이면 두 번 쌓임)
     const q = (said ?? draft).trim(); if (!q || busy) return
-    const mine = { role: 'user', content: q, at: Date.now() }, next = [...thread, mine]
+    const mine = { role: 'user', content: q, at }, next = [...base, mine]
     onThread(next); setDraft(''); setBusy(true); setErr('')
     try {
       let model = ''; try { model = localStorage.getItem('magic-board-model') || '' } catch { /* 서버 기본 모델 */ }
@@ -57,7 +58,7 @@ export function Bubble({ id, info, cam, size, thread = [], first, onThread, onCl
         if (before) { swaps.current[next.length] = { before, after }; a.img = { url: d.image_url, on: true } }
       }
       onThread([...next, a])
-    } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
+    } catch (e) { setErr(aiError(e)) } finally { setBusy(false) }
   }
   function apply(i) {   // 손으로 고친 장에 AI가 고친 장을 덮어씀(Ctrl+Z 한 번)
     const m = thread[i], r = m?.pend && onEdit(m.pend); if (!r?.before) return
@@ -72,7 +73,8 @@ export function Bubble({ id, info, cam, size, thread = [], first, onThread, onCl
     const on = !m.fix.on; if (!onFields(on ? m.fix.after : m.fix.before)) return
     onThread(thread.map((x, k) => (k === i ? { ...x, fix: { ...x.fix, on } } : x))); onStatus?.(on ? '바꾼 것으로' : '원래대로')
   }
-  const btn = { all: 'unset', cursor: 'pointer', font: `400 11.5px ${F}`, color: C.muted, padding: '2px 7px', borderRadius: 6, border: `1px solid ${C.line}` }
+  const btn = { all: 'unset', cursor: 'pointer', font: `400 11.5px ${F}`, color: C.muted, padding: '2px 7px', borderRadius: 6, border: '1px solid var(--mb-ctl)' }
+  const resend = () => { const last = thread.at(-1); if (last?.role === 'user') send(last.content, thread.slice(0, -1), last.at) }   // 오류 뒤 「다시 보내기」 = 마지막 질문 그대로
   return <div data-testid="bubble" data-id={id} role="dialog" aria-label={`AI 말풍선 — ${bubbleKind(info.type)}`}
     onPointerDown={e => e.stopPropagation()} onWheel={e => e.stopPropagation()} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }}
     style={{ position: 'absolute', left: pos.x, top: pos.y, width: BUBBLE_W, maxHeight: 360, zIndex: 8, display: 'flex', flexDirection: 'column', background: C.card, color: C.ink,
@@ -80,13 +82,13 @@ export function Bubble({ id, info, cam, size, thread = [], first, onThread, onCl
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 8px 6px 12px', borderBottom: `1px solid ${C.line}` }}>
       <b style={{ fontSize: 13 }}>💬 {info.slide ? '장' : bubbleKind(info.type)} 말풍선</b>
       <span data-testid="bubble-scope" style={{ font: `400 11px ${F}`, color: C.muted }} title={info.cut ? '글이 길어 앞쪽 2만 자까지만 보내요' : undefined}>{info.slide ? '이 장을 보고 고쳐요' : info.inside ? `프레임 안 ${info.inside}개를 보고 답해요${info.cut ? ' · 글 일부만' : ''}` : '이것만 보고 답해요'}</span>
-      <button data-testid="bubble-close" title="닫기(Esc) — 대화는 남아요" onClick={onClose} style={{ ...btn, border: 0, marginLeft: 'auto', fontSize: 14 }}>✕</button>
+      <button data-testid="bubble-close" aria-label="말풍선 닫기" className="mb-hit" title="닫기(Esc) — 대화는 남아요" onClick={onClose} style={{ ...btn, position: 'relative', border: 0, marginLeft: 'auto', fontSize: 14 }}>✕</button>
     </div>
-    <div ref={list} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div ref={list} role="log" aria-label="말풍선 대화" aria-busy={busy} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
       {!thread.length && <div style={{ color: C.muted, fontSize: 12.5 }}>{info.edit ? '고쳐 달라면 그 자리에서 고쳐요(Ctrl+Z로 되돌림). 물으면 답만 해요.' : '이 물건만 보고 답해요 — 큰 대화창과 섞이지 않아요.'}</div>}
       {thread.map((m, i) => m.role === 'user'
-        ? <div key={i} data-testid="bubble-q" style={{ alignSelf: 'flex-end', maxWidth: '88%', background: 'rgba(218,119,86,.12)', borderRadius: 10, padding: '4px 9px', whiteSpace: 'pre-wrap' }}>{m.content}</div>
-        : <div key={i} data-testid="bubble-a" style={{ alignSelf: 'flex-start', maxWidth: '96%', background: C.seg, borderRadius: 10, padding: '5px 9px', whiteSpace: 'pre-wrap' }}>
+        ? <div key={i} data-testid="bubble-q" style={{ alignSelf: 'flex-end', maxWidth: '88%', background: C.seg, borderRadius: 10, padding: '4px 9px', whiteSpace: 'pre-wrap', wordBreak: 'keep-all', overflowWrap: 'anywhere' }}>{m.content}</div>
+        : <div key={i} data-testid="bubble-a" style={{ alignSelf: 'flex-start', maxWidth: '96%', background: C.seg, borderRadius: 10, padding: '5px 9px', whiteSpace: 'pre-wrap', wordBreak: 'keep-all', overflowWrap: 'anywhere' }}>
           {m.content}
           {m.fix && <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4 }}>
             <button data-testid="bubble-flip" style={btn} onClick={() => flip(i)} title="칠판의 것을 바꿔 끼워요">{m.fix.on ? '원래대로' : '바꾼 것으로'}</button>
@@ -101,7 +103,8 @@ export function Bubble({ id, info, cam, size, thread = [], first, onThread, onCl
           {m.model && <div style={{ font: `400 10.5px ${F}`, color: C.muted, marginTop: 2 }}>{m.model}{m.credits ? ` · 약 ${Math.round(m.credits * 10) / 10}크레딧` : ''}</div>}
         </div>)}
       {busy && <div data-testid="bubble-busy" style={{ display: 'flex', alignItems: 'center', gap: 6, color: C.muted, fontSize: 12.5 }}><Spinner />생각 중…</div>}
-      {err && <div data-testid="bubble-err" style={{ color: '#dc2626', fontSize: 12.5 }}>{err}</div>}
+      {err && <div data-testid="bubble-err" role="alert" style={{ color: 'var(--mb-danger-ink)', fontSize: 12.5, wordBreak: 'keep-all', overflowWrap: 'anywhere' }}>{err}
+        {thread.at(-1)?.role === 'user' && <button data-testid="bubble-retry" style={{ ...btn, marginLeft: 6 }} onClick={resend}>다시 보내기</button>}</div>}
     </div>
     <div style={{ padding: 8, borderTop: `1px solid ${C.line}` }}>
       <Composer inputRef={ta} inputId="bubble-input" sendId="bubble-send" label="이 물건에 대해 묻기" value={draft} placeholder={HINT[info.edit] || HINT[info.type] || '이것에 대해 물어보세요'} onChange={e => setDraft(e.target.value)}

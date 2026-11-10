@@ -116,6 +116,19 @@ export function nearSpot(c, boxes, w, h, { pad = 24, step = 24, view = null } = 
   return { x: x0, y: y0 }
 }
 
+// AI 오류 → 쉬운 한 줄(2026-11-10 화면 검사 6단계 — 「Failed to fetch」·「서버 응답 502」 같은 원문이 그대로 떴음). 대화창·말풍선·회의록이 같이 씀.
+// 연결 끊김·바쁨·크레딧은 정해진 말, 우리가 한글로 쓴 까닭(서버 `friendly_error`·「🔑 내 키가 필요해요」 등)은 그대로, 그 밖은 쉬운 말 + 원문 앞부분을 괄호로
+export function aiError(e) {
+  const raw = String(e?.message ?? e ?? '').trim()
+  if (/^(🔑|취소했어요)/.test(raw)) return raw
+  if (/failed to fetch|networkerror|load failed|network error|서버 응답 50[234]$/i.test(raw)) return '서버에 연결이 안 돼요 — 인터넷을 확인하고 다시 보내 주세요'
+  if (/\b402\b|크레딧이 모자|insufficient|credit/i.test(raw)) return '크레딧이 모자라요 — 🔑 내 키를 넣어 주세요'
+  if (/\b429\b|너무 잦|바빠요|resource_exhausted|too many requests/i.test(raw)) return 'KAIROS가 바빠요 — 잠시 뒤 다시 보내 주세요'
+  if (/^서버 응답 \d+$/.test(raw)) return `서버에서 오류가 났어요 — 다시 보내 주세요 (${raw})`
+  if (/[가-힣]/.test(raw)) return raw
+  return `KAIROS 처리 중 오류가 났어요 — 다시 보내 주세요${raw ? ` (${raw.length > 60 ? raw.slice(0, 60) + '…' : raw})` : ''}`
+}
+
 // 칠판에서 고른 것들의 글 → 질문에 같이 보낼 글(빈 것은 빼고, 겹친 것은 한 번만)
 export function contextText(texts, max = 20000) {
   const seen = new Set(), out = []

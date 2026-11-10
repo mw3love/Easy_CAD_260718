@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { DOC_NAME } from './doc.js'
-import { answerTable, contextText, iconName, inlineParts, parseAnswer } from '../chatFormat.js'
+import { aiError, answerTable, contextText, iconName, inlineParts, parseAnswer } from '../chatFormat.js'
 import { CHART_KINDS, chartChoices } from './chart.js'
 import { CHART_ICONS } from './props.jsx'
 import { urlSpans } from './geom.js'
@@ -18,7 +18,8 @@ import { siteOf } from './webcard.js'
 import { getKairosKey, KEY_RE, keyHeaders, setKairosKey } from './kairosKey.js'
 import { startMic } from './mic.js'
 import { svgPreview } from './svgin.js'
-import { Confirm, hoverBg, isPhone, useModalDialog } from './ui.jsx'
+import { Confirm, hoverBg, isPhone, menuBelow, useModalDialog } from './ui.jsx'
+import { FloatMenu } from './ctxmenu.jsx'
 import { Composer } from './composer.jsx'
 import ICONS from './icons.json' with { type: 'json' }
 import { DeepAsk, SlidesPlan, askBrief, keptSlides, nextPic, picOf } from './deepchat.jsx'
@@ -95,7 +96,7 @@ const MODEL_KEY = 'magic-board-model'   // 고른 모델은 이 브라우저에�
 const PICKS_KEY = 'magic-board-models'  // 「모델 설정」 — 일마다 고른 모델 {일: id}(없으면 자동, 2026-10-26)
 // 「모델 설정」 칸 — 고를 의미가 있는 일만(2026-10-26 사용자 선택). 길 고르기·검색·받아쓰기·찾기·글 읽기는 늘 자동. [일, 이름, 종류(서버 choices), 서버 jobs 이름]
 // 2026-11-04 사용자(「항목이 너무 많음」) — 8칸 → 넷: 칸 하나 = 서버 일 여럿(`PICK_GROUPS`). 자동이면 일마다 지금처럼 따로, 고르면 묶음 전부 그 모델
-const PICK_ROWS = [['chat', '대화 · 회의 요약', 'llm'], ['image', '이미지', 'image'], ['make', '만들기 — 정리 문서 · 슬라이드', 'llm'], ['draw', '그리기 — 아이콘 · 도형 · 인터랙티브 HTML', 'llm']]
+const PICK_ROWS = [['chat', '대화 · 회의 요약', 'llm'], ['image', '이미지', 'image'], ['make', '만들기 — 문서 · 슬라이드', 'llm'], ['draw', '그리기 — 아이콘 · 도형 · 인터랙티브 HTML', 'llm']]
 const PICK_GROUPS = { make: ['report', 'slides'], draw: ['icon', 'diagram', 'live'] }   // 칸 → 서버 일(server `PICK_JOBS`)
 const pickOf = job => Object.keys(PICK_GROUPS).find(g => PICK_GROUPS[g].includes(job)) || job   // 서버 일 → 그 일의 칸
 const sendPicks = p => Object.fromEntries(Object.entries(p).flatMap(([k, v]) => (PICK_GROUPS[k] || [k]).map(j => [j, v])))   // 칸 → 서버가 아는 일 이름으로 펼침
@@ -111,25 +112,24 @@ const css = {
   panel: { width: CHAT_W, flex: 'none', position: 'relative', display: 'flex', flexDirection: 'column', background: C.bar, borderLeft: `1px solid ${C.line}`, font: `400 13.5px/1.55 ${F}`, color: C.ink, minHeight: 0 },
   head: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '10px 12px', borderBottom: `1px solid ${C.line}` },
   msgs: { flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 10 },
-  me: { alignSelf: 'flex-end', maxWidth: '92%', background: C.seg, borderRadius: 10, padding: '7px 10px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
-  ai: { alignSelf: 'stretch', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 10px', wordBreak: 'break-word' },
-  err: { alignSelf: 'stretch', background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 10, padding: '8px 10px' },
+  me: { alignSelf: 'flex-end', maxWidth: '92%', background: C.seg, borderRadius: 10, padding: '7px 10px', whiteSpace: 'pre-wrap', wordBreak: 'keep-all', overflowWrap: 'anywhere' },
+  ai: { alignSelf: 'stretch', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 10px', wordBreak: 'keep-all', overflowWrap: 'anywhere' },
+  err: { alignSelf: 'stretch', background: C.card, border: `1px solid ${C.line}`, color: 'var(--mb-danger-ink)', borderRadius: 10, padding: '8px 10px', wordBreak: 'keep-all', overflowWrap: 'anywhere' },   // 다른 화면 오류와 같게(2026-11-10 6단계 — 주황 상자였음)
   meta: { font: `400 11px ${F}`, color: C.muted },
   ctx: { display: 'block', font: `400 11px ${F}`, color: LINK_CHAT, marginBottom: 2 },
   bigNav: { font: `600 13px ${F}`, color: '#fff', background: 'rgba(255,255,255,.14)', border: '1px solid rgba(255,255,255,.3)', borderRadius: 7, padding: '6px 12px', cursor: 'pointer' },
   done: { font: `700 12px ${F}`, color: 'light-dark(#166534, #4ade80)', background: 'rgba(22,163,74,.1)', border: `1px solid ${DONE}`, borderRadius: 6, padding: '2px 9px', cursor: 'pointer' },
   pin: { font: `700 12px ${F}`, color: 'var(--mb-accent)', background: 'transparent', border: '1px solid #da7756', borderRadius: 6, padding: '2px 9px', cursor: 'pointer' },
-  ghost: { font: `400 12px ${F}`, color: C.muted, background: 'transparent', border: `1px solid ${C.line}`, borderRadius: 6, padding: '2px 9px', cursor: 'pointer' },
+  ghost: { font: `400 12px ${F}`, color: C.muted, background: 'transparent', border: '1px solid var(--mb-ctl)', borderRadius: 6, padding: '2px 9px', cursor: 'pointer' },
   foot: { borderTop: `1px solid ${C.line}`, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 },
   chip: { alignSelf: 'flex-start', font: `400 11.5px ${F}`, color: LINK_CHAT, background: 'rgba(90,169,255,.15)', borderRadius: 99, padding: '2px 9px' },
   input: { font: `400 13.5px/1.5 ${F}`, border: `1px solid ${C.line}`, borderRadius: 8, padding: '8px 10px', resize: 'none', minHeight: 40, maxHeight: 200, outline: 'none', background: C.card, color: C.ink },
   kind: { font: `600 11px ${F}`, color: C.muted, background: C.seg, borderRadius: 99, padding: '1px 8px' },
   bar: { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderBottom: `1px solid ${C.line}` },
   menu: { position: 'absolute', left: 0, bottom: 'calc(100% + 4px)', zIndex: 3, display: 'flex', flexDirection: 'column', minWidth: 170, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, boxShadow: 'var(--mb-shadow)', padding: 4 },
-  item: { all: 'unset', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, font: `400 12.5px ${F}`, color: C.ink, whiteSpace: 'nowrap' },
   drop: { display: 'flex', flexDirection: 'column', maxHeight: 260, overflowY: 'auto', borderBottom: `1px solid ${C.line}`, background: C.card },
   row: { all: 'unset', cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'center', padding: '6px 12px', font: `400 12.5px ${F}`, color: C.ink, borderBottom: `1px solid ${C.line}` },
-  select: { font: `400 12px ${F}`, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 6, padding: '2px 4px', background: C.card, maxWidth: 210 },
+  select: { font: `400 12px ${F}`, color: C.ink, border: '1px solid var(--mb-ctl)', borderRadius: 6, padding: '2px 4px', background: C.card, maxWidth: 210 },
 }
 
 // 답 글 보이기(굵게·목록·제목만 — 카드에 붙는 모양과 같은 규칙). chart = { pick(표 줄, 모양), down(e, 표 줄, 모양) } — 있으면 숫자 표 밑에 「그래프로」 단추
@@ -330,7 +330,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
 
   async function send(text = null, kind = '', from = null, opts = {}) {   // opts = 밖에서 시킨 일의 덧붙임(「이 장 움직이게」 = { frame })   // text·kind = 밖에서 시킨 질문(칠판 우클릭 「정리 문서 만들기」 — 입구는 대화창 하나), from = 「그림으로도」(정리 문서와 같은 자료)
     if (text != null && kind === 'slides') { if (!busy) slidesSend(kind, text); return }   // 칠판 우클릭 「발표 자료 만들기」 = 그 자료로 질문지부터
-    if (text != null && kind === 'motion') { if (!busy) motionSend(text, opts.frame); return }   // 칠판 우클릭 「이 장 움직이게」(계획 ⑤)   // 칠판 우클릭 「정리 › 한 판으로」 = 칠판 자료로 딥모드 질문지(2026-11-08)
+    if (text != null && kind === 'motion') { if (!busy) setCostAsk({ what: `${text.replace(/ 움직이게$/, '')}을 움직이게 만들어요(3~4분)`, ok: '만들기', motion: [text, opts.frame] }); return }   // 비싼 일 = 확인 창 먼저(2026-11-10 6단계)   // 칠판 우클릭 「이 장 움직이게」(계획 ⑤)   // 칠판 우클릭 「정리 › 한 판으로」 = 칠판 자료로 딥모드 질문지(2026-11-08)
     if (text == null && !busy && (deepSend(kind) || slidesSend(kind))) return
     const pend = text == null && !from && replyTo == null ? msgs.findLastIndex(m => m.role !== 'error') : -1
     if (pend >= 0 && msgs[pend].kind === 'ask' && draft.trim() && !busy) return choose(pend, kind, draft.trim())   // 되묻기에 글로 답함(§8 항목64)
@@ -358,7 +358,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
       const done = await fixDoc(await checkLive(ans, [...before, mine]))
       if (opts.pin && (done.kind === 'report' || done.kind === 'live') && done.html && !done.docs) { const ids = ed.current?.pinCard(done); if (ids) { setSkipSel(ids.join()); done.pinned = true } }   // AI 칩 「문서」·「HTML」 = 칠판에 바로 붙임(2026-11-09)
       update([...next, done]) } catch (e) {
-      setMsgs([...next, { role: 'error', content: String(e.message || e) }])   // 오류는 기록에 안 남김
+      setMsgs([...next, { role: 'error', content: aiError(e) }])   // 오류는 기록에 안 남김
     } finally { setBusy(null) }
   }
   // 딥모드(§8 항목66 3-2) — ① 「+ › 딥모드」 + 주제 = 질문지 카드(서버 안 부름) ② 「지면 계획 짜기」(입력 칸 글 = 「더」) ③ 계획 카드에서 말로 고치기 = 계획 다시 ④ 「이대로 만들기」 = 본문 → 칠판에 판.
@@ -398,7 +398,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
       const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
       if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
       return d
-    } catch (e) { setMsgs(cur => [...cur.filter(x => x.role !== 'error'), { role: 'error', content: String(e.message || e) }]); return null } finally { setBusy(null) }
+    } catch (e) { setMsgs(cur => [...cur.filter(x => x.role !== 'error'), { role: 'error', content: aiError(e) }]); return null } finally { setBusy(null) }
   }
   // 움직이는 카드 검사(2026-11-08) — 보이지 않는 칸에서 돌려 글자 잘림·겹침을 잼(크레딧 없음). 문제가 있으면 한 번만 고쳐 보고(약 45크레딧) 나아졌을 때만 바꿈
   // 📄 새 문서 재기 → 잘림·넘침이 있는 블록만(최대 3개) 다시 써서 한 번 고침, 문제가 줄었을 때만 바꿈(2026-11-09 문서 통합 2단계 ④)
@@ -447,7 +447,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
       update([...next, done]); setBusyJob('motion-check')
       const c = await checkCard(d.html, { w: info.w, h: info.h, motion: true })   // 장은 비싸서(수백 크레딧) 고치기는 사용자가 단추로
       if (c?.problems.length) update([...next, { ...done, check: problemLines(c.problems) }])
-    } catch (e) { setMsgs([...next, { role: 'error', content: String(e.message || e) }]) } finally { setBusy(null) }
+    } catch (e) { setMsgs([...next, { role: 'error', content: aiError(e) }]) } finally { setBusy(null) }
   }
   async function motionFix(i) {
     const m = msgs[i], info = ed.current?.motionInfo?.(m.motionFrame), html = ed.current?.liveModel?.().items.find(it => it.motion_of === m.motionFrame)?.html
@@ -462,7 +462,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
       const c = await checkCard(d.html, { w: info.w, h: info.h, motion: true }), better = !c || c.problems.length < m.check.length   // 못 재면 사용자가 시킨 대로 바꿈
       const cid = better ? ed.current?.motionPlace?.(m.motionFrame, d) : ''
       update(msgs.map((x, j) => (j !== i ? x : { ...x, ...(cid ? { motionId: cid } : {}), fixTried: true, fixKept: !better, check: better ? (c?.problems.length ? problemLines(c.problems) : []) : x.check, credits: d.credits != null ? (x.credits || 0) + d.credits : x.credits })))
-    } catch (e) { fail(String(e.message || e)) } finally { setBusy(null) }
+    } catch (e) { fail(aiError(e)) } finally { setBusy(null) }
   }
   // 길 고르기가 「질문지 먼저」라고 한 길(서버 `kind: 'go'`) — 발표 자료 = 작은 책 질문지, 인포그래픽 = 딥모드 질문지(그림 한 장으로 — 대화창에선 「한 판」 대신, 2026-11-08 사용자)
   function goTo(to, q) { if (to === 'slides') slidesSend('slides', q); else if (to === 'infographic') deepSend('deep', q, { pic: true }) }
@@ -496,7 +496,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
       const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
       if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
       return d
-    } catch (e) { setMsgs(cur => [...cur.filter(x => x.role !== 'error'), { role: 'error', content: String(e.message || e) }]); return null } finally { setBusy(null) }
+    } catch (e) { setMsgs(cur => [...cur.filter(x => x.role !== 'error'), { role: 'error', content: aiError(e) }]); return null } finally { setBusy(null) }
   }
   const slidesPlanMsg = (m, d) => ({ role: 'assistant', kind: 'slides', step: 'plan', topic: m.topic, brief: m.brief, material: m.material, ...(m.imgIds ? { imgIds: m.imgIds } : {}), plan: d.plan, estimate: d.estimate, drop: [], model: d.model, elapsed: d.elapsed, credits: d.credits, at: Date.now() })
   async function slidesGo(i, more) {
@@ -536,7 +536,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     const boardImgs = selImgs.length ? await Promise.all(selImgs.map(shrinkImage)) : []
     setBusy(Date.now()); setBusyJob(k)
     try { const a = await ask(sent, k, '', { ...extra, ...(boardImgs.length ? { board_images: boardImgs } : {}) }); update([...shown, a, ...msgs.slice(i + 1)]) } catch (e) {
-      setMsgs([...msgs.filter(x => x.role !== 'error'), { role: 'error', content: String(e.message || e) }])
+      setMsgs([...msgs.filter(x => x.role !== 'error'), { role: 'error', content: aiError(e) }])
     } finally { setBusy(null) }
   }
   // 🔷 도형 답 → 칠판의 그 판으로(지웠으면 받은 자리로 다시 지음 — AI 안 부름)
@@ -614,7 +614,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
     if (busy || history.at(-1)?.role !== 'user') return
     setBusy(Date.now()); setBusyJob(m.kind || '')
     try { const pv = history.at(-2), a = await ask(history, m.kind || '', m.kind === 'report' && pv?.html && !pv.docs ? pv.html : '', m.kind === 'report' && pv?.docs ? { prev_docs: pv.docs.map(({ style, html }) => ({ style, html })) } : m.kind === 'report' && pv?.style ? { prev_style: pv.style } : {}); update(msgs.map((x, j) => (j === i ? { ...a, prev: { ...m, prev: undefined } } : x))) } catch (e) {
-      setMsgs([...msgs.filter(x => x.role !== 'error'), { role: 'error', content: String(e.message || e) }])
+      setMsgs([...msgs.filter(x => x.role !== 'error'), { role: 'error', content: aiError(e) }])
     } finally { setBusy(null) }
   }
   // 후보 「2개 더 보기」(2026-10-27 사용자) — 같은 질문(그 앞 대화까지)·같은 종류로 한 번 더 물어 이 답 후보 뒤에 덧붙임(앞 후보·고른 표시는 그대로). 새로 그린 답(후보 2개)에만, 4개까지
@@ -629,19 +629,17 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
       if (!a[key]?.length) throw new Error('후보를 더 못 만들었어요')
       setMsgs(cur => { const next = cur.map(x => (x.at === m.at ? { ...x, [key]: [...x[key], ...a[key]].slice(0, MORE_MAX), ...(a.credits != null ? { credits: (x.credits || 0) + a.credits } : {}) } : x)); save(next); return next })
     } catch (e) {
-      setMsgs(cur => [...cur.filter(x => x.role !== 'error'), { role: 'error', content: String(e.message || e) }])
+      setMsgs(cur => [...cur.filter(x => x.role !== 'error'), { role: 'error', content: aiError(e) }])
     } finally { setBusy(null) }
   }
-  // ⋯ 메뉴 글쇠(2026-11-09 점검): ↑↓ = 옮기기, Esc = 닫고 ⋯로
-  const menuKeys = e => { const items = [...e.currentTarget.querySelectorAll('button:not(:disabled)')], at = items.indexOf(document.activeElement)
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus() }
-    if (e.key === 'Escape') { e.stopPropagation(); e.currentTarget.parentElement.querySelector('[data-testid=answer-menu]')?.focus(); setMenuAt(null) } }
-  const [menuAt, setMenuAt] = useState(null)   // ⋯ 메뉴를 연 답의 at
+  // ⋯ 메뉴 = 공용 메뉴 부품(`ctxmenu.jsx` FloatMenu — 2026-11-10 6단계, 전엔 따로 만든 메뉴). menu = { at(답 시각), ...자리(menuBelow) }
+  const [menu, setMenu] = useState(null)
+  // 크레딧이 많이 드는 일(움직이는 장·잘린 곳 고치기 — 약 270~520크레딧) = 확인 창 먼저(2026-11-10 6단계 사용자 결정). costAsk = { what, ok, motion: [글, 프레임] | fix: 답 번호, back } — 실행은 확인한 때의 화면 값으로
+  const [costAsk, setCostAsk] = useState(null)
   useEffect(() => { if (!cfgOpen) return; const close = e => { if (!e.target.closest?.('[data-model-set]')) setCfgOpen(false) }; window.addEventListener('pointerdown', close, true); return () => window.removeEventListener('pointerdown', close, true) }, [cfgOpen])   // 「모델 설정」 = 바깥 누르면 닫힘
-  useEffect(() => { if (menuAt == null) return; const close = e => { if (!e.target.closest?.('[data-answer-menu]')) setMenuAt(null) }; window.addEventListener('pointerdown', close, true); return () => window.removeEventListener('pointerdown', close, true) }, [menuAt])
   function saveKey(v) { setKairosKey(v.trim()); setMyKey(!!v.trim()); setKeyDraft(''); setKeyOpen(false) }
   // 정리 문서 → 같은 자료로 인포그래픽 그림 후보(2026-10-20 사용자 선택 — 그림은 보기 좋지만 숫자를 지어낼 수 있어 기본은 문서, 원하면 한 번 더)
-  function drawReport(i) { const src = msgs.slice(0, i).filter(m => m.role === 'user').at(-1) || {}; send(`「${msgs[i].title || '정리 문서'}」 인포그래픽 그림`, 'image', { context: src.context, ctxCount: src.ctxCount }) }
+  function drawReport(i) { const src = msgs.slice(0, i).filter(m => m.role === 'user').at(-1) || {}; send(`「${msgs[i].title || '문서'}」 인포그래픽 그림`, 'image', { context: src.context, ctxCount: src.ctxCount }) }
   function retry() {
     const last = [...msgs].reverse().find(m => m.role === 'user'); if (!last) return
     setMsgs(msgs.filter(m => m.role !== 'error').slice(0, -1)); setDraft(last.content)
@@ -696,7 +694,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
         <b style={{ fontSize: 14 }}>KAIROS</b>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           {credits && <span data-testid="chat-credits" title={`이번 달 ${Math.round(credits.quota).toLocaleString('ko-KR')} 크레딧 중 남은 것(${myKey ? '내 키' : '서버 키'}) — 답을 받을 때마다 새로`}
-            style={{ font: `400 12px ${F}`, color: credits.remaining < credits.quota * 0.1 ? 'var(--mb-accent)' : C.muted }}>남은 {Math.round(credits.remaining).toLocaleString('ko-KR')}</span>}
+            style={{ font: `400 12px ${F}`, fontVariantNumeric: 'tabular-nums', color: credits.remaining < credits.quota * 0.1 ? 'var(--mb-accent)' : C.muted }}>남은 {Math.round(credits.remaining).toLocaleString('ko-KR')}</span>}
           <button title="대화창 닫기" aria-label={full ? undefined : '대화창 닫기'} onClick={onClose} style={{ ...css.ghost, padding: full ? '4px 12px' : '0 7px', fontSize: full ? 15 : undefined }}>{full ? '✕ 칠판' : '✕'}</button>
         </div>
       </div>
@@ -721,6 +719,9 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
         </div>
       </div>}
       {keyDel && <Confirm testid="key-delete" okTestid="key-delete-ok" title="내 KAIROS 키를 지울까요?" onOk={() => saveKey('')} onClose={() => setKeyDel(false)}>이 브라우저에 저장한 키만 지워요. 다시 쓰려면 키를 다시 넣어야 해요.</Confirm>}
+      {costAsk && <Confirm testid="cost-ask" okTestid="cost-ask-ok" title="약 270~520크레딧이 들어요" okLabel={costAsk.ok} danger={false} returnTo={costAsk.back}
+        onOk={() => (costAsk.motion ? motionSend(...costAsk.motion) : motionFix(costAsk.fix))} onClose={() => setCostAsk(null)}>
+        {costAsk.what}{credits ? <><br /><span data-testid="cost-ask-left" style={{ fontVariantNumeric: 'tabular-nums' }}>남은 크레딧 {Math.round(credits.remaining).toLocaleString('ko-KR')}({myKey ? '내 키' : '서버 키'})</span></> : null}</Confirm>}
       <div ref={box} role="log" aria-label="대화 내용" aria-busy={!!busy} style={css.msgs}>
         {loaded && !msgs.length && <div style={{ ...css.meta, fontSize: 12.5, lineHeight: 1.6 }}>
           무엇이든 물어보세요. 남길 답은 「칠판에 붙이기」나 끌어다 놓기로 메모가 됩니다.<br />칠판에서 메모나 글을 고른 채 물으면 그 내용을 같이 보냅니다.</div>}
@@ -728,7 +729,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
           ? <div key={i} style={css.me}>{m.addTo ? <span style={css.ctx}>위 질문에 덧붙여</span> : null}{m.reply_to ? <span style={css.ctx}>↩ 「{replyLabel(m.reply_to)}」에 이어서</span> : null}
             {m.ctxCount ? <span style={css.ctx}>칠판에서 고른 것 {m.ctxCount}개와 함께</span> : null}{m.imgCount ? <span style={css.ctx}>칠판에서 고른 그림 {m.imgCount}장과 함께</span> : null}{m.content}</div>
           : m.role === 'error'
-            ? <div key={i} style={css.err}>{m.content}<div style={{ marginTop: 6, display: 'flex', gap: 6 }}>{m.content.startsWith('🔑') && !myKey && <button style={css.pin} onClick={() => setKeyOpen(true)}>🔑 키 넣기</button>}<button style={css.ghost} onClick={retry}>질문 다시 고치기</button></div></div>
+            ? <div key={i} style={css.err}>{m.content}<div style={{ marginTop: 6, display: 'flex', gap: 6 }}>{m.content.includes('🔑') && !myKey && <button style={css.pin} onClick={() => setKeyOpen(true)}>🔑 키 넣기</button>}<button style={css.ghost} onClick={retry}>질문 다시 고치기</button></div></div>
             : <div key={i} style={css.ai}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                 <span data-testid="answer-kind" style={{ ...css.kind, ...(KINDS[m.kind] ? KINDS[m.kind][1] : null) }}>{m.kind === 'deep' && m.pic ? '🖼 인포그래픽' : (KINDS[m.kind] || KINDS.chat)[0]}</span>
@@ -766,7 +767,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
                 {m.fixKept && <div>고쳐 봤지만 나아지지 않아 그대로 뒀어요</div>}
                 {m.fixTried && !m.fixKept && !m.check?.length && <div>잘린 곳을 고쳤어요</div>}
                 {m.check?.length > 0 && <div>확인이 필요해요 — {m.check.slice(0, 3).join(' · ')}{m.check.length > 3 ? ` 외 ${m.check.length - 3}곳` : ''}</div>}
-                {m.kind === 'motion' && m.check?.length > 0 && !m.fixTried && m.motionFrame && <button data-testid="card-fix" disabled={!!busy} onClick={() => motionFix(i)} style={{ ...css.pin, marginTop: 4 }}>잘린 곳 고치기 (약 270~520크레딧)</button>}
+                {m.kind === 'motion' && m.check?.length > 0 && !m.fixTried && m.motionFrame && <button data-testid="card-fix" disabled={!!busy} onClick={e => setCostAsk({ what: '움직이는 장의 잘린 곳을 고쳐요(1~4분)', ok: '고치기', fix: i, back: e.currentTarget })} style={{ ...css.pin, marginTop: 4 }}>잘린 곳 고치기… (약 270~520크레딧)</button>}
               </div>}
               {m.html && m.kind !== 'live' && <div data-testid="answer-doc" style={{ marginTop: 6 }}>   {/* 정리 문서 미리보기 — A4 폭 794px를 대화창 폭에 맞춰 줄임(스크립트 없는 iframe) */}
                 {m.docs?.length > 1 ? <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>   {/* 두 장(발표용·읽기용) = 나란히 반쪽 크기 */}
@@ -821,20 +822,17 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
                   {m.pinned ? '칠판에 붙임 ✓' : '칠판에 붙이기'}</button>}
                 {/* ⋯ 하나에 — 이어 묻기·분기·다시 만들기·복사(2026-10-20 사용자: 다른 AI 채팅 참고, 버튼은 늘리지 않게) */}
                 {m.prev && <button data-testid="answer-prev" style={css.ghost} disabled={!!busy} title="다시 만들기 전 답으로 돌아가요(지금 답과 맞바꿈 — 크레딧 없음)" onClick={() => update(msgs.map((x, j) => (j === i ? { ...m.prev, prev: { ...m, prev: undefined } } : x)))}>↶ 앞 답으로</button>}
-                <span data-answer-menu style={{ position: 'relative' }}>
-                  <button data-testid="answer-menu" aria-label="이 답 메뉴" style={{ ...css.ghost, ...(replyTo === m.at ? { color: 'var(--mb-accent)', borderColor: 'var(--mb-accent)' } : null) }} aria-expanded={menuAt === m.at} onClick={() => setMenuAt(a => (a === m.at ? null : m.at))} title="이 답으로 — 이어 묻기·새 대화로 분기·다시 만들기·복사">{replyTo === m.at ? '↩ ⋯' : '⋯'}</button>
-                  {menuAt === m.at && <div role="menu" ref={el => el?.querySelector('button:not(:disabled)')?.focus()} onKeyDown={menuKeys} style={css.menu}><style>{'.mb-mi:hover:not(:disabled){background:var(--mb-seg)}.mb-mi:disabled{opacity:.45;cursor:default}'}</style>
-                    {[['↩ 여기서 이어 묻기', '다음 질문이 이 답까지를 이어받아요(그림이면 그 그림을 고쳐요)', () => setReplyTo(m.at)],
-                      ['⑂ 새 대화로 분기', '이 답까지를 새 대화로 — 지금 대화는 「지난 대화」에', () => branch(i)],
-                      ['↻ 다시 만들기', '같은 질문으로 한 번 더 — 크레딧이 다시 들어요. 바꾼 뒤 「↶ 앞 답으로」로 돌아갈 수 있어요', () => regen(i)],
-                      ...(!m.images?.length && !m.svgs?.length && !m.html ? [['복사', '답 글을 클립보드로', () => navigator.clipboard?.writeText(m.content).catch(() => {})]] : [])]
-                      .map(([label, tip, fn]) => <button key={label} role="menuitem" className="mb-mi" style={css.item} disabled={!!busy && label !== '복사'} title={tip} onClick={() => { setMenuAt(null); fn() }}>{label}</button>)}
-                  </div>}
-                </span>
+                <button data-testid="answer-menu" aria-label="이 답 메뉴" aria-haspopup="menu" style={{ ...css.ghost, ...(replyTo === m.at ? { color: 'var(--mb-accent)', borderColor: 'var(--mb-accent)' } : null) }} aria-expanded={menu?.at === m.at} onClick={e => { const p = menuBelow(e); setMenu(cur => (cur?.at === m.at ? null : { ...p, at: m.at })) }} title="이 답으로 — 이어 묻기·새 대화로 분기·다시 만들기·복사">{replyTo === m.at ? '↩ ⋯' : '⋯'}</button>
+                {/* 기다리는 동안은 복사만(전엔 흐린 줄) */}
+                {menu?.at === m.at && <FloatMenu testid="answer-menu-list" at={menu} onClose={() => setMenu(null)}
+                  entries={[...(busy ? [] : [['↩ 여기서 이어 묻기', '', () => { setMenu(null); setReplyTo(m.at) }],
+                    ['⑂ 새 대화로 분기', '', () => { setMenu(null); branch(i) }],
+                    ['↻ 다시 만들기 (크레딧이 다시 들어요)', '', () => { setMenu(null); regen(i) }]]),
+                    ...(!m.images?.length && !m.svgs?.length && !m.html ? [['복사', '', () => { setMenu(null); navigator.clipboard?.writeText(m.content).catch(() => {}) }]] : [])]} />}
                 <span data-testid="answer-model" style={{ ...css.meta, marginLeft: 'auto' }} title={m.swap ? `원래 모델 ${m.swap.from}이 KAIROS에서 ${m.swap.why === '은퇴' ? '은퇴해서' : '없어져서'} ${m.swap.to}로 했어요` : undefined}>{m.model}{m.swap ? ' (대신)' : ''}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · ${Math.round(m.credits)}크레딧` : ''}</span>
               </div>}
             </div>)}
-        {busy && <div data-testid="chat-busy" style={{ ...css.ai, color: C.muted }}><div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Spinner />{busyLine}</div><ChatSkeleton kind={busyJob} /></div>}
+        {busy && <div data-testid="chat-busy" style={{ ...css.ai, color: C.muted, fontVariantNumeric: 'tabular-nums' }}><div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Spinner />{busyLine}</div><ChatSkeleton kind={busyJob} /></div>}
       </div>
       <div style={css.foot}>
         {replyTo != null && <button data-testid="reply-chip" style={{ ...css.chip, color: 'var(--mb-accent)', background: 'rgba(218,119,86,.14)', cursor: 'pointer', border: 0 }} onClick={() => setReplyTo(null)} title="누르면 이어 묻기 취소">
@@ -858,7 +856,7 @@ export function ChatPanel({ ed, selKey, floating, full, onClose, request, focus,
               title={mic === 'listen' ? '듣는 중 — 다시 누르면 멈춰요(보내도 멈춤)' : '말로 입력 — 말하는 동안 글자가 바로 떠요(KAIROS 실시간 받아쓰기, 말한 1분에 약 2크레딧)'}
               style={{ ...tool, ...(mic === 'off' ? null : { width: 'auto', padding: '0 8px', gap: 3, display: 'flex', alignItems: 'center', font: `400 12px ${F}` }), ...(mic === 'listen' ? { color: '#fff', background: '#dc2626' } : null) }}>
               {mic === 'listen' ? '● 듣는 중' : mic === 'wait' ? <><Glyph svg={ICONS.mic} />…</> : mic === 'stopping' ? <><Glyph svg={ICONS.mic} />마무리…</> : <Glyph svg={ICONS.mic} />}</button>
-            <span data-testid="chat-foot-note" style={{ ...css.meta, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', ...(micErr ? { color: 'var(--mb-danger-ink)' } : null) }} title={micErr || (server ? `대화 기록은 이 칠판(「${DOC_NAME}」)에 함께 저장돼요` : '')}>{micErr || (server ? '' : '서버가 꺼져 있어요 — python web/server.py 를 켜야 물을 수 있어요.')}</span>
+            <span data-testid="chat-foot-note" role="status" style={{ ...css.meta, flex: 1, minWidth: 0, whiteSpace: 'normal', wordBreak: 'keep-all', overflowWrap: 'anywhere', ...(micErr ? { color: 'var(--mb-danger-ink)' } : null) }} title={micErr || (server ? `대화 기록은 이 칠판(「${DOC_NAME}」)에 함께 저장돼요` : '')}>{micErr || (server ? '' : '서버에 연결이 안 돼요 — 다시 연결되면 물을 수 있어요')}</span>
             <span data-model-set style={{ position: 'relative' }}>
             <button data-testid="model-settings" {...hoverBg} style={{ ...css.ghost, padding: '4px 7px', borderColor: 'transparent', ...(cfgOpen || Object.keys(picks).length ? { color: 'var(--mb-accent)', borderColor: 'var(--mb-accent)' } : null) }} aria-expanded={cfgOpen} onClick={() => setCfgOpen(o => !o)}
               title="모델 설정 — 일마다 쓸 모델(안 고르면 자동: 앱이 재 보고 고른 모델, 은퇴·없어지면 KAIROS 대체로 저절로)">⚙ 모델</button>
@@ -885,7 +883,7 @@ function ModelSettings({ models, picks, setPick, onClose }) {
         return (
           <label key={job} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <span style={css.meta}>{label}</span>
-            <select data-testid={`pick-${job}`} style={{ ...css.select, maxWidth: 'none', width: '100%' }} value={cur} onChange={e => setPick(job, e.target.value)}>
+            <select data-testid={`pick-${job}`} className="mb-field" style={{ ...css.select, maxWidth: 'none', width: '100%' }} value={cur} onChange={e => setPick(job, e.target.value)}>
               <option value="">자동 · {auto(job)}</option>
               {cur && !list.some(m => m.id === cur) && <option value={cur}>{cur}</option>}
               {[...new Set(list.map(m => m.maker))].map(g => (

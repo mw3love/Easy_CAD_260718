@@ -1,7 +1,7 @@
 // node --test web/test — KAIROS 대화창 순수 함수(§8 항목61 ⓒ)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { answerToRichText, contextText, freeSpot, nearSpot, iconName, inlineParts, parseAnswer, sourceLine } from '../src/chatFormat.js'
+import { aiError, answerToRichText, contextText, freeSpot, nearSpot, iconName, inlineParts, parseAnswer, sourceLine } from '../src/chatFormat.js'
 
 test('답 글 읽기 — 표(| 가 | 나 |): 붙은 줄 한 덩어리, |---| 이면 첫 줄 머리글(2026-10-20)', () => {
   const ln = parseAnswer('날씨 요약\n| 항목 | 내일 |\n|---|:---:|\n| 기온 | **9~18℃** |\n| 오전 | 비 |\n\n끝')
@@ -83,4 +83,15 @@ test('가까운 빈자리 — 큰 묶음(발표 자료 8장)도 앞 묶음과 �
   const p = nearSpot({ x: 2600, y: 2800 }, [A], 5120, 5500, { pad: 48, step: 96 })
   assert.equal(hitA(p), false)
   assert.deepEqual(nearSpot({ x: 100, y: 100 }, [], 50, 50), { x: 75, y: 75 })   // 빈 곳은 그 자리
+})
+
+test('AI 오류 → 쉬운 한 줄(2026-11-10 6단계)', () => {
+  assert.equal(aiError(new TypeError('Failed to fetch')), '서버에 연결이 안 돼요 — 인터넷을 확인하고 다시 보내 주세요')
+  assert.equal(aiError(new Error('서버 응답 502')), '서버에 연결이 안 돼요 — 인터넷을 확인하고 다시 보내 주세요')
+  assert.equal(aiError(new Error('KAIROS에 요청이 너무 잦아요 — 잠시 뒤 다시 해 주세요 (Error code: 429)')), 'KAIROS가 바빠요 — 잠시 뒤 다시 보내 주세요')
+  assert.equal(aiError('Error 402: insufficient credits'), '크레딧이 모자라요 — 🔑 내 키를 넣어 주세요')
+  assert.equal(aiError(new Error('서버 응답 500')), '서버에서 오류가 났어요 — 다시 보내 주세요 (서버 응답 500)')
+  assert.equal(aiError(new Error('🔑 내 KAIROS 키가 필요해요')), '🔑 내 KAIROS 키가 필요해요')   // 키 칸을 여는 표시라 그대로
+  assert.equal(aiError(new Error('그림 파일을 못 받았어요')), '그림 파일을 못 받았어요')         // 우리가 쓴 한글은 그대로
+  assert.match(aiError(new Error('x'.repeat(100))), /^KAIROS 처리 중 오류가 났어요 — 다시 보내 주세요 \(x{60}…\)$/)
 })

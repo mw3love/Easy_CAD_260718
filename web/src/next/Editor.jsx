@@ -37,8 +37,9 @@ import { layersOf, layerIdOf } from './layers.jsx'
 import { buildSvg, download, exportPdf, exportPng, exportSvg, fontFaces, pngBlob, usesBoardFont, weightsOf } from './exporter.jsx'
 import { buildHtml } from './htmlshare.js'
 import { ContextMenu } from './ctxmenu.jsx'
+import { Confirm, btnSecondary } from './ui.jsx'
 import { pdfGoPage, pdfLayout, pdfPageAt, pdfScroll, pdfSelectedText } from './pdfcard.jsx'
-import { answerTable, freeSpot, nearSpot, sourceLine } from '../chatFormat.js'
+import { aiError, answerTable, freeSpot, nearSpot, sourceLine } from '../chatFormat.js'
 import { LIVE_H, LIVE_W, bigPage, isLive, liveFits } from './livecard.js'
 import { DOC_SLEEP_PX, WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { isLegendLine, legendEntries, restyleLegendRow, syncLegends } from './legend.js'
@@ -2244,7 +2245,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         if (st.status !== 'done') throw new Error(st.error || '회의록을 못 만들었어요')
         done(); insertMeeting(st.result, at, file.name); return true
       }
-    } catch (err) { done(); setStatus(`회의록 실패 — ${err.message || err}`); return false }
+    } catch (err) { done(); setStatus(`회의록 실패 — ${aiError(err)}`); return false }
   }
   // 회의록 놓기 = 「회의 날짜 · 제목」 프레임 안에 요약 메모(결정·할 일 체크·다음 회의) + 전문 메모(말한 사람·시간, 접힘 — 펼치기). 배치는 앱(AI는 내용만)
   function insertMeeting(res, at, fname = '') {
@@ -2365,6 +2366,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     a.href = URL.createObjectURL(r.blob); a.download = `회의 녹음 ${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}${two(d.getMinutes())}.${r.blob.type.includes('mp4') ? 'm4a' : 'webm'}`
     a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 10000)
   }
+  const [meetAsk, setMeetAsk] = useState(false)   // 「버리기」 = 확인 창 먼저(2026-11-10 6단계 사용자 결정 — 서버 사본까지 지워져 되돌릴 수 없음)
   function meetDiscard() {
     try { meetStopFn.current?.() } catch { /* 이미 닫힘 */ }
     meetStopFn.current = null; setMeet(null); meetForget()
@@ -2663,7 +2665,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
           if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame') && !wrapDup(m.items, ids)) out.push('-', ['프레임으로 감싸기', 'Alt+G', act(() => wrapFrame())])
           if (frs.length) { const off = frs.every(f => f.skip); out.push([off ? '발표에 넣기' : '발표에서 빼기', '', act(() => skipFrames(frs.map(f => f._id), !off))]) }   // 칠판엔 그대로(2026-10-28)
-          if (onAsk && frs.length === 1 && selIt.length === 1 && frs[0].slide && !frs[0].slide.small) out.push(['이 장 움직이게 (KAIROS · 약 270~520크레딧)', '', act(() => onAsk(`「${frs[0].name || frs[0].slide.title}」 장 움직이게`, 'motion', { frame: frs[0]._id }))])   // 계획 ⑤ — 발표에서 → = 장 안 단계
+          if (onAsk && frs.length === 1 && selIt.length === 1 && frs[0].slide && !frs[0].slide.small) out.push(['이 장 움직이게… (KAIROS · 약 270~520크레딧)', '', act(() => onAsk(`「${frs[0].name || frs[0].slide.title}」 장 움직이게`, 'motion', { frame: frs[0]._id }))])   // 계획 ⑤ — 발표에서 → = 장 안 단계
           if (frs.length === 1 && selIt.length === 1 && frs[0].slide && !frs[0].slide.small) { const pic = frs[0].slide.layout === '그림'   // 작은 책 ② — 같은 장의 다른 판을 아래에(2026-11-04)
             out.push(['다른 판 더하기', '', null, [['그림으로 (KAIROS · 약 12크레딧)', act(() => slideBranch(frs[0]._id, 'pic'))], [pic ? '글로' : '글로 (같은 글 판 하나 더)', act(() => slideBranch(frs[0]._id, 'text'))]]]) }
           if (onAddSymbol && !card && selIt.every(it => !NOT_SYMBOL.has(it.type))) out.push(['내 심볼에 추가…', '', act(() => addToMySymbols())])   // 2026-10-27 사용자 — KAIROS 아이콘 등을 심볼 칸에(이 브라우저). 메모·표는 그림 조각이 아니라 뺌(전수조사)
@@ -2698,19 +2700,19 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
             const stop = e => e.stopPropagation(), btn = { all: 'unset', cursor: 'pointer', padding: '2px 10px', borderRadius: 99, fontWeight: 600, fontSize: 12 }
             return <g data-testid="meeting-live" data-state={meet.state}><rect x={meet.at.x} y={meet.at.y} width={w} height={h} rx={10 * s} fill="rgba(218,119,86,.06)" stroke="#da7756" strokeWidth={1.5 / z} strokeDasharray={`${8 / z} ${5 / z}`} pointerEvents="none" />
               <foreignObject x={0} y={0} width={MEET_W} height={MEET_H} transform={`translate(${meet.at.x},${meet.at.y}) scale(${s})`}>
-                <div style={{ width: MEET_W, height: MEET_H, boxSizing: 'border-box', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6, font: `400 14px ${APP_FONT}`, color: '#3f3f46' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--mb-accent)', fontWeight: 600 }}><span style={{ flex: 1 }}>{head}</span>
+                <div style={{ width: MEET_W, height: MEET_H, boxSizing: 'border-box', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6, font: `400 14px ${APP_FONT}`, color: 'var(--mb-ink)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--mb-accent)', fontWeight: 600 }}><span style={{ flex: 1, fontVariantNumeric: 'tabular-nums' }}>{head}</span>
                     {(saved || meet.state === 'listen' || meet.state === 'reconnect') && <button data-testid="meeting-live-end" onPointerDown={stop} onClick={meetStop} style={{ ...btn, background: 'var(--mb-accent)', color: '#fff' }}>{saved ? '정리하기' : '끝내기'}</button>}
                     {saved && <button data-testid="meeting-live-raw" onPointerDown={stop} onClick={meetRaw} title="요약 없이 받아 적은 글만 칠판에" style={{ ...btn, color: 'var(--mb-accent)', border: '1px solid #da7756' }}>전문만</button>}
                     {saved && meetRec.current && <button data-testid="meeting-live-rec" onPointerDown={stop} onClick={meetFromRec} title="PC에 같이 녹음한 것으로 처음부터 다시 받아써서 회의록 — 인터넷이 끊긴 동안의 말까지" style={{ ...btn, color: 'var(--mb-accent)', border: '1px solid #da7756' }}>녹음으로 정리</button>}
-                    {saved && meetRec.current && <button data-testid="meeting-live-save-rec" onPointerDown={stop} onClick={meetSaveRec} title="녹음을 파일로 받아 두기 — 나중에 칠판에 끌어 놓으면 회의록" style={{ ...btn, color: '#71717a' }}>녹음 받기</button>}
-                    {saved && <button data-testid="meeting-live-drop" onPointerDown={stop} onClick={meetDiscard} style={{ ...btn, color: '#71717a' }}>버리기</button>}</div>
+                    {saved && meetRec.current && <button data-testid="meeting-live-save-rec" onPointerDown={stop} onClick={meetSaveRec} title="녹음을 파일로 받아 두기 — 나중에 칠판에 끌어 놓으면 회의록" style={btnSecondary}>녹음 받기</button>}
+                    {saved && <button data-testid="meeting-live-drop" onPointerDown={stop} onClick={() => setMeetAsk(true)} style={btnSecondary}>버리기…</button>}</div>
                   <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 4, lineHeight: 1.5 }}>
-                    {meet.segs.slice(-12).map((g, i) => <div key={i}><span style={{ color: '#a1a1aa' }}>[{clk(g.start_ms)}] 화자 {g.speaker || '?'}: </span>{g.text}</div>)}
-                    {meet.part && <div style={{ color: '#a1a1aa' }}>{meet.part}</div>}
-                    {!meet.segs.length && !meet.part && <div style={{ color: '#a1a1aa' }}>{meet.state === 'listen' ? '말하면 여기에 받아 적어요 — 끝나면 「끝내기」 = 요약·결정·할 일로 정리' : ''}</div>}
-                    {meet.warn && !saved && <div data-testid="meeting-live-warn" style={{ color: '#b45309', fontWeight: 600 }}>🔇 {meet.warn}</div>}
-                    {meet.err && <div style={{ color: '#dc2626' }}>{meet.err}</div>}</div></div></foreignObject></g> })()}
+                    {meet.segs.slice(-12).map((g, i) => <div key={i}><span style={{ color: 'var(--mb-muted)', fontVariantNumeric: 'tabular-nums' }}>[{clk(g.start_ms)}] 화자 {g.speaker || '?'}: </span>{g.text}</div>)}
+                    {meet.part && <div style={{ color: 'var(--mb-muted)' }}>{meet.part}</div>}
+                    {!meet.segs.length && !meet.part && <div style={{ color: 'var(--mb-muted)' }}>{meet.state === 'listen' ? '말하면 여기에 받아 적어요 — 끝나면 「끝내기」 = 요약·결정·할 일로 정리' : ''}</div>}
+                    {meet.warn && !saved && <div data-testid="meeting-live-warn" style={{ color: 'light-dark(#b45309, #fbbf24)', fontWeight: 600 }}>🔇 {meet.warn}</div>}
+                    {meet.err && <div style={{ color: 'var(--mb-danger-ink)' }}>{meet.err}</div>}</div></div></foreignObject></g> })()}
           {marks.filter(id => byId.has(id)).map(id => { const b = sceneBox(byId.get(id), textBox), pad = 6 / z   // 찾기 결과에 불 켜기(Ctrl+F — 2026-10-19)
             return <rect key={'find' + id} data-testid="find-mark" pointerEvents="none" x={b.x - pad} y={b.y - pad} width={b.w + 2 * pad} height={b.h + 2 * pad} rx={6 / z} fill="rgba(250,204,21,.12)" stroke="#f59e0b" strokeWidth={2.5 / z} strokeDasharray={`${6 / z} ${4 / z}`} /> })}
           {others.map(o => { const c = personColor(o.id), ids = [...new Set([...(o.sel || []), ...(o.edit ? [o.edit] : [])])].filter(id => byId.has(id))   // 다른 사람이 고른·고치는 도형 = 그 사람 색 테두리 + 이름표(2026-10-19)
@@ -2775,6 +2777,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         </div></div>}
       {lineMenu && <ContextMenu at={lineMenu} onClose={() => setLineMenu(null)} entries={lineMenuEntries(lineMenu)} />}
       {menu && <ContextMenu at={menu} onClose={() => setMenu(null)} entries={menuEntries(menu)} />}
+      {meetAsk && meet && <Confirm testid="meeting-drop-ask" okTestid="meeting-drop-ok" title="받아 적은 회의를 버릴까요?" okLabel="버리기" onOk={meetDiscard} onClose={() => setMeetAsk(false)}>{meet.segs.length}구간 · 서버 사본도 지워져요</Confirm>}
       {present != null && (() => { const fr = presentFrames(items.filter(it => !hiddenL.has(layerIdOf(it))))
         return <Presenter frames={fr.map(f => ({ id: f._id, name: f.name, box: sceneBox(f, textBox), notes: f.slide?.notes || '' }))} links={frameLinks(items, fr)} order={order.filter(([it]) => it.type !== 'frame' || isDeepPaper(it)).map(([it, i]) => (isDeepPaper(it) ? [deepPaper(it), i] : [it, i]))} onBoard={onBoard} routes={routes}
           start={Math.min(present, fr.length - 1)} dark={dark} simple={phone} onClose={endPresent} onAdd={addPenNotes} onUndo={undo} onFlipArrow={() => { const m = R.current.model, a = m.items.filter(it => it.layer_id === PEN_LAYER && it.type === 'sarrow').sort((p, q) => (q.z ?? 0) - (p.z ?? 0))[0]   // 방금(맨 위) 그린 판서 화살표 방향 뒤집기

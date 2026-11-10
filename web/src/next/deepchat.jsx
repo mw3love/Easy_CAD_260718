@@ -1,7 +1,7 @@
 // 딥모드 대화창 카드(§8 항목66 3-2, 2026-10-25) — ① 질문지 한 장 ② 지면 계획 카드. 상태는 대화 기록의 답 하나(`kind: 'deep'`)에 — 다시 열어도 그대로.
 // 질문지는 한 번에 한 장(항목64가 버린 「여러 번 묻기」의 예외: 몇 분짜리 비싼 일이라 묻는 값이 쌈) — 2026-11-06부터 질문은 서버가 주제 글을 읽고 맞춤(`brief_ask`, 몇 초), 못 하면 고정 질문. 보기에 없는 말은 기존 입력 칸.
 // 계획 카드 = 꼭지(× 빼기) · 예상 크레딧(톤은 만든 뒤 속성 카드 — 2026-10-25 처음 고르기 없앰) → 「이대로 만들기」 전엔 비싼 생성 없음. 말로 고치기 = 입력 칸(chat.jsx가 계획을 다시 짜게 보냄)
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 // [질문, 보기, 여럿 고르기] — 답 꼴은 `tools/deepmode_probe.py` ANSWERS와 같게(3-3 서버가 그대로 지시문에)
 export const DEEP_QS = [
@@ -51,6 +51,10 @@ export function DeepAsk({ m, set, go, busy, css, slides = false, shape = null, c
   const content = qs.filter(([q]) => !setNames.has(q)), settings = qs.filter(([q]) => setNames.has(q))
   const tabs = [...content.map(([q, , , h]) => ({ id: q, label: h || q })), ...(settings.length ? [{ id: 'set', label: '⚙ 설정' }] : []), { id: 'review', label: '✓ 확인' }]
   const [tab, setTab] = useState(0), cur = tabs[Math.min(tab, tabs.length - 1)], next = () => setTab(t => Math.min(t + 1, tabs.length - 1))
+  const uid = useId(), tabEls = useRef([]), now = tabs.indexOf(cur)
+  // 탭 글쇠(2026-11-10 6단계): ← → = 옆 탭(끝에서 돌아감) · Home End = 처음·끝 — 탭 사이를 Tab으로 다 거치지 않게 지금 탭만 tabIndex 0
+  const tabKey = e => { const n = tabs.length, to = e.key === 'ArrowRight' ? (now + 1) % n : e.key === 'ArrowLeft' ? (now + n - 1) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1
+    if (to < 0) return; e.preventDefault(); e.stopPropagation(); setTab(to); tabEls.current[to]?.focus() }
   useEffect(() => { setTab(0) }, [slides])   // 한 판 ↔ 여러 장 = 첫 탭부터
   const answered = q => { const v = b[q]; return Array.isArray(v) ? v.length > 0 : !!v && v !== AUTO }
   if (m.done) return <div data-testid="deep-ask" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -70,12 +74,12 @@ export function DeepAsk({ m, set, go, busy, css, slides = false, shape = null, c
       <div style={{ font: "800 15px/1.4 'Pretendard', sans-serif" }}>{q}{multi && <span style={{ ...css.meta, marginLeft: 6 }}>여럿</span>}</div>
       {all.map((x, i) => <button key={x} data-v={x} aria-pressed={isOn(x)} disabled={lock} onClick={() => pick(x)} className="mb-mi"
         style={{ all: 'unset', cursor: lock ? 'default' : 'pointer', display: 'flex', gap: 8, alignItems: 'baseline', padding: '6px 9px', borderRadius: 7, font: "400 13.5px 'Pretendard', sans-serif", ...(isOn(x) ? { background: 'var(--mb-pick)', fontWeight: 700 } : null) }}>
-        <span style={{ ...css.meta, fontWeight: 700, width: 14, flex: 'none' }}>{i + 1}</span>{isOn(x) ? `✓ ${x}` : x}</button>)}
+        <span style={{ ...css.meta, fontWeight: 700, width: 14, flex: 'none', ...(isOn(x) ? { color: 'var(--mb-ink)' } : null) }}>{i + 1}</span>{isOn(x) ? `✓ ${x}` : x}</button>)}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '2px 9px' }}><span style={{ ...css.meta, fontWeight: 700, width: 14, flex: 'none' }}>{all.length + 1}</span>
         <input data-testid="ask-own" className="mb-field" key={q} defaultValue={own} disabled={lock} placeholder="직접 적기…" aria-label={`${q} — 직접 적기`}
           onChange={e => { const t = e.target.value.trim(); set(q, multi ? [...picks, ...(t ? [t] : [])] : t || AUTO) }}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); next() } }}
-          style={{ flex: 1, minWidth: 0, font: "400 13px 'Pretendard', sans-serif", color: 'var(--mb-ink)', background: 'transparent', border: 0, borderBottom: '1px solid var(--mb-line)', padding: '3px 0', outline: 'none' }} /></div>
+          style={{ flex: 1, minWidth: 0, font: "400 13px 'Pretendard', sans-serif", color: 'var(--mb-ink)', background: 'transparent', border: 0, borderBottom: '1px solid var(--mb-ctl)', padding: '3px 0', outline: 'none' }} /></div>
       {multi && <button data-testid="ask-next" style={{ ...css.ghost, alignSelf: 'flex-start' }} disabled={lock} onClick={next}>다음</button>}
     </div>
   }
@@ -88,16 +92,18 @@ export function DeepAsk({ m, set, go, busy, css, slides = false, shape = null, c
     {m.ctxCount > 0 && <span style={css.meta}>칠판에서 고른 것 {m.ctxCount}개를 재료로 같이 보내요</span>}
     {m.asking && <div data-testid="deep-asking" style={{ ...css.meta, display: 'flex', gap: 6, alignItems: 'center' }}><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', border: '2px solid currentColor', borderTopColor: 'transparent', animation: 'mb-spin .8s linear infinite' }} />질문 정리 중…</div>}
     {m.askFail && <span data-testid="deep-ask-fallback" hidden />}
-    <div role="tablist" style={{ display: 'flex', gap: 2, flexWrap: 'wrap', borderBottom: '1px solid var(--mb-line)', paddingBottom: 6 }}>
+    <div role="tablist" aria-label="질문" onKeyDown={tabKey} style={{ display: 'flex', gap: 2, flexWrap: 'wrap', borderBottom: '1px solid var(--mb-line)', paddingBottom: 6 }}>
       {tabs.map((t, i) => { const now = t === cur, done = t.id !== 'set' && t.id !== 'review' && answered(t.id)
-        return <button key={t.id} role="tab" data-testid="ask-tab" data-tab={t.id} aria-selected={now} onClick={() => setTab(i)} className="mb-mi"
+        return <button key={t.id} ref={el => { tabEls.current[i] = el }} id={`${uid}-t${i}`} role="tab" data-testid="ask-tab" data-tab={t.id} aria-selected={now} aria-controls={`${uid}-p`} tabIndex={now ? 0 : -1} onClick={() => setTab(i)} className="mb-mi"
           style={{ all: 'unset', cursor: 'pointer', display: 'flex', gap: 4, alignItems: 'center', font: "600 11.5px 'Pretendard', sans-serif", padding: '3px 8px', borderRadius: 6, color: now ? 'var(--mb-ink)' : 'var(--mb-muted)', ...(now ? { background: 'var(--mb-pick)' } : null) }}>
           {t.id !== 'set' && t.id !== 'review' && <span aria-hidden style={{ width: 9, height: 9, borderRadius: 3, border: '1.5px solid currentColor', ...(done ? { background: 'currentColor' } : null) }} />}{t.label}</button> })}
     </div>
+    <div role="tabpanel" id={`${uid}-p`} aria-labelledby={`${uid}-t${now}`} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
     {cur.id === 'set' ? settings.map(x => question(x, false))
       : cur.id === 'review' ? <div data-testid="ask-review" style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {[...content, ...settings].map(([q, , , h]) => <div key={q} style={{ display: 'flex', gap: 8, fontSize: 12.5 }}><span style={{ ...css.meta, fontSize: 12, width: 72, flex: 'none' }}>{h || q}</span><b>{answerText(b[q])}</b></div>)}</div>
       : question(content.find(([q]) => q === cur.id), true)}
+    </div>
     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
       <button data-testid="deep-plan-go" style={{ ...GO, ...(busy || m.asking ? { opacity: 0.5, cursor: 'default' } : null) }} disabled={!!busy || !!m.asking} onClick={go}>{m.pic ? '그림 만들기' : slides ? '장 계획 짜기' : '지면 계획 짜기'}</button>
       <span style={css.meta}>{cost || (slides ? '약 10크레딧' : '약 40크레딧')}</span></div>

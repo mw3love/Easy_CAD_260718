@@ -49,7 +49,7 @@ export function AiChip({ box, size, n, open, setOpen, onRun }) {
     <div style={{ display: 'grid', gridTemplateColumns: `repeat(${AI_KINDS.length},1fr)`, gap: 6, padding: '10px 10px 4px' }}>
       {AI_KINDS.map(([k, name]) => <button key={k} data-testid="ai-kind" data-kind={k} aria-pressed={kind === k} onClick={() => pick(k)} className="mb-ai-kind"
         style={{ all: 'unset', cursor: 'pointer', boxSizing: 'border-box', height: 56, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3, borderRadius: 8,
-          border: `1px solid ${kind === k ? 'transparent' : C.line}`, background: kind === k ? C.pick : 'transparent', font: `${kind === k ? 700 : 400} 12.5px ${F}`, color: C.ink }}><Icon k={k} s={20} />{name}</button>)}
+          border: `1px solid ${kind === k ? 'transparent' : 'var(--mb-ctl)'}`, background: kind === k ? C.pick : 'transparent', font: `${kind === k ? 700 : 400} 12.5px ${F}`, color: C.ink }}><Icon k={k} s={20} />{kind === k ? `✓ ${name}` : name}</button>)}
     </div>
     <div style={{ padding: '6px 10px 10px' }}>
       <Composer inputRef={ta} inputId="ai-input" sendId="ai-send" label="고른 것으로 만들기" value={draft} placeholder={kind ? `${NAME[kind]} — 바라는 점 (없으면 Enter)` : '무엇을 할까요? 물어봐도 돼요'} onChange={e => setDraft(e.target.value)}
