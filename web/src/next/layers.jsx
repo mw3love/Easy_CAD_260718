@@ -38,28 +38,30 @@ export function Layers({ model, setModel, active, setActive, onChanged, dark, do
   const del = id => { if (id === 'default') return; const def = layers.find(l => l.id === 'default') || DEFAULT_LAYER
     save(ls => ls.filter(l => l.id !== id), its => its.map(it => (layerIdOf(it) === id ? { ...it, layer_id: null, locked: def.locked } : it)))   // 소속은 기본으로 — 기본의 잠금을 물려받음
     if (cur === id) setActive('default') }
-  const rowBg = dark ? '#2d3640' : '#dfe5eb'   // 「그리는 중」 줄만 옅은 면(데스크톱 `_style_layer_row`)
+  const rowBg = 'var(--mb-row-on)'   // 「그리는 중」 줄만 옅은 면(데스크톱 `_style_layer_row`)
   return <div data-folded={folded || undefined} onPointerDown={e => e.stopPropagation()} style={{ pointerEvents: 'auto', width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 8px 8px',
     boxShadow: '0 2px 8px rgba(0,0,0,.06)', color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', position: 'relative', flex: 'none', ...(docked ? DOCKED : {}) }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1 }}>레이어</span>
       <button data-testid="layer-new" onClick={add} title="레이어를 하나 더 만들어요" style={btnHead}>＋ 새 레이어</button>{!docked && <FoldBtn folded={folded} onClick={toggleFold} />}</div>   {/* 머리줄 오른쪽(규칙 B1 — 옛 자리는 목록 아래) */}
     <div style={{ display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 240, overflowY: 'auto' }}>
-      {layers.map(l => <div key={l.id} onClick={() => l.visible && !l.locked && setActive(l.id)} onContextMenu={e => { e.preventDefault(); openMenu(l.id, { x: e.clientX, y: e.clientY }) }} data-testid="layer-row"
+      {layers.map(l => <div key={l.id} className="mb-row" onClick={() => l.visible && !l.locked && setActive(l.id)} onContextMenu={e => { e.preventDefault(); openMenu(l.id, { x: e.clientX, y: e.clientY }) }} data-testid="layer-row"
         onMouseEnter={() => setHov(l.id)} onMouseLeave={() => setHov(h => (h === l.id ? null : h))}
         title={l.visible && !l.locked ? '누르면 「그리는 중」 — 새 도형이 이 레이어로 들어가요' : '숨기거나 잠근 레이어엔 그릴 수 없어요'}
         style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 4px 3px 6px', borderRadius: 4, background: l.id === cur ? rowBg : 'transparent', cursor: 'pointer', font: "400 12px 'Pretendard', sans-serif" }}>
         <label title="레이어 색 바꾸기(구분용 — 도형 색은 그대로)" onClick={e => e.stopPropagation()} style={{ position: 'relative', width: 12, height: 12, borderRadius: 6, background: l.color, flex: 'none', cursor: 'pointer' }}>
-          <input type="color" value={l.color} onChange={e => save(ls => ls.map(x => (x.id === l.id ? { ...x, color: e.target.value } : x)))} style={{ opacity: 0, position: 'absolute', inset: 0, width: 12, height: 12, cursor: 'pointer' }} /></label>
+          <input type="color" aria-label={`「${l.name}」 레이어 색`} value={l.color} onChange={e => save(ls => ls.map(x => (x.id === l.id ? { ...x, color: e.target.value } : x)))} style={{ opacity: 0, position: 'absolute', inset: 0, width: 12, height: 12, cursor: 'pointer' }} /></label>
         {renaming === l.id
-          ? <input autoFocus defaultValue={l.name} onClick={e => e.stopPropagation()} onFocus={e => e.target.select()} onBlur={e => rename(l.id, e.target.value)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { cancel.current = true; setRenaming(null) } }}
-            style={{ flex: 1, minWidth: 0, height: 20, border: `1px solid ${C.line}`, borderRadius: 4, background: 'transparent', color: C.ink, font: 'inherit', padding: '0 4px' }} />
-          : <span onDoubleClick={e => { e.stopPropagation(); startRename(l.id) }} style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', opacity: l.visible ? 1 : 0.5 }}>{l.name}</span>}
+          ? <input autoFocus className="mb-field" aria-label="레이어 이름" defaultValue={l.name} onClick={e => e.stopPropagation()} onFocus={e => e.target.select()} onBlur={e => rename(l.id, e.target.value)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { cancel.current = true; setRenaming(null) } }}
+            style={{ flex: 1, minWidth: 0, height: 20, border: '1px solid var(--mb-ctl)', borderRadius: 4, background: 'transparent', color: C.ink, font: 'inherit', padding: '0 4px' }} />
+          : <button type="button" onClick={e => { e.stopPropagation(); if (l.visible && !l.locked) setActive(l.id) }} onDoubleClick={e => { e.stopPropagation(); startRename(l.id) }} onKeyDown={e => { if (e.key === 'F2') { e.preventDefault(); startRename(l.id) } }}   /* 이름 = 글쇠로 「그리는 중」 고르기·F2 이름 바꾸기(2026-11-10 3단계 — 줄이 마우스로만 됐음) */
+            aria-current={l.id === cur ? 'true' : undefined} title={l.visible && !l.locked ? `「${l.name}」 — 누르면 「그리는 중」 · 두 번 누르거나 F2 = 이름 바꾸기` : '숨기거나 잠근 레이어엔 그릴 수 없어요'}
+            style={{ all: 'unset', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', cursor: 'pointer', opacity: l.visible ? 1 : 0.5, borderRadius: 3 }}>{l.name}</button>}
         {l.id === cur && <span title="그리는 중 — 새 도형이 이 레이어로 들어가요" aria-label="그리는 중" style={{ display: 'flex' }}>{PEN}</span>}
         <span style={{ flex: 1 }} />
-        <span style={{ color: C.muted, fontSize: 11 }}>{count(l.id)}</span>
-        <button title="레이어 표시/숨김" aria-pressed={l.visible} onClick={e => { e.stopPropagation(); setVisible(l.id, !l.visible) }} style={iconBtn}>{l.visible ? EYE : EYE_OFF}</button>
-        <button title="레이어 잠금" aria-pressed={l.locked} onClick={e => { e.stopPropagation(); setLocked(l.id, !l.locked) }} style={iconBtn}>{l.locked ? LOCK : UNLOCK}</button>
-        {renaming !== l.id && <button data-testid="layer-more" className="mb-hit" aria-label="레이어 메뉴" title="이름 바꾸기·지우기" onClick={e => { e.stopPropagation(); openMenu(l.id, menuBelow(e)) }} style={moreBtn(hov === l.id || menu?.id === l.id)}>⋯</button>}
+        <span style={{ color: C.muted, fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>{count(l.id)}</span>
+        <button title="레이어 표시/숨김" aria-label={`「${l.name}」 보이기`} aria-pressed={l.visible} onClick={e => { e.stopPropagation(); setVisible(l.id, !l.visible) }} style={iconBtn}>{l.visible ? EYE : EYE_OFF}</button>
+        <button title="레이어 잠금" aria-label={`「${l.name}」 잠그기`} aria-pressed={l.locked} onClick={e => { e.stopPropagation(); setLocked(l.id, !l.locked) }} style={iconBtn}>{l.locked ? LOCK : UNLOCK}</button>
+        {renaming !== l.id && <button data-testid="layer-more" className="mb-more mb-hit" aria-label={`「${l.name}」 레이어 메뉴`} title="이름 바꾸기·지우기" onClick={e => { e.stopPropagation(); openMenu(l.id, menuBelow(e)) }} style={moreBtn(hov === l.id || menu?.id === l.id)}>⋯</button>}
       </div>)}
     </div>
     {/* 지우기 = 확인 없음(규칙 ⑥ — 안의 도형은 「기본」으로 옮겨 남음) */}

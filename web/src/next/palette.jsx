@@ -11,7 +11,7 @@ import { drawOrder, itemBounds } from './doc.js'
 import { fromEcad } from './model.js'
 import { isMine, folderTitle } from './mysym.js'
 import { FloatMenu } from './ctxmenu.jsx'
-import { Confirm, btnHead, menuBelow } from './ui.jsx'
+import { Confirm, btnHead, menuBelow, btnSecondary } from './ui.jsx'
 
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', on: 'var(--mb-accent)' }
 export const BASIC = [['rect', '사각형'], ['ellipse', '원'], ['sym:triangle', '삼각형'], ['sym:decision', '판단'], ['sym:terminal', '시작/끝'], ['sym:data', '입출력'], ['sym:prep', '준비'], ['sym:database', '저장소']]
@@ -61,13 +61,14 @@ function useSectionFold() {
   const toggle = id => setShut(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); try { localStorage.setItem(FOLD_KEY, JSON.stringify([...n])) } catch { /* 기억 못 해도 그만 */ } return n })
   return [shut, toggle]
 }
-function Section({ title, color, count, children, shut, onToggle, onMenu, folder, lit }) {   // folder = 끌어 놓기 받는 이 브라우저 폴더 이름, lit = 그 위로 끌고 있음   // onMenu(e) = 제목 줄 ⋯(이 브라우저 폴더)
+function Section({ title, color, count, children, shut, onToggle, onMenu, folder, lit }) {   const Toggle = onToggle ? 'button' : 'span'   // folder = 끌어 놓기 받는 이 브라우저 폴더 이름, lit = 그 위로 끌고 있음   // onMenu(e) = 제목 줄 ⋯(이 브라우저 폴더)
   return <div data-testid="pal-sec" data-shut={shut || undefined} data-symfolder={folder} style={{ display: 'flex', flexDirection: 'column', gap: 2, borderRadius: 6, ...(lit ? { outline: `2px solid ${C.on}`, outlineOffset: 1 } : {}) }}>
-    <div onClick={onToggle} onContextMenu={onMenu && (e => { e.preventDefault(); onMenu(e, true) })} title={onToggle ? (shut ? '누르면 펼치기' : '누르면 접기') : undefined} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 6px', borderRadius: 5, cursor: onToggle ? 'pointer' : 'default', background: color ? `color-mix(in srgb, ${color} 35%, transparent)` : 'transparent', font: "600 12px 'Pretendard', sans-serif" }}>
-      {onToggle && <span aria-hidden style={{ width: 8, fontSize: 9, color: C.muted }}>{shut ? '▸' : '▾'}</span>}
+    <div onContextMenu={onMenu && (e => { e.preventDefault(); onMenu(e, true) })} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 6px', borderRadius: 5, background: color ? `color-mix(in srgb, ${color} 35%, transparent)` : 'transparent', font: "600 12px 'Pretendard', sans-serif" }}>
+      <Toggle {...(onToggle ? { type: 'button', 'aria-expanded': !shut, onClick: onToggle, title: shut ? '누르면 펼치기' : '누르면 접기' } : {})} style={{ all: 'unset', flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, cursor: onToggle ? 'pointer' : 'default', borderRadius: 3 }}>   {/* 접기 = 단추(2026-11-10 3단계 — 글쇠로 못 펼쳤음), ⋯는 단추 밖 */}
+      {onToggle && <span aria-hidden style={{ width: 8, fontSize: 9, color: C.ink }}>{shut ? '▸' : '▾'}</span>}
       <span style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</span>
-      {count != null && <span style={{ font: "400 11px 'Pretendard', sans-serif", color: C.muted }}>{count}</span>}
-      {onMenu && <button data-testid="folder-menu" title="폴더 이름 바꾸기·내려받기·지우기" onClick={e => { e.stopPropagation(); onMenu(e) }} style={{ all: 'unset', cursor: 'pointer', padding: '0 3px', borderRadius: 4, color: C.muted, font: "700 12px 'Pretendard', sans-serif" }}>⋯</button>}</div>
+      {count != null && <span style={{ font: "400 11px 'Pretendard', sans-serif", color: C.ink, fontVariantNumeric: 'tabular-nums' }}>{count}</span>}</Toggle>   {/* 띠 위 글 = 진한 글색(2026-11-10 3단계 사용자 고름 — 보조 글은 띠 위에서 2.6~4.4) */}
+      {onMenu && <button data-testid="folder-menu" aria-label={`「${folder || '폴더'}」 폴더 메뉴`} title="폴더 이름 바꾸기·내려받기·지우기" onClick={e => { e.stopPropagation(); onMenu(e) }} style={{ all: 'unset', cursor: 'pointer', padding: '0 3px', borderRadius: 4, color: C.ink, font: "700 12px 'Pretendard', sans-serif" }}>⋯</button>}</div>
     {!shut && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, 38px)', gap: 2, justifyContent: 'space-between' }}>{children}</div>}
   </div>
 }
@@ -110,17 +111,17 @@ export function Palette({ lib, tool, onDown, onClick, dark, docked, mine, say })
     {drop && (r => <div data-testid="symdrop-hint" style={{ position: 'fixed', left: r.left, top: r.top, width: r.width, boxSizing: 'border-box', zIndex: 45, pointerEvents: 'none', padding: '8px 10px', background: C.on, color: '#fff', font: "600 12px 'Pretendard', sans-serif" }}>
       {drop.folder ? `여기 놓으면 「${drop.folder}」에 추가` : '여기 놓으면 내 심볼에 추가'}</div>)(root.current.getBoundingClientRect())}   {/* 칸 위에 떠 있음 — 흐름에 끼우면 내용이 밀려 놓을 자리가 어긋났음 */}
     <div style={{ display: 'flex', alignItems: 'center' }}><span style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1 }}>도형·심볼</span>{!docked && <FoldBtn folded={folded} onClick={toggleFold} />}</div>
-    <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') setQ('') }} placeholder="도형·심볼 검색 (이름·초성)"
-      title="이름 일부나 초성(예: ㅇㅌ)으로 찾기 — Esc로 지우기" style={{ boxSizing: 'border-box', width: '100%', height: 30, border: `1px solid ${C.line}`, borderRadius: 7, background: 'transparent', color: C.ink, font: "400 12px 'Pretendard', sans-serif", padding: '0 8px' }} />
+    <input className="mb-field" aria-label="도형·심볼 검색" value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') setQ('') }} placeholder="도형·심볼 검색 (이름·초성)"
+      title="이름 일부나 초성(예: ㅇㅌ)으로 찾기 — Esc로 지우기" style={{ boxSizing: 'border-box', width: '100%', height: 30, border: '1px solid var(--mb-ctl)', borderRadius: 7, background: 'transparent', color: C.ink, font: "400 12px 'Pretendard', sans-serif", padding: '0 8px' }} />
     {/* 검색 중엔 즐겨찾기·기본 도형·폴더를 숨기고 기본 도형까지 한 목록으로(데스크톱 `_on_palette_search`) */}
     {q.trim() ? (() => { const hits = [...BASIC.filter(([, n]) => nameMatch(n, q)).map(([k]) => k), ...syms.filter(s => nameMatch(s.name, q)).map(s => 'customsym:' + s.id)]
-      return hits.length ? <Section title="검색 결과" count={hits.length}>{hits.map(cellOf)}</Section> : <div style={{ fontSize: 12, color: C.muted }}>찾는 도형·심볼이 없어요</div> })() : <>
+      return hits.length ? <Section title="검색 결과" count={hits.length}>{hits.map(cellOf)}</Section> : <div style={{ fontSize: 12, color: C.muted, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>「{q.trim()}」에 맞는 도형·심볼이 없어요<button onClick={() => setQ('')} style={btnSecondary}>검색 지우기</button></div> })() : <>
     {fav.length > 0 && <Section title={<><span style={{ color: C.on }}>★</span> 즐겨찾기</>} count={fav.length} shut={shut.has('★')} onToggle={() => toggle('★')}>{fav.map(cellOf)}</Section>}
     <Section title="기본 도형" color={lib?.section_colors?.basic || BASIC_BLUE} count={BASIC.length} shut={shut.has('□')} onToggle={() => toggle('□')}>{BASIC.map(([k]) => cellOf(k))}</Section>
     {folders.filter(f => !isMine(f)).map(f => { const list = syms.filter(s => s.folder === f); return <Section key={f} title={f} color={lib?.folder_colors?.[f] || FOLDER_GRAY} count={list.length} shut={shut.has('f:' + f)} onToggle={() => toggle('f:' + f)}>{list.map(s => cellOf('customsym:' + s.id))}</Section> })}
     {mine && <div data-testid="mine" style={{ display: 'flex', flexDirection: 'column', gap: 6, ...(folders.some(f => !isMine(f)) ? { borderTop: `1px solid ${C.line}`, paddingTop: 8 } : {}) }}>   {/* 예시를 복사한 뒤엔 서버 폴더가 없어 구분선도 없음 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-        <span title="이 브라우저에 저장돼요 — 다른 PC·브라우저로 옮기려면 ⋯ 「파일로 저장」 → 「파일 불러오기」" style={{ flex: 1, whiteSpace: 'nowrap', font: "700 13px 'Pretendard', sans-serif" }}>내 심볼</span>
+        <span title="이 브라우저에 저장돼요 — 다른 PC·브라우저로 옮기려면 ⋯ 「내려받기」 → 그 PC에서 「불러오기…」" style={{ flex: 1, whiteSpace: 'nowrap', font: "700 13px 'Pretendard', sans-serif" }}>내 심볼</span>
         <button data-testid="mine-new-folder" title="새 폴더 만들기" onClick={e => { const at = menuBelow(e); setMenu(null); setAsk({ ...near(at.x, at.y), label: '새 폴더 이름', value: '', ok: v => mine.api.addFolder(v) }) }} style={btnHead}>＋ 새 폴더</button>
         <button data-testid="mine-more" aria-label="내 심볼 메뉴" title="내려받기 · 불러오기" onClick={e => openMenu('mine', menuBelow(e), [
           ...(mine.mine.symbols.length ? [['내려받기 (.json)', '', () => { setMenu(null); download() }]] : []), ['불러오기…', '', () => { setMenu(null); file.current.click() }]])}
@@ -129,7 +130,7 @@ export function Palette({ lib, tool, onDown, onClick, dark, docked, mine, say })
       {folders.filter(isMine).map(f => { const list = syms.filter(s => s.folder === f); return <Section key={f} title={folderTitle(f)} color={FOLDER_GRAY} count={list.length} shut={shut.has('f:' + f)} onToggle={() => toggle('f:' + f)} onMenu={folderMenu(f)} folder={folderTitle(f)} lit={drop?.folder === folderTitle(f)}>{list.map(s => cellOf('customsym:' + s.id))}</Section> })}
       {!mine.mine.symbols.length && <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.5 }}>칠판에서 도형·아이콘을 고르고 우클릭 「내 심볼에 추가」</div>}
       {(n => n > 0 && <button data-testid="sym-reseed" title="지운 예시 심볼(방송·기술·업무)만 다시 넣어요 — 내가 넣은 심볼은 그대로" onClick={() => { const k = mine.api.reseed(); say?.(k ? `예시 심볼 ${k}개를 되돌렸어요` : '빠진 예시가 없어요') }}
-        style={{ all: 'unset', cursor: 'pointer', alignSelf: 'flex-start', padding: '1px 6px', borderRadius: 4, border: `1px solid ${C.line}`, font: "400 11px 'Pretendard', sans-serif", color: C.muted }}>↺ 예시 심볼 되돌리기 ({n}개)</button>)(mine.api.missing())}   {/* 빠진 예시가 있을 때만(2026-10-28 사용자 — 메뉴 안 「예시 다시 넣기」를 따로 보이는 단추로) */}
+        style={{ all: 'unset', cursor: 'pointer', alignSelf: 'flex-start', padding: '1px 6px', borderRadius: 4, border: '1px solid var(--mb-ctl)', font: "400 11px 'Pretendard', sans-serif", color: C.muted }}>↺ 예시 심볼 되돌리기 ({n}개)</button>)(mine.api.missing())}   {/* 빠진 예시가 있을 때만(2026-10-28 사용자 — 메뉴 안 「예시 다시 넣기」를 따로 보이는 단추로) */}
       <input ref={file} type="file" accept=".json,application/json" hidden onChange={async e => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return
         const text = await f.text(), n = mine.api.importText(text)
         let to = ''; try { to = [...new Set(JSON.parse(text).symbols.map(s => String(s.folder || '가져온 심볼')))].map(x => `「${x}」`).join('·') } catch { /* 알림에 폴더 이름만 빠짐 */ }
@@ -141,9 +142,9 @@ export function Palette({ lib, tool, onDown, onClick, dark, docked, mine, say })
     {/* 이름 칸 — Enter·바깥 = 저장, Esc = 취소(칠판 줄 이름 고치기와 같게, 규칙 ⑦) */}
     {ask && <div data-testid="mine-pop" onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} style={{ position: 'fixed', left: ask.x, top: Math.min(ask.y, window.innerHeight - 90), zIndex: 45, minWidth: 150, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 4, boxShadow: 'var(--mb-shadow)', display: 'flex', flexDirection: 'column', gap: 2 }}>
       <span style={{ font: "600 11px 'Pretendard', sans-serif", color: C.muted, padding: '2px 4px' }}>{ask.label}</span>
-      <input autoFocus defaultValue={ask.value} onFocus={e => e.target.select()} onBlur={e => { const v = e.currentTarget.value, a = ask; setAsk(null); if (a.cancel) return; a.ok(v) }}
+      <input autoFocus className="mb-field" aria-label={ask.label} defaultValue={ask.value} onFocus={e => e.target.select()} onBlur={e => { const v = e.currentTarget.value, a = ask; setAsk(null); if (a.cancel) return; a.ok(v) }}
         onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { ask.cancel = true; setAsk(null) } }}
-        style={{ height: 26, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: "400 12px 'Pretendard', sans-serif" }} />
+        style={{ height: 26, boxSizing: 'border-box', border: '1px solid var(--mb-ctl)', borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: "400 12px 'Pretendard', sans-serif" }} />
     </div>}
     {del && <Confirm testid="mine-delete" okTestid="mine-delete-ok" title={del.title} onOk={del.ok} onClose={() => setDel(null)}>{del.body}</Confirm>}
     {peek && <div data-testid="sym-peek" style={{ position: 'fixed', left: peek.x + 8, top: Math.max(8, Math.min(peek.r.top + peek.r.height / 2 - 86, window.innerHeight - 180)), zIndex: 40, pointerEvents: 'none',

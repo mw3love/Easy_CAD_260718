@@ -75,19 +75,19 @@ export function Minimap({ items, cam, size, setCam, dark, docked, width = W0 }) 
     setCam(c => ({ ...c, x: size.w / 2 - sx * c.z, y: size.h / 2 - sy * c.z })) }
   const zoomBy = k => setCam(c => { const z = Math.min(ZMAX, Math.max(ZMIN, c.z * k)), q = z / c.z; return { z, x: size.w / 2 - (size.w / 2 - c.x) * q, y: size.h / 2 - (size.h / 2 - c.y) * q } })
   // 버튼처럼 보이게 — 옅은 바탕 + 테두리(2026-10-18 사용자: %·전체가 버튼인지 몰랐음)
-  const hb = { all: 'unset', boxSizing: 'border-box', cursor: 'pointer', height: 20, minWidth: 20, padding: '0 4px', marginLeft: 3, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, border: `1px solid ${C.line}`, background: 'var(--mb-seg)', color: C.ink, font: "600 11px 'Pretendard', sans-serif" }
+  const hb = { all: 'unset', boxSizing: 'border-box', cursor: 'pointer', height: 20, minWidth: 20, padding: '0 4px', marginLeft: 3, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, border: '1px solid var(--mb-ctl)', background: 'var(--mb-seg)', color: C.ink, font: "600 11px 'Pretendard', sans-serif" }
   return <div data-folded={folded || undefined} onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', right: 'calc(12px + var(--mb-right-inset, 0px))', bottom: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
     padding: '6px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', color: C.ink, userSelect: 'none', ...(docked ? { ...DOCKED, flex: 'none', borderTop: `1px solid ${C.line}`, padding: '6px 8px 10px' } : {}) }}>
     <div style={{ display: 'flex', alignItems: 'center', marginBottom: folded ? 0 : 4 }}>
       <span style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1 }}>미니맵</span>
-      <button title="축소" onClick={() => zoomBy(1 / ZOOM_STEP)} style={hb}>−</button>
-      <button title="100%로 — 화면 가운데 기준(Ctrl+0) · 다 보기는 Z" onClick={() => zoomBy(1 / cam.z)} style={{ ...hb, minWidth: 38 }}>{Math.round(cam.z * 100)}%</button>
-      <button title="확대" onClick={() => zoomBy(ZOOM_STEP)} style={hb}>＋</button>{!docked && <FoldBtn folded={folded} onClick={toggleFold} />}
+      <button title="축소" aria-label="축소" onClick={() => zoomBy(1 / ZOOM_STEP)} style={hb}>−</button>
+      <button title="100%로 — 화면 가운데 기준(Ctrl+0) · 다 보기는 Z" aria-label={`${Math.round(cam.z * 100)}% — 100%로 보기`} onClick={() => zoomBy(1 / cam.z)} style={{ ...hb, minWidth: 38 }}>{Math.round(cam.z * 100)}%</button>
+      <button title="확대" aria-label="확대" onClick={() => zoomBy(ZOOM_STEP)} style={hb}>＋</button>{!docked && <FoldBtn folded={folded} onClick={toggleFold} />}
     </div>
     <div style={{ position: 'relative', width: W, height: H, borderRadius: 4, overflow: 'hidden', background: 'var(--mb-board, transparent)', outline: `1px solid ${C.line}`, cursor: 'pointer' }}
       onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); goTo(e) }} onPointerMove={e => { if (e.buttons & 1) goTo(e) }}>
       <canvas ref={cv} width={W} height={H} style={{ display: 'block' }} />
-      {view && <div style={{ position: 'absolute', left: view.x, top: view.y, width: view.w, height: view.h, border: '2px solid #22d3ee', pointerEvents: 'none', boxSizing: 'border-box' }} />}
+      {view && <div style={{ position: 'absolute', left: view.x, top: view.y, width: view.w, height: view.h, border: '2px solid light-dark(#0891b2, #22d3ee)', pointerEvents: 'none', boxSizing: 'border-box' }} />}
     </div>
   </div>
 }

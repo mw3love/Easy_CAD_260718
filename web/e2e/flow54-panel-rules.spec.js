@@ -74,7 +74,7 @@ test('프레임 판 — 이름 Esc = 처음 이름으로 · 줄 ▶는 회색(�
   await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'frame').length).toBe(1)
   await page.getByTestId('dock-frame').click()
   const row = page.getByTestId('frame-row').first(), name0 = (await liveDoc(page)).items.find(it => it.type === 'frame').name || ''
-  await row.locator('span[title="두 번 누르면 이름 바꾸기"]').dblclick()
+  await row.locator('[data-frame-name]').dblclick()
   await row.locator('input:not([type=color])').fill('표지'); await expect.poll(async () => (await liveDoc(page)).items.find(it => it.type === 'frame').name).toBe('표지')   // 치는 대로 바로
   await row.locator('input:not([type=color])').press('Escape')
   await expect.poll(async () => (await liveDoc(page)).items.find(it => it.type === 'frame').name || '').toBe(name0)                       // Esc = 처음 이름

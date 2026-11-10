@@ -16,7 +16,7 @@ import { Layers, layersOf, layerIdOf } from './layers.jsx'
 import { Frames } from './frames.jsx'
 import { UNTITLED, boardFromText, boardLabel, boardTitle, forgetBoard, isMyBoard, knownTitle, moveBoard, myBoards, newBoardName, noteBoards, rememberBoard } from './myboards.js'
 import { FloatMenu } from './ctxmenu.jsx'
-import { Confirm, DANGER, HOVER, btnPrimary, btnSecondary, hoverBg, isPhone, menuBelow, moreBtn, usePhoneViewport } from './ui.jsx'
+import { Confirm, DANGER, HOVER, btnPrimary, btnSecondary, hoverBg, isPhone, menuBelow, moreBtn, useModalDialog, usePhoneViewport } from './ui.jsx'
 import { keyLabel } from './keylabel.js'
 import { QrBig } from './qr.jsx'
 import { Minimap } from './minimap.jsx'
@@ -118,28 +118,30 @@ const SampleSelect = ({ onPick }) => <select data-testid="sample-select" onChang
 </select>
 
 // 「내 심볼에 추가」 창(2026-10-27 사용자 — KAIROS 아이콘 등을 심볼 칸에): 이름 + 이 브라우저 폴더(있는 것 고르기 또는 새 이름). 저장은 `mysym.js`
-function SymAddForm({ init, folders, onOk, onClose }) {
+function SymAddForm({ init, folders, onOk, onClose }) {   // 진짜 창(2026-11-10 3단계 — Tab이 위 막대로 나갔음), 「추가」는 늘 켜 둠(비면 그 칸으로 + 안내 — 사용자 고름)
   const NEW = '\u0000new', [name, setName] = useState(init.name || ''), [pick, setPick] = useState(folders.includes(init.folder) ? init.folder : folders[folders.length - 1] ?? NEW)   // init.folder = 끌어 놓은 폴더, [fresh, setFresh] = useState(folders.length ? '' : '내 심볼')
-  const folder = pick === NEW ? fresh.trim() : pick, ok = !!name.trim() && !!folder
-  const go = () => { if (ok) onOk(name.trim(), folder) }
-  const inp = { height: 30, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: "400 13px 'Pretendard', sans-serif" }
-  return <div data-testid="symadd" onPointerDown={e => { if (e.target === e.currentTarget) onClose() }} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose(); if (e.key === 'Enter') go() }}
-    style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-    <div style={{ width: 300, background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: 16, boxShadow: '0 10px 30px rgba(0,0,0,.2)', display: 'flex', flexDirection: 'column', gap: 10, color: C.ink, font: "400 12px 'Pretendard', sans-serif" }}>
-      <div style={{ font: "700 15px 'Pretendard', sans-serif" }}>내 심볼에 추가</div>
+  const folder = pick === NEW ? fresh.trim() : pick, [why, setWhy] = useState(''), nameRef = useRef(null), freshRef = useRef(null), dlg = useRef(null)
+  useModalDialog(dlg, undefined, () => nameRef.current?.focus())
+  const go = () => { if (!name.trim()) { setWhy('이름을 적어 주세요'); nameRef.current?.focus(); return } if (!folder) { setWhy('새 폴더 이름을 적어 주세요'); freshRef.current?.focus(); return } onOk(name.trim(), folder) }
+  const inp = { height: 30, boxSizing: 'border-box', border: '1px solid var(--mb-ctl)', borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: "400 13px 'Pretendard', sans-serif" }
+  return <dialog ref={dlg} data-testid="symadd" className="mb-dlg" aria-labelledby="symadd-title" onCancel={e => { e.preventDefault(); onClose() }} onPointerDown={e => { if (e.target === e.currentTarget) onClose() }} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' && e.target.tagName !== 'BUTTON' && e.target.tagName !== 'SELECT') { e.preventDefault(); go() } }}
+    style={{ position: 'fixed', inset: 0, zIndex: 60, width: '100%', height: '100%', maxWidth: 'none', maxHeight: 'none', margin: 0, border: 0, padding: 0, background: 'rgba(0,0,0,.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div style={{ width: 'min(300px, calc(100vw - 32px))', boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: 16, boxShadow: 'var(--mb-shadow-lg)', display: 'flex', flexDirection: 'column', gap: 10, color: C.ink, font: "400 12px 'Pretendard', sans-serif" }}>
+      <div id="symadd-title" style={{ font: "700 15px 'Pretendard', sans-serif" }}>내 심볼에 추가</div>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}><span style={{ color: C.muted }}>이름</span>
-        <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="예: 송신탑" style={inp} /></label>
+        <input ref={nameRef} className="mb-field" value={name} onChange={e => { setName(e.target.value); setWhy('') }} placeholder="예: 송신탑" aria-describedby={why ? 'symadd-why' : undefined} style={inp} /></label>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}><span style={{ color: C.muted }}>폴더</span>
-        {folders.length > 0 && <select value={pick} onChange={e => setPick(e.target.value)} style={inp}>
+        {folders.length > 0 && <select className="mb-field" value={pick} onChange={e => setPick(e.target.value)} style={inp}>
           {folders.map(f => <option key={f} value={f}>{f}</option>)}<option value={NEW}>＋ 새 폴더…</option></select>}
-        {pick === NEW && <input value={fresh} onChange={e => setFresh(e.target.value)} placeholder="새 폴더 이름" style={inp} />}</label>
-      <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.5 }}>이 브라우저에 저장돼요. 다른 PC로는 도형 칸 「파일로 저장」 → 「파일 불러오기」.</div>
+        {pick === NEW && <input ref={freshRef} className="mb-field" aria-label="새 폴더 이름" value={fresh} onChange={e => { setFresh(e.target.value); setWhy('') }} placeholder="새 폴더 이름" style={inp} />}</label>
+      {why && <div id="symadd-why" role="alert" style={{ fontSize: 12, color: 'var(--mb-danger-ink)' }}>{why}</div>}
+      <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.5 }}>이 브라우저에 저장돼요. 다른 PC로는 도형 판 「내 심볼」 ⋯ 「내려받기」 → 그 PC에서 「불러오기…」.</div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
-        <button onClick={onClose} style={{ all: 'unset', cursor: 'pointer', padding: '6px 12px', borderRadius: 6, border: `1px solid ${C.line}` }}>취소</button>
-        <button disabled={!ok} onClick={go} style={{ all: 'unset', cursor: ok ? 'pointer' : 'default', opacity: ok ? 1 : 0.5, padding: '6px 14px', borderRadius: 6, background: 'var(--mb-accent)', color: '#fff', fontWeight: 600 }}>추가</button>
+        <button onClick={onClose} style={{ ...btnSecondary, padding: '6px 12px' }}>취소</button>
+        <button onClick={go} style={{ ...btnPrimary, padding: '6px 14px' }}>추가</button>
       </div>
     </div>
-  </div>
+  </dialog>
 }
 
 // 접속자 = 이름 첫 글자 동그라미(2026-10-27 사용자: 이름을 잇대 쓰면 10명이면 잘림) — 4칸까지(넘치면 3명 + 「+N」), 색 = 칠판에서 그 사람이 고른 테두리 색, 누르면 공유 창(전체 목록)
@@ -414,9 +416,9 @@ function Dock({ tab, setTab, panes, mini, width, setWidth, help, onHelp }) {   /
       {DOCK_TABS.map(([k, label, tip]) => { const on = tab === k, ic = DOCK_ICONS[k] || ICONS[k]
         return <button key={k} data-testid={`dock-${k}`} aria-label={`${label} 판`} aria-pressed={on} title={on ? `${label} 판 접기` : tip} onClick={() => setTab(on ? '' : k)}
           style={{ all: 'unset', cursor: 'pointer', width: 36, padding: '6px 0 4px', borderRadius: 8, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, font: "400 10px 'Pretendard', sans-serif",
-            color: on ? C.accent : C.ink, background: on ? 'rgba(218,119,86,.18)' : 'transparent' }}
-          onMouseEnter={e => { if (!on) e.currentTarget.style.background = HOVER }} onMouseLeave={e => { e.currentTarget.style.background = on ? 'rgba(218,119,86,.18)' : 'transparent' }}>
-          <span aria-hidden className={on ? undefined : 'mb-btn-icon'} style={{ width: 20, height: 20, display: 'block', color: on ? C.accent : 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ic.replace('<svg ', '<svg width="20" height="20" ') }} />{label}</button> })}
+            color: C.ink, background: on ? 'var(--mb-on)' : 'transparent', boxShadow: on ? 'var(--mb-on-ring)' : 'none' }}   /* 켜짐 = 위 막대와 같게(2026-11-10 3단계 사용자 고름 — 코랄 글자 2.38) */
+          onMouseEnter={e => { if (!on) e.currentTarget.style.background = HOVER }} onMouseLeave={e => { e.currentTarget.style.background = on ? 'var(--mb-on)' : 'transparent' }}>
+          <span aria-hidden className="mb-btn-icon" style={{ width: 20, height: 20, display: 'block', color: 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ic.replace('<svg ', '<svg width="20" height="20" ') }} />{label}</button> })}
       {/* 도움말 = 레일 맨 아래 「?」(2026-10-25 사용자 — 옛 빈 곳 우클릭 「글쇠 도움말」 대신. 나중에 사용설명서 페이지가 생기면 카드 안에 길) */}
       <button data-testid="help-btn" data-help-btn aria-label="도움말" aria-pressed={help} title="도움말 — 글쇠 모음(F1)" onClick={onHelp}
         style={{ all: 'unset', cursor: 'pointer', marginTop: 'auto', marginBottom: 8, width: 28, height: 28, borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
