@@ -26,6 +26,9 @@ const pickCss = () => { const sel = '#3b82f6', hov = '#8b8b94', ring = '#2563eb'
     + `[data-block].mb-done{outline:2px solid #16a34a;outline-offset:3px}[data-block].mb-sel{outline:2px solid ${sel} !important;outline-offset:3px}[data-block].mb-edit{outline:2px dashed ${sel} !important;outline-offset:3px;cursor:text}` }
 const BUB_W = 320
 const BAR_H = 32   // 움직이는 카드 단추 묶음 자리(화면 px)
+// 휴대폰(2026-11-11 화면 검사 9단계 사용자 결정 — 새 탭 대신 이 창을 보기·인쇄만): 문서 폭 1000을 화면 폭에 그냥 맞추면 글자가 4~6px라 못 읽음.
+// 먼저 화면 폭 ÷ 0.8 폭으로 그려 보고(글이 칸에 맞춰 흐르는 문서 = 글자 0.8배), 칸보다 넓게 짜인 문서(210mm 고정 등)면 그 폭 그대로 0.7배 + 옆으로 굴림
+const PHONE_K = 0.8, PHONE_MIN = 0.7
 // 블록 이름 = 블록 첫 낱말(열 글자 안쪽 + …) — 글이 없으면 「N번째 덩어리」(2026-11-10 사용자 결정 — 「b2 · 글」은 속 이름이었음)
 export function blockName(el, bid) {
   const t = String(el?.textContent || '').replace(/\s+/g, ' ').trim()
@@ -37,13 +40,15 @@ export function blockName(el, bid) {
 // 서버 답 글 속 블록 번호(「b2만 고쳤어요」·「b2를 움직여 볼 수 있게」) → 블록 이름
 const named = (txt, bid, name) => String(txt || '').replace(new RegExp(`^${bid}를 `), `「${name}」 부분을 `).replace(new RegExp(`^${bid}(?=만 )`), `「${name}」`)
 
-export function DocView({ it, size, readOnly, threads = {}, onThread, onClose, onHtml, onLives, onPrint, onHwpx, onStatus }) {   // onLives = 움직이는 카드 `lives` { bN: 카드 HTML }(3단계 ②)   // threads·onThread = 블록 대화(말풍선 대화 저장소, 키 「문서 _id#bN」 — 창을 닫아도 남음)
+export function DocView({ it, size, phone = false, readOnly, threads = {}, onThread, onClose, onHtml, onLives, onPrint, onHwpx, onStatus }) {   // onLives = 움직이는 카드 `lives` { bN: 카드 HTML }(3단계 ②)   // threads·onThread = 블록 대화(말풍선 대화 저장소, 키 「문서 _id#bN」 — 창을 닫아도 남음)
   const frame = useRef(null), scroller = useRef(null), swaps = useRef({}), keepTop = useRef(0), dlg = useRef(null), win = useRef(null), bub = useRef(null), inp = useRef(null), alive = useRef(true)
   const [docH, setDocH] = useState(1200), [pick, setPick] = useState(null)   // pick = { bid, kind, name, top, left, right } (창 안 px)
   const tkey = bid => `${it._id}#${bid}`, talk = bid => threads[tkey(bid)] || []
   const [draft, setDraft] = useState(''), [busy, setBusy] = useState(''), [err, setErr] = useState(''), [done, setDone] = useState(''), [doneR, setDoneR] = useState(null), [bubH, setBubH] = useState(0)
   const vw = window.innerWidth || size.w, vh = window.innerHeight || size.h   // 진짜 창 = 화면 전체 위(칠판 칸만이 아니라)
-  const pageW = docPageW(it), winW = Math.min(pageW + 48, vw - 32), scale = Math.min(1, (winW - 40) / pageW), winH = vh - 24, narrow = winW < 720
+  const [wide, setWide] = useState(0)   // 휴대폰 — 화면에 맞춰 흐르지 않는 문서의 실제 폭(위 PHONE_K 설명)
+  const winW = phone ? vw - 16 : Math.min(docPageW(it) + 48, vw - 32), pageW = phone ? wide || Math.round(winW / PHONE_K) : docPageW(it)
+  const scale = phone ? (wide ? Math.max(PHONE_MIN, winW / wide) : PHONE_K) : Math.min(1, (winW - 40) / pageW), winH = vh - (phone ? 16 : 24), narrow = winW < 720
   const uid = useId()
   // 닫으면 초점 = 연 자리(카드를 연 대화창 미리보기·메뉴를 연 단추). 칠판(대기 편집기)에서 열었으면 칠판에 맡김(4단계 함정 — 그 편집기로 돌아가면 치는 글이 도형에 안 들어갔음)
   const [back] = useState(() => { const a = document.activeElement; return !a || a === document.body || a.closest?.('[data-armed], [data-testid=board]') ? document.body : a })
@@ -65,11 +70,12 @@ export function DocView({ it, size, readOnly, threads = {}, onThread, onClose, o
       el.style.minHeight = bid === play ? Math.ceil(el.getBoundingClientRect().width * LIVE_H / LIVE_W) + 'px' : ''   // 움직이는 동안만 칸을 카드 비율만큼(문서 글은 안 바뀜)
       const r = el.getBoundingClientRect(); out[bid] = { x: r.left, y: r.top, w: r.width, h: r.height }
     }
+    if (phone && !wide) { const sw = d.documentElement.scrollWidth; if (sw > pageW + 2) { setWide(sw); return } }   // 칸에 맞춰 흐르지 않는 문서 = 그 폭으로 다시(아래 effect가 다시 잼)
     const de = done ? d.querySelector(`[data-block="${done}"]`) : null, dr = de?.getBoundingClientRect()
     setDoneR(dr ? { x: dr.left, y: dr.top } : null)
     setRects(out); setDocH(Math.max(400, d.documentElement.scrollHeight))
   }
-  useEffect(measure, [play, it.lives, done])
+  useEffect(measure, [play, it.lives, done, wide])
   const bare = el => {   // 이 창이 붙인 자리 표시(움직이는 카드 여백·글쇠 길)를 뗀 원래 모양의 outerHTML
     const c = el.cloneNode(true)
     if (c.dataset.mbMt != null) { const st = c.dataset.mbStyle; if (st) c.setAttribute('style', st); else c.removeAttribute('style') }
@@ -189,11 +195,11 @@ export function DocView({ it, size, readOnly, threads = {}, onThread, onClose, o
   const bx = pick ? (pick.right + 12 + bubW <= winW - 8 ? pick.right + 12 : Math.max(8, Math.min(winW - bubW - 8, pick.left - 12 - bubW >= 8 ? pick.left - 12 - bubW : pick.right - bubW))) : 0
   const bh0 = bubH || 230, by = pick ? Math.max(winH - bh0 - 8 >= 52 ? 52 : 8, Math.min(pick.top, winH - bh0 - 8)) : 0
   const msgs = pick ? talk(pick.bid) : []
-  const hint = readOnly ? '대화창 문서 — 보기·인쇄만(고칠 점은 대화로 말하면 고쳐 써요)' : editBid ? `글자 고치는 중 — 바깥 누르기·${keyLabel('Ctrl+Enter')} = 저장 · Esc = 취소` : '누르기·Enter = AI로 고치기 · 두 번 누르기·F2 = 글자 고치기'
+  const hint = readOnly && phone ? '보기만 — 고치기는 PC 화면에서' : readOnly ? '대화창 문서 — 보기·인쇄만(고칠 점은 대화로 말하면 고쳐 써요)' : editBid ? `글자 고치는 중 — 바깥 누르기·${keyLabel('Ctrl+Enter')} = 저장 · Esc = 취소` : '누르기·Enter = AI로 고치기 · 두 번 누르기·F2 = 글자 고치기'
   return <dialog ref={dlg} className="mb-dlg" data-testid="doc-view" aria-label={`문서 — ${it.title || ''}`}
     onCancel={e => { e.preventDefault(); esc.current() /* 초점이 창 바탕(body)일 때의 Esc */ }} onClose={() => { if (alive.current) onClose() }}
     onPointerDown={e => { e.stopPropagation(); if (edit.current) fin.current(true) }} onWheel={e => e.stopPropagation()} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') { e.preventDefault(); esc.current() } }}
-    style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', maxWidth: 'none', maxHeight: 'none', margin: 0, padding: '12px 0 0', boxSizing: 'border-box', border: 0, background: 'rgba(24,24,27,.42)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}
+    style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', maxWidth: 'none', maxHeight: 'none', margin: 0, padding: phone ? '8px 0 0' : '12px 0 0', boxSizing: 'border-box', border: 0, background: 'rgba(24,24,27,.42)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}
     onClick={e => { if (e.target === e.currentTarget) onClose() }}>
     <div ref={win} tabIndex={-1} style={{ position: 'relative', width: winW, height: winH, background: C.card, color: C.ink, borderRadius: 12, boxShadow: 'var(--mb-shadow-lg)', display: 'flex', flexDirection: 'column', overflow: 'clip', font: `400 13px/1.5 ${F}`, outline: 'none' }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 8, rowGap: 2, padding: '9px 10px 9px 14px', borderBottom: `1px solid ${C.line}`, flex: 'none' }}>
@@ -201,10 +207,10 @@ export function DocView({ it, size, readOnly, threads = {}, onThread, onClose, o
         <span data-testid="doc-hint" style={{ ...(narrow ? { order: 3, flex: '1 1 100%', textAlign: 'left' } : { flex: 1, textAlign: 'right', paddingRight: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }), minWidth: 0, color: C.muted, font: `${editBid ? 600 : 400} 12px ${F}`, wordBreak: 'keep-all' }}>{hint}</span>
         <button data-testid="doc-print" style={btn} onClick={onPrint} title={`새 탭에서 열어 ${keyLabel('Ctrl+P')} — 인쇄·PDF로 저장`}>인쇄 · PDF</button>
         {onHwpx && <button style={btn} onClick={onHwpx} aria-label="한글 파일로 내려받기 (.hwpx)" title="한글 파일로 내려받기 (.hwpx)">한글 파일</button>}
-        <button data-testid="doc-close" className="mb-hit" aria-label="문서 창 닫기" title="닫기 (Esc)" onClick={onClose} style={{ ...btn, position: 'relative', border: 0, color: C.muted, fontSize: 15, padding: '2px 8px' }}>✕</button>
+        <button data-testid="doc-close" className="mb-hit" aria-label="문서 창 닫기" title="닫기 (Esc)" onClick={onClose} style={{ ...btn, position: 'relative', '--hit-c': '-10px -11px -10px -8px', border: 0, color: C.muted, fontSize: 15, padding: '2px 8px' }}>✕</button>
       </div>
       <div ref={scroller} tabIndex={readOnly ? 0 : undefined} aria-label={readOnly ? '문서 내용' : undefined} onScroll={() => pick && setPick(null)} style={{ flex: 1, overflow: 'auto', background: '#fff', position: 'relative' }}>
-        <div style={{ height: docH * scale, position: 'relative' }}>
+        <div style={{ height: docH * scale, ...(phone ? { width: Math.max(winW, pageW * scale) } : {}), position: 'relative' }}>   {/* 휴대폰 = 넓은 문서는 옆으로 굴림 */}
           <iframe ref={frame} data-testid="doc-frame" title={it.title || '문서'} srcDoc={it.html} sandbox="allow-same-origin" scrolling="no" onLoad={onLoad} tabIndex={readOnly ? -1 : undefined}
             style={{ position: 'absolute', left: fx, top: 0, width: pageW, height: docH, border: 0, transform: `scale(${scale})`, transformOrigin: '0 0', background: '#fff' }} />
           {!readOnly && done && doneR && <span data-testid="block-done" aria-hidden="true" style={{ position: 'absolute', left: fx + doneR.x * scale - 3, top: doneR.y * scale - 5, transform: 'translateY(-100%)', padding: '0 7px', borderRadius: 99, background: '#15803d', color: '#fff', font: `600 11px/18px ${F}`, pointerEvents: 'none', whiteSpace: 'nowrap' }}>✓ 고침</span>}

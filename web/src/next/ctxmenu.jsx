@@ -37,7 +37,7 @@ export function ContextMenu({ at, entries, onClose, testid, touch = false }) {  
   const none = !entries.length   // 마우스 올림 = 회색(아래 hover — 규칙 ③)
   useEffect(() => { if (none) onClose() }, [none, onClose])   // 띄울 것이 없으면(빈 곳·붙일 것 없음) 바로 닫음 — 남아 있으면 나중에 복사했을 때 옛 자리에 뜸
   if (none) return null
-  const hover = e => { e.currentTarget.style.background = 'var(--mb-group)' }, leave = e => { e.currentTarget.style.background = 'transparent' }
+  const hover = e => { if (e.pointerType === 'mouse') e.currentTarget.style.background = 'var(--mb-group)' }, leave = e => { e.currentTarget.style.background = 'transparent' }   // 마우스일 때만(9단계 — 톡 뒤 회색이 남았음)
   const openSub = (i, el, key = false) => setSub({ i, r: el.getBoundingClientRect(), key })
   const back = () => { if (at.anchor?.isConnected) at.anchor.focus({ preventScroll: true }) }
   const onKey = e => {   // 메뉴 안 글쇠는 칠판으로 안 넘김(칠판이 ↑↓로 도형을 옮기지 않게) — Ctrl+K 같은 잡기 단계 글쇠는 그 전에 받음
@@ -58,13 +58,13 @@ export function ContextMenu({ at, entries, onClose, testid, touch = false }) {  
     {entries.map((en, i) => en === '-' ? <Sep key={i} /> : (
       <div key={i} role="none" style={{ position: 'relative' }} onMouseEnter={e => (en[3] ? openSub(i, e.currentTarget) : setSub(null))}>
         <button role="menuitem" data-sub={en[3] ? i : undefined} aria-haspopup={en[3] ? 'menu' : undefined} aria-expanded={en[3] ? sub?.i === i : undefined}
-          onClick={en[3] ? e => openSub(i, e.currentTarget.parentElement) : en[2]} onMouseEnter={hover} onMouseLeave={leave} style={{ ...row(false), ...(touch ? { minHeight: 44, padding: '0 14px 0 10px', borderRadius: 8 } : {}) }}>
+          onClick={en[3] ? e => openSub(i, e.currentTarget.parentElement) : en[2]} onPointerEnter={hover} onPointerLeave={leave} style={{ ...row(false), ...(touch ? { minHeight: 44, padding: '0 14px 0 10px', borderRadius: 8 } : {}) }}>
           <span style={{ flex: 1, ...(touch ? { display: 'flex', alignItems: 'center', gap: 10, whiteSpace: 'nowrap' } : {}) }}>{en[0]}</span>
           {en[1] && <span style={{ color: C.muted, fontSize: 11 }}>{keyLabel(en[1])}</span>}
           {en[3] && <span aria-hidden="true" style={{ color: C.muted }}>▸</span>}
         </button>
         {en[3] && sub?.i === i && <div ref={fitSub} role="menu" aria-label={typeof en[0] === 'string' ? en[0] : undefined} style={{ ...box, position: 'fixed', zIndex: 71, left: sub.r.right + 2, top: sub.r.top - 4, maxHeight: 'calc(100vh - 8px)' }}>
-          {en[3].map((s, j) => s === '-' ? <Sep key={j} /> : <button key={j} role="menuitem" disabled={!!s[2]} onClick={s[1]} onMouseEnter={s[2] ? undefined : hover} onMouseLeave={leave} style={row(s[2])}>{s[0]}</button>)}
+          {en[3].map((s, j) => s === '-' ? <Sep key={j} /> : <button key={j} role="menuitem" disabled={!!s[2]} onClick={s[1]} onPointerEnter={s[2] ? undefined : hover} onPointerLeave={leave} style={row(s[2])}>{s[0]}</button>)}
         </div>}
       </div>))}
   </div>

@@ -32,6 +32,9 @@
     .mb-skip{position:fixed;left:8px;top:-60px;z-index:2000;padding:8px 14px;border-radius:8px;background:var(--mb-card);color:var(--mb-ink);font:600 13px 'Pretendard',sans-serif;box-shadow:var(--mb-shadow);text-decoration:none}.mb-skip:focus{top:8px}   /* 글쇠로만 보이는 「건너뛰기」(2026-11-10 1단계 — 위 막대 Tab 25번) */   /* 목록 칸이 굴림 칸이라 바깥 테두리는 잘림 — 줄 안쪽에 */
     .mb-row:focus-within .mb-more{visibility:visible!important}   /* 줄 ⋯는 마우스 올림 때만(규칙 ④) + 글쇠로 그 줄에 왔을 때도 */
     .mb-hit::after{content:'';position:absolute;inset:var(--hit,-3px)}   /* 겉모양은 작게 두고 누르는 자리만 24px로(2026-11-09 점검 — ⋯ 18·▾ 22×20) */
+    /* 손가락 기기(휴대폰·태블릿 — ui.jsx isPhone과 같은 pointer:coarse) = 누르는 자리를 더 넓힘(2026-11-11 화면 검사 9단계 H4). 기본 8px 둘레(18px 단추 = 34), 이웃 단추와 붙어 있어 겹치면 그 단추가 --hit-c로 따로 정함 — 마우스 PC는 안 바뀜 */
+    @media (pointer:coarse){.mb-hit::after{inset:var(--hit-c,-8px)}}
+    @media (prefers-reduced-motion:reduce){.mb-switch,.mb-switch *{transition:none!important}}   /* 켜고 끄는 스위치 손잡이 움직임(9단계) */
     .mb-dlg::backdrop{background:transparent}   /* 확인 창 바탕은 창이 직접 칠함(ui.jsx Confirm) */
     .mb-btn-icon svg [fill="currentColor"]{fill:var(--mb-icon-acc)}
     @media (max-width:1039px){[data-cmd-btn]{display:none!important}}
@@ -42,7 +45,7 @@
 <body><div id="root"></div>
   <script>/* 앱이 그려지기 전(글꼴·로그인 확인을 기다리는 0.0x초) 빈 틀 — 하얀 화면이 한 번 번쩍였음(2026-10-28 사용자 「새 칠판 누르면 살짝 깜빡」, 녹화 4번 중 1번).
     위 막대·왼쪽 판·대화창 자리를 이 브라우저가 기억한 폭 그대로 칠함(main.jsx `mb-dock`·`mb-dock-w`·`mb-chat-open`·`mb-chat-w`, 위 막대 높이 = 넓은 창 54·좁은 창 39). React가 그리면 통째로 바뀜 */
-    try { const q = new URLSearchParams(location.search), W = innerWidth, phone = matchMedia('(pointer: coarse)').matches && W < 700
+    try { const q = new URLSearchParams(location.search), W = innerWidth, phone = matchMedia('(pointer: coarse)').matches && Math.min(W, innerHeight) < 700   /* ui.jsx isPhone과 같은 규칙(짧은 변 — 가로 폰이 PC 틀을 칠했음, 9단계) */
       if (!q.get('view') && !phone) { const g = (k, d) => { const v = localStorage.getItem(k); return v == null ? d : v }, narrow = W < 1440, top = narrow ? 39 : 54
         const dock = g('mb-dock', narrow ? '' : 'shape'), dw = Math.max(192, Math.min(400, +g('mb-dock-w', 192) || 192)), chat = g('mb-chat-open', '1') !== '0', cw = Math.max(320, Math.min(720, +g('mb-chat-w', 360) || 360))
         const box = s => `<div style="position:absolute;box-sizing:border-box;${s}"></div>`, bar = 'background:var(--mb-bar);border:0 solid var(--mb-line);'

@@ -20,14 +20,15 @@ html,body{margin:0;height:100%;background:#f4f4f5;font:14px 'Pretendard','Malgun
 #bar button{border:0;border-radius:6px;padding:6px 12px;background:rgba(218,119,86,.14);font-weight:600;font-size:13px;font-family:inherit;cursor:pointer;color:#27272a}
 #bar button.on{background:#da7756;color:#fff}
 #tabs{display:flex;gap:2px;padding:2px;border-radius:8px;background:#f4f4f5}#tabs button{background:transparent}#tabs button.cur{background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.12)}
-#ov{position:fixed;left:0;right:0;top:44px;bottom:0;overflow:hidden;cursor:grab}
+#ov{position:fixed;left:0;right:0;top:44px;bottom:0;overflow:hidden;cursor:grab;touch-action:none}
 #ovin{position:absolute;inset:0}#ovin svg{display:block;width:100%;height:100%}
-#show{position:fixed;inset:0;background:#000;display:none;z-index:10}
+#show{position:fixed;inset:0;background:#000;display:none;z-index:10;touch-action:none}
 #show .slide{position:absolute;inset:0;display:none;align-items:center;justify-content:center}
 #show .slide svg{width:100%;height:100%;display:block}
 #show .slide.cur{display:flex}
 #nav{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);display:flex;gap:4px;align-items:center;padding:4px;border-radius:10px;background:rgba(24,24,27,.86);color:#fff;z-index:11;opacity:0;transition:opacity .25s}
 #show:hover #nav,#nav:hover,#nav:focus-within{opacity:1}
+@media (hover:none){#nav{opacity:1}#nav button{min-width:44px;min-height:44px}}
 #nav button{border:0;background:transparent;color:#fff;font-weight:600;font-size:14px;font-family:inherit;padding:6px 10px;border-radius:6px;cursor:pointer}
 #nav span{font-size:12px;padding:0 8px}
 </style></head><body>
@@ -45,9 +46,14 @@ function put(){if(!svg)return;var r=ov.getBoundingClientRect();svg.setAttribute(
 function fit(){var r=ov.getBoundingClientRect();s=Math.min(r.width/W,r.height/H)*0.95;x=(r.width-W*s)/2;y=(r.height-H*s)/2;put()}
 fit();window.addEventListener('resize',fit);document.getElementById('fit').onclick=fit;
 ov.addEventListener('wheel',function(e){e.preventDefault();var r=ov.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top,k=e.deltaY<0?1.15:1/1.15,ns=Math.max(0.05,Math.min(40,s*k));k=ns/s;x=mx-(mx-x)*k;y=my-(my-y)*k;s=ns;put()},{passive:false});
-var drag=null;ov.addEventListener('pointerdown',function(e){drag={x:e.clientX-x,y:e.clientY-y,sx:e.clientX,sy:e.clientY,t:e.target};ov.setPointerCapture(e.pointerId);ov.style.cursor='grabbing'});
-ov.addEventListener('pointermove',function(e){if(!drag)return;x=e.clientX-drag.x;y=e.clientY-drag.y;put()});
-ov.addEventListener('pointerup',function(e){var d=drag;drag=null;ov.style.cursor='grab';if(d&&Math.abs(e.clientX-d.sx)+Math.abs(e.clientY-d.sy)<5)webClick(d.t,e)});
+// 손가락(2026-11-11 화면 검사 9단계 — 칠판 휴대폰과 같게): 한 손가락 = 이동, 두 손가락 = 확대(손가락 사이 가운데를 기준으로) · touch-action:none이라 브라우저가 가져가지 않음
+var drag=null,pts={},pinch=null;
+function two(){var k=Object.keys(pts),a=pts[k[0]],b=pts[k[1]],r=ov.getBoundingClientRect();return{d:Math.hypot(a.x-b.x,a.y-b.y)||1,mx:(a.x+b.x)/2-r.left,my:(a.y+b.y)/2-r.top}}
+ov.addEventListener('pointerdown',function(e){pts[e.pointerId]={x:e.clientX,y:e.clientY};ov.setPointerCapture(e.pointerId);if(Object.keys(pts).length>=2){drag=null;var t=two();pinch={d:t.d,mx:t.mx,my:t.my,s:s,x:x,y:y};return}drag={x:e.clientX-x,y:e.clientY-y,sx:e.clientX,sy:e.clientY,t:e.target};ov.style.cursor='grabbing'});
+ov.addEventListener('pointermove',function(e){if(pts[e.pointerId])pts[e.pointerId]={x:e.clientX,y:e.clientY};if(pinch){if(Object.keys(pts).length<2)return;var t=two(),ns=Math.max(0.05,Math.min(40,pinch.s*t.d/pinch.d));x=t.mx-(pinch.mx-pinch.x)*ns/pinch.s;y=t.my-(pinch.my-pinch.y)*ns/pinch.s;s=ns;put();return}if(!drag)return;x=e.clientX-drag.x;y=e.clientY-drag.y;put()});
+function lift(e){delete pts[e.pointerId];if(pinch){if(!Object.keys(pts).length)pinch=null;drag=null;return true}return false}
+ov.addEventListener('pointercancel',function(e){lift(e);drag=null;ov.style.cursor='grab'});
+ov.addEventListener('pointerup',function(e){if(lift(e))return;var d=drag;drag=null;ov.style.cursor='grab';if(d&&Math.abs(e.clientX-d.sx)+Math.abs(e.clientY-d.sy)<5)webClick(d.t,e)});
 // 웹 카드 누르기 — 몸통 = 그 자리에 실제 페이지(유튜브는 바로 재생, 인터넷이 없으면 그림 그대로), 위 띠·막는 사이트 = 새 탭
 // 움직이는 카드(§8 항목66 4단계) = 누르면 그 자리에 틀(스크립트만 켠 칸 — 칠판과 같은 sandbox·CSP, 글은 내보낼 때 남긴 data-live-src)
 // 문서 카드(2026-11-11 화면 검사 8단계) = 누르면 그 자리에 문서(스크립트 없는 칸 sandbox="" — 글은 data-doc-src, 폭은 data-doc-w)
@@ -66,6 +72,11 @@ var f=document.createElement('iframe');f.src=src;f.setAttribute('allow','autopla
 f.style.cssText='border:0;display:block;background:#fff;width:'+100/z+'%;height:'+100/z+'%;transform-origin:0 0'+(z<1?';transform:scale('+z+')':'');fo.appendChild(f);g.appendChild(fo)}
 var bar=document.getElementById('bar'),show=document.getElementById('show'),slides=show.querySelectorAll('.slide'),i=0,on=false,no=document.getElementById('no'),wheelAt=0;
 show.addEventListener('click',function(e){webClick(e.target,e)});
+// 휴대폰 발표(9단계 — 칠판 휴대폰 발표 present.jsx simple과 같은 규칙): 옆으로 쓸기(40px 넘게) = 넘기기(왼쪽으로 = 다음), 톡 = 다음(왼쪽 1/3 = 이전) · 카드·막대 위 톡은 그쪽 몫. 마우스 클릭으로는 안 넘김(칠판 발표와 같음)
+var tap=null;show.addEventListener('pointerdown',function(e){tap=e.pointerType==='touch'&&e.isPrimary?{x:e.clientX,y:e.clientY,t:e.target}:null});
+show.addEventListener('pointercancel',function(){tap=null});
+show.addEventListener('pointerup',function(e){var t=tap;tap=null;if(!t||!on)return;var dx=e.clientX-t.x,dy=e.clientY-t.y;if(Math.abs(dx)>=40&&Math.abs(dx)>1.5*Math.abs(dy)){go(i+(dx<0?1:-1));return}
+if(Math.hypot(dx,dy)>=12||(t.t.closest&&t.t.closest('#nav,[data-web-url],[data-live-src],[data-doc-src]')))return;go(i+(e.clientX<window.innerWidth/3?-1:1))});
 function go(k){if(!slides.length)return;i=Math.max(0,Math.min(slides.length-1,k));for(var j=0;j<slides.length;j++)slides[j].classList.toggle('cur',j===i);var nm=slides[i].getAttribute('data-name');no.textContent=(i+1)+' / '+slides.length+(nm?' · '+nm:'')}
 function start(){if(!slides.length)return;on=true;show.style.display='block';bar.inert=true;go(i);try{document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen()}catch(e){}}
 function end(){on=false;show.style.display='none';bar.inert=false;try{document.fullscreenElement&&document.exitFullscreen()}catch(e){}}

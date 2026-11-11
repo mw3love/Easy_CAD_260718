@@ -20,7 +20,8 @@ export function usePhoneViewport(phone) {
 }
 
 // 규칙 ③ 마우스 올림 = 회색 바탕(뜻 있는 「켜짐」만 코랄)
-export const hoverBg = { onMouseEnter: e => { e.currentTarget.style.background = HOVER }, onMouseLeave: e => { e.currentTarget.style.background = 'transparent' } }
+// 마우스일 때만(2026-11-11 화면 검사 9단계 — 손가락 톡 뒤 브라우저가 흉내 내는 mouseenter로 회색이 남았음)
+export const hoverBg = { onPointerEnter: e => { if (e.pointerType === 'mouse') e.currentTarget.style.background = HOVER }, onPointerLeave: e => { e.currentTarget.style.background = 'transparent' } }
 
 // 규칙 A1 — 코랄 채움 = 판마다 대표 행동 하나. 그 밖은 회색 테두리
 export const btnPrimary = { all: 'unset', cursor: 'pointer', padding: '3px 10px', borderRadius: 6, background: ACCENT, color: '#fff', font: `600 12px ${F}` }
@@ -29,7 +30,8 @@ export const btnSecondary = { all: 'unset', cursor: 'pointer', padding: '3px 10p
 export const btnHead = { all: 'unset', cursor: 'pointer', padding: '1px 6px', borderRadius: 4, border: '1px solid var(--mb-ctl)', color: C.ink, font: `400 11px ${F}`, whiteSpace: 'nowrap' }
 // 규칙 ④ — ⋯: 머리줄은 늘 보이고 테두리 없음, 줄은 마우스를 올렸을 때만(`show`)
 // 누르는 자리 24×24(WCAG 2.5.8) = 겉모양 18 그대로, 둘레 3px을 `.mb-hit`(index.html)이 넓힘(2026-11-09 점검)
-export const moreBtn = show => ({ all: 'unset', position: 'relative', '--hit': '-3px', cursor: 'pointer', flex: 'none', width: 18, textAlign: 'center', borderRadius: 4, color: C.muted, fontWeight: 700, lineHeight: '18px', visibility: show ? 'visible' : 'hidden' })
+// 손가락 기기(태블릿 — index.html coarse 규칙): 줄 사이 9·왼쪽 단추 사이 6이라 위아래 4·왼쪽 6·오른쪽(줄 끝) 10까지만 = 34×26(2026-11-11 9단계 — 기본 8이면 윗줄 ⋯·옆 ▶·잠그기를 덮었음)
+export const moreBtn = show => ({ all: 'unset', position: 'relative', '--hit': '-3px', '--hit-c': '-4px -10px -4px -6px', cursor: 'pointer', flex: 'none', width: 18, textAlign: 'center', borderRadius: 4, color: C.muted, fontWeight: 700, lineHeight: '18px', visibility: show ? 'visible' : 'hidden' })
 
 // ⋯ 단추 아래에 메뉴 띄우기 — 같은 단추를 다시 누르면 닫힘(ContextMenu `anchor`가 그 단추 누르기를 「바깥」으로 안 봄)
 export const menuBelow = (e, extra = {}) => { const r = e.currentTarget.getBoundingClientRect(); return { x: r.left, y: r.bottom + 2, anchor: e.currentTarget, ...extra } }

@@ -16,6 +16,7 @@ import { ContextMenu } from './ctxmenu.jsx'
 
 // 발표 화면 색 = 뿌리의 data-mb-theme(index.html 변수 그대로 — 2026-11-11 화면 검사 8단계: 따로 적어 둔 값이 앱 변수와 어긋났음, D가 앱 테마와 달라도 모든 변수가 맞게)
 // 움직임 줄이기(운영체제 설정)면 장 넘김 기본 = 「바로」, Ctrl+휠 확대도 움직임 없이(같은 점검)
+const VOICE_MAKING = '🔊 읽어 줄 목소리를 만드는 중…'
 const reducedMotion = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches } catch { return false } }
 const barZoomOf = w => Math.min(1.35, Math.max(1, w / 1400))   // 큰 화면일수록 막대도 크게(2026-10-22 디자인 점검: TV 앞에 서서 누르기엔 글자가 작았음) — 1400px = 1배, 1920 = 1.35배
 // 판서 색 다섯(2026-10-18 사용자: 「빨 초 파 검 흰, 5개 이내」 — 칠판 잉크 규칙상 검·흰은 화면 따라 서로 바뀌어 한 칸 「검/흰」, 대신 형광펜용 노랑)
@@ -111,19 +112,21 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
   const eraseKey = useRef({ t: 0, prev: null }), [toast, setToast] = useState(null), iNow = useRef(i); iNow.current = i
   // 읽어 주기(계획 ⑥, 2026-11-08) — 켜면 장이 열릴 때 그 장 발표자 메모(`frames[].notes` = 장 프레임 `slide.notes`)를 KAIROS 목소리로(서버 `/api/tts` — 같은 글이면 만든 소리를 다시 씀).
   // 다음 장 소리는 미리 받아 둠(만드는 데 몇 초). 장을 넘기면 멈춤. 메모 있는 장이 하나도 없으면 단추도 없음
-  const [voice, setVoice] = useState(false), voiceRef = useRef({ urls: new Map(), audio: null }), hasNotes = frames.some(f => f.notes?.trim())
+  const [voice, setVoice] = useState(false), voiceRef = useRef({ urls: new Map(), done: new Set(), audio: null }), hasNotes = frames.some(f => f.notes?.trim())
   const voiceUrl = id => { const f = frames.find(x => x.id === id), V = voiceRef.current; if (!f?.notes?.trim()) return Promise.resolve('')
     if (!V.urls.has(id)) V.urls.set(id, fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() }, body: JSON.stringify({ board: DOC_NAME, text: f.notes }) })
-      .then(r => r.json().catch(() => ({})).then(d => { if (r.status === 402) throw new Error('402'); if (!r.ok || d.error || !d.url) throw new Error(d.error || (r.ok ? '소리 주소 없음' : `서버 응답 ${r.status}`)); return d.url }))
+      .then(r => r.json().catch(() => ({})).then(d => { if (r.status === 402) throw new Error('402'); if (!r.ok || d.error || !d.url) throw new Error(d.error || (r.ok ? '소리 주소 없음' : `서버 응답 ${r.status}`)); V.done.add(id); return d.url }))
       .catch(e => { V.urls.delete(id); setVoice(false); flash(`읽어 주기를 못 해 껐어요 — ${aiError(e)}`, true); return '' }))   // 실패하면 단추 끔(2026-11-11 8단계 사용자 결정) + 알림은 다음 조작까지
     return V.urls.get(id) }
   useEffect(() => { const V = voiceRef.current; V.audio?.pause(); V.audio = null; if (!voice) return
     let gone = false; const id = frames[i]?.id
-    voiceUrl(id).then(u => { if (gone || !u) return; const a = new Audio(u); a.dataset.frame = id; V.audio = a; a.play().catch(() => {}) })
+    const making = frames[i]?.notes?.trim() && !V.done.has(id); if (making) flash(VOICE_MAKING, true)   // 처음 만드는 장 = 몇 초 걸림 — 눌렀는데 조용했음(2026-11-11 화면 검사 9단계)
+    voiceUrl(id).then(u => { if (u && making && toastNow.current === VOICE_MAKING) { toastStay.current = false; setToast(null) } if (gone || !u) return; const a = new Audio(u); a.dataset.frame = id; V.audio = a; a.play().catch(() => {}) })
     const nx = frames[i + 1]?.id; if (nx) voiceUrl(nx)
     return () => { gone = true; V.audio?.pause() } }, [i, voice])   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => voiceRef.current.audio?.pause(), [])
-  const toastT = useRef(0), toastStay = useRef(false), flash = (msg, stay = false) => { setToast(msg); clearTimeout(toastT.current); toastStay.current = stay; if (!stay) toastT.current = setTimeout(() => setToast(null), 2000) }
+  const toastT = useRef(0), toastStay = useRef(false), toastNow = useRef(null); toastNow.current = toast
+  const flash = (msg, stay = false) => { setToast(msg); clearTimeout(toastT.current); toastStay.current = stay; if (!stay) toastT.current = setTimeout(() => setToast(null), 2000) }
   const unstay = () => { if (toastStay.current) { toastStay.current = false; setToast(null) } }   // 남겨 둔 알림(🔊 실패)은 다음 조작에 닫힘
   const clearSlide = () => { const fr = frames[iNow.current]; if (!fr) return; onClearNotes(fr.box); flash('이 장 판서 지움 — Ctrl+Z로 되돌리기') }
   const pickColor = c => { if (toolRef.current === 'hl') setHlColor(c); else setPenColor(c) }   // 형광펜을 들고 있으면 형광펜 색, 아니면 펜 색
@@ -202,8 +205,10 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
   listRef.current = list
   setInkDark(dark)   // 그리기 전에 — effect에서 바꾸면 한 박자 늦어 어둡게 되돌린 뒤 글이 검은 잉크로 남았음(2026-10-18 사용자)
   const f = frames[i]
-  const { w: W, h: H } = vw, b = f?.box || { x: 0, y: 0, w: 1, h: 1 }, k = Math.min(W / b.w, H / b.h) * 0.95, hw = b.w * k, hh = b.h * k, hx = (W - hw) / 2, hy = (H - hh) / 2   // 95% — TV 가장자리가 잘려도 내용이 안 붙게(HTML 공유 발표와 같음, 2026-10-19)
-  const g = Math.min(W - hw, H - hh) / 2   // 프레임 둘레 여백 띠(칠판 바탕색 — 슬라이드 여백처럼, 그 밖 검정)
+  // 가로 휴대폰 = 장을 아래 막대 위까지만(2026-11-11 화면 검사 9단계 사용자 결정 — 막대가 장 아래쪽을 덮었음). 막대 = 아래 띄움 36 + 높이 52 + 여백 8
+  const { w: W, h: H } = vw, fitH = simple && W > H ? Math.max(120, H - 96) : H
+  const b = f?.box || { x: 0, y: 0, w: 1, h: 1 }, k = Math.min(W / b.w, fitH / b.h) * 0.95, hw = b.w * k, hh = b.h * k, hx = (W - hw) / 2, hy = (fitH - hh) / 2   // 95% — TV 가장자리가 잘려도 내용이 안 붙게(HTML 공유 발표와 같음, 2026-10-19)
+  const g = Math.min(W - hw, fitH - hh) / 2   // 프레임 둘레 여백 띠(칠판 바탕색 — 슬라이드 여백처럼, 그 밖 검정)
   const tx = hx - b.x * k, ty = hy - b.y * k, unz = (x, y) => (zoom ? [(x - zoom.ox) / zoom.s, (y - zoom.oy) / zoom.s] : [x, y])
   const [gx, gy, gk] = useGlide([tx, ty, k], glide && !draft ? (quick ? 120 : 400) : 0), [zx, zy, zs] = useGlide([zoom?.ox || 0, zoom?.oy || 0, zoom?.s || 1], pan.current?.moved || reduced ? 0 : 150)   // 휠로 잇따라 넘기는 중 = 0.12초
   if (!f) return null
@@ -320,7 +325,7 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
       </div></div>}
     {list && <div data-testid="slide-list" onPointerDown={e => { e.stopPropagation(); if (e.target === e.currentTarget) setList(null) }}
       style={{ position: 'absolute', inset: 0, boxSizing: 'border-box', paddingBottom: barH + 24, background: 'rgba(0,0,0,.72)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, zIndex: 3 }}>
-      <div style={{ zoom: barZoom, color: '#fff', font: "600 15px 'Pretendard', sans-serif", maxWidth: (W - 32) / barZoom, textAlign: 'center' }}>장 목록 <span style={{ fontWeight: 400, color: 'rgba(255,255,255,.6)', fontSize: 13 }}>— 누르기 · 방향키 + Enter · 번호 + Enter · Esc 닫기</span>
+      <div style={{ zoom: barZoom, color: '#fff', font: "600 15px 'Pretendard', sans-serif", maxWidth: (W - 32) / barZoom, textAlign: 'center' }}>장 목록 <span style={{ fontWeight: 400, color: 'rgba(255,255,255,.6)', fontSize: 13 }}>{simple ? '— 누르면 그 장 · 빈 곳 = 닫기' : '— 누르기 · 방향키 + Enter · 번호 + Enter · Esc 닫기'}</span>   {/* 휴대폰 = 글쇠 말 대신 손가락 말(9단계) */}
         {list.typed && <span style={{ marginLeft: 10, padding: '2px 10px', borderRadius: 6, background: 'var(--mb-accent)' }}>{list.typed}번으로</span>}</div>
       <div style={{ zoom: barZoom, display: 'flex', flexWrap: 'wrap', gap: 14, justifyContent: 'center', maxWidth: W * 0.86 / barZoom, maxHeight: Math.max(140, H - barH - 24 - 16 - 60 * barZoom) / barZoom, overflowY: 'auto', padding: 8 }}>
         {frames.map((fr, j) => { const bb = fr.box
@@ -328,7 +333,8 @@ export function Presenter({ frames, links = [], order, onBoard, routes, start = 
             <svg width={200} height={120} viewBox={`${bb.x} ${bb.y} ${bb.w} ${bb.h}`} style={{ background: 'var(--mb-board)', borderRadius: 6, outline: j === list.pick ? '3px solid #da7756' : j === i ? '2px solid rgba(255,255,255,.7)' : '1px solid rgba(255,255,255,.25)', outlineOffset: 2 }}>
               <g style={{ '--z': Math.min(200 / bb.w, 120 / bb.h) }}>{order.map(([it, idx]) => <Item key={it._id} it={it} idx={idx} onBoard={onBoard[idx]} route={routes.get(idx)} labels="inline" dark={dark} />)}</g></svg>
             <span style={{ color: '#fff', font: `${j === i ? 700 : 400} 12px 'Pretendard', sans-serif` }}>{j === i ? '✓ ' : ''}{j + 1}{fr.name ? ` · ${fr.name}` : ''}</span></button> })}
-      </div></div>}
+      </div>
+      {simple && <button data-testid="slide-list-close" onClick={() => setList(null)} style={{ ...btn(false), padding: '0 18px', background: 'rgba(255,255,255,.14)' }}>닫기</button>}</div>}
     {zoom?.card && show && <button data-testid="big-close" title="원래 크기로 (영상 밖을 눌러도 됨)" onPointerDown={e => e.stopPropagation()} onClick={() => { setZoom(null); setBigHover(false) }} onPointerEnter={() => { setBigHover(true); barHover.current = true }} onPointerLeave={() => { setBigHover(false); barHover.current = false; wake() }}
       style={{ all: 'unset', cursor: 'pointer', position: 'absolute', right: Math.max(16, W - (zoom.right || W)), top: Math.max((BIG_BAND - 40) / 2, (zoom.top ?? BIG_BAND) - 52), height: 40, padding: '0 18px', display: 'flex', alignItems: 'center', gap: 6, borderRadius: 20,
         color: '#fff', font: "600 15px 'Pretendard', sans-serif", boxShadow: '0 2px 10px rgba(0,0,0,.4)', transition: 'background .12s', background: bigHover ? 'var(--mb-accent)' : 'rgba(63,63,70,.95)', border: '1px solid rgba(255,255,255,.25)' }}>⤡ 원래 크기로 (F)</button>}   {/* 올리면 코랄(2026-10-20 사용자: 알아보게) — 영상 위에선 마우스가 유튜브로 가니 위 띠로 올리면 나타남 */}

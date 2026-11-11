@@ -167,7 +167,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { dropNotesBanner(); const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, liveModel: () => R.current.model, startToolDrag, placeShape, selCommands: () => (R.current.sel.length ? menuEntries(cellSel && R.current.sel.length === 1 && R.current.sel[0] === cellSel.id ? { cell: { r: cellSel.r1, c: cellSel.c1 } } : {}) : []), busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, skipFrames, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, selImageIds, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, printDoc, saveHwpx, setImage, slidesBoard, slideBranch, motionInfo, motionPlace, flowBoard, flowTarget, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, liveModel: () => R.current.model, startToolDrag, placeShape, selCommands: () => (R.current.sel.length ? menuEntries(cellSel && R.current.sel.length === 1 && R.current.sel[0] === cellSel.id ? { cell: { r: cellSel.r1, c: cellSel.c1 } } : {}) : []), busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, removeFrame, skipFrames, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, selImageIds, meetStart, meetStop, meetDiscard, showIds, pinCard, unpinIds, showCard, showItem, dropFiles, attachFiles, bubbleInfo, bubbleEdit, setFields, printDoc, saveHwpx, setImage, slidesBoard, slideBranch, motionInfo, motionPlace, flowBoard, flowTarget, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), ids => { snapPins(ids); onPlaced?.(ids) }), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -1408,6 +1408,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const its = cardItems(msg, at.x, at.y, topZ(m.items) + 1)
     commit([...m.items, ...its], its.map(it => it._id), '칠판에 붙이기')
     if (!drop) bringIn(unionBox(its.map(it => sceneBox(it, textBox))))
+    snapPins(its.map(it => it._id))
     return its.map(it => it._id)   // 고른 채로 둠(어디 붙었나 보이게) — 대화창은 이 고름을 다음 질문에 싣지 않음(chat.jsx `skipSel`)
   }
   // 화면 밖으로 나간 만큼만 화면을 옮김(배율 그대로) — 붙였는데 안 보여 아무 일도 없던 것 같았음(2026-10-19 점검). 가운데로 옮기면 옆 메모가 왼쪽 카드 밑으로 갔음
@@ -1417,6 +1418,17 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const need = (a, len, v0, vlen) => (len > vlen || a < v0 ? v0 + pad - a : a + len > v0 + vlen ? v0 + vlen - pad - (a + len) : 0)   // 넘치면 앞(왼쪽·위)부터
     const dx = need(nb.x, nb.w, vx, vw), dy = need(nb.y, nb.h, vy, vh)
     if (dx || dy) setCam({ z: c.z, x: c.x + dx * c.z, y: c.y + dy * c.z })   // need = 묶음이 화면에서 옮겨 보여야 할 칠판 거리
+  }
+  // 대화창 답 「되돌리기」(2026-11-11 화면 검사 9단계) — 그 답으로 붙인 것만 뺌. 붙인 직후 모습(이 창에서만 기억)과 달라졌으면 손으로 고친 것이라 남김.
+  // 답 = { removed: 뺀 개수, kept: 남긴(고친) _id[], gone: 이미 없던 개수 } — 빼기는 되돌리기 한 칸(Ctrl+Z로 되살림)
+  const pinSnap = useRef(new Map())
+  function snapPins(ids) { const m = R.current.model.items; for (const id of ids || []) { const it = m.find(x => x._id === id); if (it) pinSnap.current.set(id, JSON.stringify(it)) } }
+  function unpinIds(ids) {
+    const items = R.current.model.items, want = new Set(ids || []), here = items.filter(it => want.has(it._id))
+    const kept = here.filter(it => { const s0 = pinSnap.current.get(it._id); return s0 && s0 !== JSON.stringify(it) }).map(it => it._id), keep = new Set(kept)
+    const drop = new Set(here.filter(it => !keep.has(it._id)).map(it => it._id))
+    if (drop.size) { commit(items.filter(it => !drop.has(it._id)), R.current.sel.filter(id => !drop.has(id)), '붙인 것 빼기'); drop.forEach(id => pinSnap.current.delete(id)) }
+    return { removed: drop.size, kept, gone: want.size - here.length }
   }
   // 이미 붙인 카드로 — 고르고 화면 가운데로. 없으면(지웠으면) false
   function showCard(at) {
@@ -2706,16 +2718,16 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           {meet && (() => { const s = meet.s, w = MEET_W * s, h = MEET_H * s, sec = Math.max(0, Math.floor((Date.now() - meet.t0) / 1000)), two = n => String(n).padStart(2, '0')   // 「🎙 회의」 받아 적는 중 — 점선 틀 안에 말한 사람별 글(마지막 줄이 보이게)
             const clk = ms => { const t = Math.floor((ms || 0) / 1000); return `${two(Math.floor(t / 60))}:${two(t % 60)}` }, saved = meet.state === 'saved', who = new Set(meet.segs.map(g => g.speaker)).size
             const head = saved ? `🎙 받아 적던 회의 · ${meet.segs.length}구간` : meet.state === 'start' ? '🎙 마이크 켜는 중…' : meet.state === 'reconnect' ? '🎙 다시 붙는 중…(녹음은 계속하는 중)' : meet.state === 'stopping' ? '🎙 마지막 말 받는 중…' : `🎙 받아 적는 중 · ${two(Math.floor(sec / 60))}:${two(sec % 60)}${who ? ` · ${who}명` : ''}`
-            const stop = e => e.stopPropagation(), btn = { all: 'unset', cursor: 'pointer', padding: '2px 10px', borderRadius: 99, fontWeight: 600, fontSize: 12 }
+            const stop = e => e.stopPropagation(), btn = { all: 'unset', position: 'relative', '--hit-c': '-12px -4px', cursor: 'pointer', padding: '2px 10px', borderRadius: 99, fontWeight: 600, fontSize: 12 }   // --hit-c = 손가락 기기 누르는 자리(겉 ~20 → 44, 단추 사이 8 — 2026-11-11 화면 검사 9단계)
             return <g data-testid="meeting-live" data-state={meet.state}><rect x={meet.at.x} y={meet.at.y} width={w} height={h} rx={10 * s} fill="rgba(218,119,86,.06)" stroke="#da7756" strokeWidth={1.5 / z} strokeDasharray={`${8 / z} ${5 / z}`} pointerEvents="none" />
               <foreignObject x={0} y={0} width={MEET_W} height={MEET_H} transform={`translate(${meet.at.x},${meet.at.y}) scale(${s})`}>
                 <div style={{ width: MEET_W, height: MEET_H, boxSizing: 'border-box', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6, font: `400 14px ${APP_FONT}`, color: 'var(--mb-ink)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--mb-accent)', fontWeight: 600 }}><span style={{ flex: 1, fontVariantNumeric: 'tabular-nums' }}>{head}</span>
-                    {(saved || meet.state === 'listen' || meet.state === 'reconnect') && <button data-testid="meeting-live-end" onPointerDown={stop} onClick={meetStop} style={{ ...btn, background: 'var(--mb-accent)', color: '#fff' }}>{saved ? '정리하기' : '끝내기'}</button>}
-                    {saved && <button data-testid="meeting-live-raw" onPointerDown={stop} onClick={meetRaw} title="요약 없이 받아 적은 글만 칠판에" style={{ ...btn, color: 'var(--mb-accent)', border: '1px solid #da7756' }}>전문만</button>}
-                    {saved && meetRec.current && <button data-testid="meeting-live-rec" onPointerDown={stop} onClick={meetFromRec} title="PC에 같이 녹음한 것으로 처음부터 다시 받아써서 회의록 — 인터넷이 끊긴 동안의 말까지" style={{ ...btn, color: 'var(--mb-accent)', border: '1px solid #da7756' }}>녹음으로 정리</button>}
-                    {saved && meetRec.current && <button data-testid="meeting-live-save-rec" onPointerDown={stop} onClick={meetSaveRec} title="녹음을 파일로 받아 두기 — 나중에 칠판에 끌어 놓으면 회의록" style={btnSecondary}>녹음 받기</button>}
-                    {saved && <button data-testid="meeting-live-drop" onPointerDown={stop} onClick={() => setMeetAsk(true)} style={btnSecondary}>버리기…</button>}</div>
+                    {(saved || meet.state === 'listen' || meet.state === 'reconnect') && <button data-testid="meeting-live-end" className="mb-hit" onPointerDown={stop} onClick={meetStop} style={{ ...btn, background: 'var(--mb-accent)', color: '#fff' }}>{saved ? '정리하기' : '끝내기'}</button>}
+                    {saved && <button data-testid="meeting-live-raw" className="mb-hit" onPointerDown={stop} onClick={meetRaw} title="요약 없이 받아 적은 글만 칠판에" style={{ ...btn, color: 'var(--mb-accent)', border: '1px solid #da7756' }}>전문만</button>}
+                    {saved && meetRec.current && <button data-testid="meeting-live-rec" className="mb-hit" onPointerDown={stop} onClick={meetFromRec} title="PC에 같이 녹음한 것으로 처음부터 다시 받아써서 회의록 — 인터넷이 끊긴 동안의 말까지" style={{ ...btn, color: 'var(--mb-accent)', border: '1px solid #da7756' }}>녹음으로 정리</button>}
+                    {saved && meetRec.current && <button data-testid="meeting-live-save-rec" className="mb-hit" onPointerDown={stop} onClick={meetSaveRec} title="녹음을 파일로 받아 두기 — 나중에 칠판에 끌어 놓으면 회의록" style={{ ...btnSecondary, position: 'relative', '--hit-c': '-12px -4px' }}>녹음 받기</button>}
+                    {saved && <button data-testid="meeting-live-drop" className="mb-hit" onPointerDown={stop} onClick={() => setMeetAsk(true)} style={{ ...btnSecondary, position: 'relative', '--hit-c': '-12px -4px' }}>버리기…</button>}</div>
                   <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 4, lineHeight: 1.5 }}>
                     {meet.segs.slice(-12).map((g, i) => <div key={i}><span style={{ color: 'var(--mb-muted)', fontVariantNumeric: 'tabular-nums' }}>[{clk(g.start_ms)}] 화자 {g.speaker || '?'}: </span>{g.text}</div>)}
                     {meet.part && <div style={{ color: 'var(--mb-muted)' }}>{meet.part}</div>}

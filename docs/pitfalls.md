@@ -1791,3 +1791,6 @@
 - ⚠ 웹 `<dialog>` showModal에서 Tab은 마지막 단추 다음 한 번 브라우저 칸(헤드리스 = body)을 거쳐 창 처음으로 돈다 — 「창 밖으로 안 나감」 시험은 body 한 번을 허용(2026-11-10 문서 큰 창).
 - ⚠ 화면 시험에서 Playwright가 내려받은 파일(`download.path()`)은 이름에 `.html`이 없어 `file://`로 열면 글(text/plain)로 뜬다 — 글자는 찾아져서 통과한 것처럼 보이지만 HTML이 아님. `.html` 이름으로 복사해서 연다(2026-11-11 공유 HTML 시험).
 - ⚠ 발표처럼 window capture에서 `stopPropagation()`하는 글쇠 듣기 위에 공용 `ContextMenu`를 띄우면 메뉴의 ↑↓·Esc가 메뉴까지 못 간다 — 메뉴가 열렸으면 듣기에서 먼저 빠져나간다(2026-11-11 발표 우클릭 메뉴).
+- ⚠ 웹 컴포넌트 안에서 모듈 상수와 같은 이름(`css`)으로 가린 뒤 정규식으로 `{...hitG}`를 넣을 때 범위를 「그 컴포넌트부터 파일 끝」으로 잡으면 뒤의 다른 컴포넌트(`ModelSettings`)에도 들어가 `hitG is not defined` — 빌드는 통과하고 그 창을 열 때만 화면이 통째로 사라짐(2026-11-11 화면 검사 9단계, flow3이 잡음).
+- ⚠ Playwright 시험 파일의 `test.use({ hasTouch, isMobile })`는 그 파일 안 `browser.newContext()`에도 물려 들어간다 — 마우스 PC를 따로 재려면 `hasTouch: false, isMobile: false`를 직접 준다(안 주면 `(pointer: coarse)`가 맞아 PC 값이 틀리게 나옴, 2026-11-11 flow76).
+- ⚠ 휴대폰 화면 전체 대화창에 뒤 칸 `inert`를 걸 때 그 칸 안에 나중에 여는 `<dialog>`(문서 큰 창)가 있으면 창도 inert라 안 눌림 — 휴대폰은 문서 창을 `document.body`로 포털, inert는 `#root` 안만(2026-11-11).

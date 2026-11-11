@@ -40,7 +40,7 @@ test('휴대폰 — 큰 버튼 셋 · 손가락 이동·확대 · 고치기 없�
   await page.screenshot({ path: 'test-results/phone-chat.png' })
   await page.getByRole('button', { name: /칠판에/ }).first().click()                     // 답 = 칠판에 메모
   await expect.poll(async () => (await liveDoc(page)).items.length).toBeGreaterThan(0)
-  await chat.getByRole('button', { name: '✕ 칠판' }).click(); await expect(chat).toBeHidden()
+  await chat.getByRole('button', { name: '대화창 닫기 — 칠판으로' }).click(); await expect(chat).toBeHidden()   // 보이는 글 「✕ 칠판」, 이름 = 어디로 가는지까지(2026-11-11 9단계)
 
   // 한 손가락 = 화면 이동(도형은 그대로), 두 손가락 = 확대
   const before = JSON.stringify((await liveDoc(page)).items.map(it => it.pos))
@@ -57,7 +57,7 @@ test('휴대폰 — 큰 버튼 셋 · 손가락 이동·확대 · 고치기 없�
   await page.screenshot({ path: 'test-results/phone-board.png' })
 })
 
-test('휴대폰 — 정리 문서 속 페이지는 칠판 위층에(아이폰에서 SVG 안이면 확대할 때 카드 밖으로 쏟아졌음), 톡 누르면 새 탭', async ({ page }) => {
+test('휴대폰 — 정리 문서 속 페이지는 칠판 위층에(아이폰에서 SVG 안이면 확대할 때 카드 밖으로 쏟아졌음), 톡 누르면 앱 안 문서 창(보기만)', async ({ page }) => {
   await openBoard(page, boardName('phonecard'))
   await page.evaluate(() => window.__mb.ed.dropFiles([new File(['<h1>보고서</h1><p>본문</p>'], '보고서.html', { type: 'text/html' })]))
   await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'doc').length).toBe(1)
@@ -67,11 +67,13 @@ test('휴대폰 — 정리 문서 속 페이지는 칠판 위층에(아이폰에
   const fb = await page.getByTestId('phone-cards').locator('iframe').boundingBox(), db = await page.evaluate(() => { const r = document.querySelector('[data-doc-box]').getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height } })
   expect(fb.x).toBeGreaterThanOrEqual(db.x - 1); expect(fb.y).toBeGreaterThanOrEqual(db.y - 1); expect(fb.x).toBeLessThan(db.x + db.w)   // 카드 자리 안에서 시작
   const b = await page.getByTestId('board').boundingBox(), cx = b.x + b.width / 2, cy = b.y + b.height / 2
-  const pop = page.waitForEvent('popup')
+  let popped = false; page.on('popup', () => { popped = true })
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: cx, y: cy, id: 0 }] })
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-  const p2 = await pop; await p2.waitForLoadState(); await expect(p2.locator('body')).toContainText('보고서')
+  const dv = page.getByTestId('doc-view'); await expect(dv).toBeVisible()                 // 2026-11-11 9단계 사용자 결정 — 새 탭 대신 앱 안 큰 창(보기·인쇄만)
+  await expect(page.frameLocator('[data-testid=doc-frame]').locator('body')).toContainText('보고서')
+  expect(popped).toBe(false)
 })
 
 // 2026-11-06 휴대폰 점검 — 칠판 고르기가 없었음(위 이름 = 글자뿐), 가로로 돌리면 PC 화면, 보기 링크는 휴대폰을 몰랐음, 태블릿은 손가락 확대가 없었음

@@ -10,10 +10,10 @@ import { isPhone, usePhoneViewport } from './ui.jsx'
 
 const C = { bar: 'var(--mb-bar)', ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', board: 'var(--mb-board)', line: 'var(--mb-line)' }
 const btn = { all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 6, font: "600 12px 'Pretendard', sans-serif", color: C.ink, background: 'transparent', border: '1px solid var(--mb-ctl)' }   // 코랄은 뜻 있는 상태에만(규칙 ③ — 2026-11-10 1단계)
-const btnP = { ...btn, flex: 'none', padding: '8px 12px', font: "600 14px 'Pretendard', sans-serif" }   // 휴대폰 = 손가락 크기
+const btnP = { ...btn, flex: 'none', position: 'relative', '--hit-c': '-6px -3px', padding: '8px 12px', font: "600 14px 'Pretendard', sans-serif" }   // 휴대폰 = 손가락 크기 — 겉 33px, 누르는 자리 44(`mb-hit`, 단추 사이 6 — 2026-11-11 화면 검사 9단계 H4)
 
 export function Viewer({ token }) {
-  const [model, setModel] = useState(null), [gone, setGone] = useState(false), [cam, setCam] = useState({ x: 0, y: 0, z: 1 }), [size, setSize] = useState({ w: 1, h: 1 })
+  const [model, setModel] = useState(null), [gone, setGone] = useState(false), [fails, setFails] = useState(0), [cam, setCam] = useState({ x: 0, y: 0, z: 1 }), [size, setSize] = useState({ w: 1, h: 1 })
   const [dark, setDark] = useState(() => document.documentElement.dataset.theme === 'dark'), box = useRef(null), ed = useRef(null), rev = useRef(-1), fitted = useRef(false)
   setInkDark(dark)
   // 휴대폰(2026-11-06 휴대폰 점검 — 발표 QR로 들어온 관객이 처음 보는 화면): 칠판 화면과 같은 손가락(한 손가락 이동·두 손가락 확대·카드 톡 = 새 탭·아이폰 카드 속 페이지는 위층)·브라우저 확대 막기, 막대는 짧게
@@ -27,7 +27,8 @@ export function Viewer({ token }) {
     let live = true
     const pull = async () => {
       if (ed.current?.busy?.()) return
-      const r = await api.pub(token, rev.current, rev.current > 0 ? 20 : 0).catch(() => null); if (!live || !r) return
+      const r = await api.pub(token, rev.current, rev.current > 0 ? 20 : 0).catch(() => null); if (!live) return
+      setFails(n => (r ? 0 : n + 1)); if (!r) return   // 받는 중 · 이어서 못 받으면 연결 안내(9단계 — 빈 화면뿐이었음)
       if (r.gone) { setGone(true); return }
       if (r.doc) { rev.current = r.doc.rev || 0; setGone(false); setModel(fromEcad(r.doc)) }
     }
@@ -37,14 +38,15 @@ export function Viewer({ token }) {
   useEffect(() => { if (model && !fitted.current && size.w > 1) { fitted.current = true; fit(model.items, size) } }, [model, size, fit])
   if (gone) return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.muted, background: C.board, font: "400 14px 'Pretendard', sans-serif" }}>보기 전용 링크가 꺼졌거나 바뀌었어요 — 칠판을 고치는 분께 새 링크를 받아 주세요.</div>
   if (model?.title) document.title = `${model.title} · 보기 전용`   // 탭 이름 = 칠판 이름(2026-11-10 1단계)
-  if (!model) return <div style={{ height: '100%', background: C.board }} />
+  if (!model) return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px', boxSizing: 'border-box', textAlign: 'center', wordBreak: 'keep-all', background: C.board, color: C.muted, font: "400 14px 'Pretendard', sans-serif" }}>
+    <span role="status" data-testid="view-loading">{fails >= 3 ? '연결이 안 돼요 — 인터넷을 확인해 주세요' : '칠판을 불러오는 중…'}</span></div>   // 3번 이어서 못 받으면(약 3초) — aiError 「서버에 연결이 안 돼요」와 같은 말투
   return <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink, userSelect: 'none' }}>   {/* 보기 화면 — Ctrl+A가 글자를 칠하지 않게 */}
     <div data-testid="view-bar" style={{ display: 'flex', alignItems: 'center', gap: phone ? 6 : 8, padding: phone ? '6px 8px' : '6px 10px', background: C.bar, borderBottom: `1px solid ${C.line}`, touchAction: phone ? 'none' : undefined, whiteSpace: 'nowrap', flexWrap: phone ? 'nowrap' : 'wrap', rowGap: 4 }}>
       <b style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{model.title || 'Magic Board'}</b><span style={{ color: C.muted, fontSize: 12 }}>{phone ? '보기 전용' : '보기 전용 · 고치는 내용이 몇 초 안에 보여요'}</span>
       <span style={{ flex: 1 }} />
-      <button style={phone ? btnP : btn} data-testid="view-present" onClick={() => ed.current?.startPresent()} title="발표 — 프레임 순서대로 한 장씩 전체 화면">▶ 발표</button>
-      <button style={phone ? btnP : btn} onClick={() => fit(model.items, size)} title="칠판 전체가 화면에 들어오게 맞춤">⤢{phone ? '' : ' 다 보기'}</button>
-      <button style={phone ? btnP : btn} onClick={() => setDark(d => !d)} title="밝게 / 어둡게">{phone ? (dark ? '☀' : '☾') : dark ? '☀ 밝게' : '☾ 어둡게'}</button>
+      <button className={phone ? 'mb-hit' : undefined} style={phone ? btnP : btn} data-testid="view-present" onClick={() => ed.current?.startPresent()} title="발표 — 프레임 순서대로 한 장씩 전체 화면">▶ 발표</button>
+      <button className={phone ? 'mb-hit' : undefined} style={phone ? btnP : btn} aria-label="다 보기" onClick={() => fit(model.items, size)} title="칠판 전체가 화면에 들어오게 맞춤">⤢{phone ? '' : ' 다 보기'}</button>
+      <button className={phone ? 'mb-hit' : undefined} style={phone ? btnP : btn} aria-label={dark ? '밝게' : '어둡게'} onClick={() => setDark(d => !d)} title="밝게 / 어둡게">{phone ? (dark ? '☀' : '☾') : dark ? '☀ 밝게' : '☾ 어둡게'}</button>
     </div>
     <div ref={box} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
       <Editor ref={ed} readOnly phone={phone} dark={dark} model={model} setModel={setModel} onCommit={() => {}} size={size} cam={cam} setCam={setCam} tool="select" setTool={() => {}} setStatus={() => {}} activeLayer="default" />
