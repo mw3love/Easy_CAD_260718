@@ -1,12 +1,12 @@
 // 흐름 24 — 2026-10-22 디자인 점검: 위 막대 팝업은 바깥 누르기·Esc로 닫히고 하나만 · 알림은 칠판 아래 가운데 · 샘플 열기는 칠판 메뉴 안
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard } from './helpers.js'
+import { boardName, openBoard, menuPick } from './helpers.js'
 
 const btn = (page, name) => page.getByRole('button', { name, exact: true })
 
 test('팝업 — 다른 팝업을 열면 앞 것은 닫힘 · Esc · 바깥 누르기 · 팝업 안 누르기는 그대로', async ({ page }) => {
   await openBoard(page, boardName('pop'))
-  await btn(page, '내보내기').click(); await expect(page.getByTestId('export-preview')).toBeVisible()
+  await menuPick(page, '내보내기…'); await expect(page.getByTestId('export-preview')).toBeVisible()
   await btn(page, '공유').click()
   await expect(page.getByRole('button', { name: '주소 복사' })).toBeVisible()
   await expect(page.getByTestId('export-preview')).toHaveCount(0)                 // 하나만
@@ -30,8 +30,8 @@ test('알림은 칠판 아래 가운데(잠깐) · 칠판 이름 = 위 막대 �
   expect(Math.abs(tb.x + tb.width / 2 - (bb.x + bb.width / 2))).toBeLessThan(4)    // 가운데
   await expect(toast).toHaveCSS('opacity', '0', { timeout: 8000 })                  // 잠깐 뒤 사라짐
   const title = page.getByTestId('board-title'); await expect(title).toContainText(name)
-  const tbx = await title.boundingBox(), tools = await page.getByRole('button', { name: '저장', exact: true }).boundingBox()
-  expect(tbx.x).toBeLessThan(tools.x)                                                // 맨 왼쪽(2026-10-27 사용자)
+  const tbx = await title.boundingBox(), tools = await page.getByTestId('isl-tools').boundingBox()
+  expect(tbx.x).toBeLessThan(tools.x)                                                // 맨 왼쪽(2026-10-27 사용자 · 2026-11-14 B1 = 왼쪽 위 섬)
   await expect(page.getByText('100%', { exact: true })).toHaveCount(1)              // 배율은 미니맵에만(위 막대 것과 겹쳤음)
   await expect(page.getByTestId('sample-select')).toHaveCount(0)                    // 샘플 = 개발 시험용 — 서버 있으면 어디에도 없음
   await title.click(); await expect(page.getByTestId('board-form')).toBeVisible()

@@ -3,13 +3,10 @@ import { test, expect } from '@playwright/test'
 import { boardName, openBoard, setCam, clickScene, waitSaved } from './helpers.js'
 
 for (const [w, h] of [[960, 800], [1040, 800], [1366, 768], [1600, 900]]) {
-  test(`${w}px — 위 막대 한 줄·버튼 다 보임·대화창 자리`, async ({ page }) => {
+  test(`${w}px — 섬 단추가 다 화면 안·대화창 자리`, async ({ page }) => {
     await page.setViewportSize({ width: w, height: h })
     await openBoard(page, boardName('size' + w), { chat: true })
-    const bar = page.locator('#root > div > div').first()
-    const r = await bar.boundingBox()
-    expect(r.height).toBeLessThan(64)                                    // 두 줄로 늘면 칠판이 밀림(2026-10-19 겪음)
-    const out = await page.evaluate(vw => [...document.querySelectorAll('#root > div > div:first-child button')]
+    const out = await page.evaluate(vw => [...document.querySelectorAll('[data-testid^="isl-"] button')]   // 옛 위 막대 → 떠 있는 섬(2026-11-14 B1)
       .map(b => [b.getAttribute('aria-label'), b.getBoundingClientRect()]).filter(([, q]) => q.right > vw + 0.5 || q.left < -0.5).map(([n]) => n), w)
     expect(out).toEqual([])                                              // 화면 밖으로 밀린 버튼 없음
     const board = await page.getByTestId('board').boundingBox()

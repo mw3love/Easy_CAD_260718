@@ -1,54 +1,34 @@
-// 흐름 67 — 위 막대 2단 쌓기(2026-11-08 시안 D): 넓은 창 = 높이 54 그대로 · 작은 버튼 2단 · 겹침 없음, 좁은 창 = 예전처럼 아이콘 한 줄
+// 흐름 67 — 떠 있는 섬(2026-11-14 화면 틀 B1 — 옛 위 막대 2단은 걷음): 칠판이 창 맨 위까지 · 섬 넷이 안 겹침 · 도구 줄은 자리가 되면 칠판 가운데
 import { test, expect } from '@playwright/test'
 import { boardName, openBoard } from './helpers.js'
 
-const btn = (page, name) => page.getByRole('button', { name, exact: true })
-const rect = async (page, name) => btn(page, name).boundingBox()
+const ISLES = ['isl-board', 'isl-tools', 'isl-right', 'isl-undo']
+const boxes = page => Promise.all(ISLES.map(t => page.getByTestId(t).boundingBox()))
+const overlap = (a, b) => a.x < b.x + b.width - 1 && b.x < a.x + a.width - 1 && a.y < b.y + b.height - 1 && b.y < a.y + a.height - 1
 
-test('넓은 창 — 칠판 높이 그대로, 저장·내보내기는 위아래로, 큰 버튼은 두 칸 높이, 겹침 없음', async ({ page }) => {
+test('넓은 창 — 칠판이 맨 위까지 · 도구 줄 = 칠판 가운데 · 섬끼리 안 겹침 · 아이콘 2색', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 })
-  await openBoard(page, boardName('topbar'))
-  expect((await page.getByTestId('board').boundingBox()).y).toBeLessThanOrEqual(55)
-  const save = await rect(page, '저장'), exp = await rect(page, '내보내기'), sel = await rect(page, '선택')
-  expect(Math.abs(save.x - exp.x)).toBeLessThan(1); expect(exp.y).toBeGreaterThan(save.y)
-  expect(save.height).toBeLessThanOrEqual(25); expect(sel.height).toBeGreaterThanOrEqual(40)
-  const names = ['저장', '내보내기', '되돌리기', '다시', '선택', '화살표', '글자', '선', '다각형', '펜', '번호', '유지', '프레임', '메모', '회의', '웹', '표', '발표', '전체 화면', '어둡게']
-  const rs = await Promise.all(names.map(n => rect(page, n)))
-  rs.forEach((r, i) => expect(r, names[i]).toBeTruthy())
-  for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) {
-    const a = rs[i], b = rs[j]
-    expect(a.x < b.x + b.width - 1 && b.x < a.x + a.width - 1 && a.y < b.y + b.height - 1 && b.y < a.y + a.height - 1, `${names[i]}/${names[j]}`).toBe(false)
-  }
-  await btn(page, '선').click(); await expect(btn(page, '선')).toHaveAttribute('aria-pressed', 'true')
-  // 아이콘 2색(시안 I1): 채운 부분만 파랑, KAIROS 흰색은 그대로
-  const fill = (name, sel) => btn(page, name).locator(sel).first().evaluate(el => getComputedStyle(el).fill)
-  expect(await fill('프레임', 'svg [fill="currentColor"]')).toBe('rgb(37, 99, 235)')
-  expect(await fill('프레임', 'svg > :first-child')).toBe('none')
-  expect(await btn(page, 'KAIROS').locator('span[aria-hidden]').evaluate(el => el.className)).toBe('')
+  await openBoard(page, boardName('islands'))
+  expect((await page.getByTestId('board').boundingBox()).y).toBeLessThanOrEqual(1)                 // 위 막대 없음
+  const bd = await page.getByTestId('board').boundingBox(), rs = await boxes(page)
+  rs.forEach((r, i) => expect(r, ISLES[i]).toBeTruthy())
+  expect(Math.abs(rs[1].x + rs[1].width / 2 - (bd.x + bd.width / 2))).toBeLessThan(2)              // 도구 줄 가운데
+  for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) expect(overlap(rs[i], rs[j]), `${ISLES[i]}/${ISLES[j]}`).toBe(false)
+  const tools = page.getByTestId('isl-tools')
+  await tools.getByRole('button', { name: '선', exact: true }).click()
+  await expect(tools.getByRole('button', { name: '선', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  const fill = sel => tools.getByRole('button', { name: '프레임', exact: true }).locator(sel).first().evaluate(el => getComputedStyle(el).fill)
+  expect(await fill('svg [fill="currentColor"]')).toBe('rgb(37, 99, 235)')                       // 아이콘 2색(2026-11-08 시안 I1) 그대로
+  expect(await fill('svg > :first-child')).toBe('none')
 })
 
-test('왼쪽 판이 위 막대 끝까지(시안 C) — 도구는 판 끝선 오른쪽 · 판을 접으면 예전 자리 · 자리가 모자라면 예전 배치', async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await openBoard(page, boardName('dockhead'))
-  if (!(await page.getByTestId('dock-panel').count())) await page.getByTestId('dock-shape').click()
-  const dock = await page.getByTestId('dock').boundingBox(), right = dock.x + dock.width
-  expect((await rect(page, '저장')).x).toBeGreaterThanOrEqual(right)
-  await expect(page.getByTestId('dock-head-cover')).toHaveCount(1)
-  expect((await page.getByTestId('board-title').boundingBox()).x + (await page.getByTestId('board-title').boundingBox()).width).toBeLessThanOrEqual(right)
-  await page.getByTestId('dock-shape').click()   // 판 접기
-  await expect(page.getByTestId('dock-head-cover')).toHaveCount(0)
-  expect((await rect(page, '저장')).x).toBeLessThan(right)
-  await page.getByTestId('dock-shape').click()
-  const h = await page.getByTestId('dock-resize').boundingBox()   // 400까지 넓힘 = 자리 모자람
-  await page.mouse.move(h.x + 4, h.y + 300); await page.mouse.down(); await page.mouse.move(h.x + 212, h.y + 300, { steps: 4 }); await page.mouse.up()
-  await expect(page.getByTestId('dock-head-cover')).toHaveCount(0)
-  const dark = await rect(page, '어둡게'), cmd = await page.getByTestId('cmd-open').boundingBox()
-  expect(dark.x + dark.width).toBeLessThanOrEqual(cmd.x)
-})
-
-test('좁은 창 — 2단 없이 아이콘 한 줄', async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 800 })
-  await openBoard(page, boardName('topnarrow'))
-  const save = await rect(page, '저장'), exp = await rect(page, '내보내기')
-  expect(Math.abs(save.y - exp.y)).toBeLessThan(1); expect(exp.x).toBeGreaterThan(save.x)
-})
+for (const [w, h] of [[960, 800], [1280, 800], [1440, 900]]) {
+  test(`${w}px·대화창 열림 — 섬이 화면 안·안 겹침(자리가 모자라면 도구 줄이 옆이나 둘째 줄로)`, async ({ page }) => {
+    await page.setViewportSize({ width: w, height: h })
+    await openBoard(page, boardName('isl' + w), { chat: true })
+    await expect.poll(async () => { const rs = await boxes(page); return rs.every(Boolean) }).toBe(true)
+    const rs = await boxes(page)
+    for (const r of rs) { expect(r.x).toBeGreaterThanOrEqual(0); expect(r.x + r.width).toBeLessThanOrEqual(w + 0.5) }
+    for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) expect(overlap(rs[i], rs[j]), `${ISLES[i]}/${ISLES[j]}`).toBe(false)
+  })
+}

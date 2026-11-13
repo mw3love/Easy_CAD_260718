@@ -2,7 +2,7 @@
 // → 발표에서 → = 먼저 장 안 단계(카드가 mbNext로 「더 있음」을 답하는 동안 같은 장), 끝나면 다음 프레임 · ← = 장 안 이전 단계부터 · PDF·그림 내보내기엔 카드를 안 그림.
 // 진짜 Opus는 안 부름(장 하나 약 370크레딧 — 진짜는 손 확인, docs/history 2026-11).
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, liveDoc, toPage } from './helpers.js'
+import { boardName, openBoard, setCam, liveDoc, toPage, morePick } from './helpers.js'
 
 // 세 단계 카드 — 지금 단계를 글로 보임(바깥에서 확인용)
 const CARD = `<!doctype html><html><body style="margin:0"><h1 id="s">단계 1</h1><script>
@@ -38,7 +38,7 @@ test('이 장 움직이게 → 프레임을 덮는 카드 → 발표 → = 장 �
   await expect.poll(async () => (await liveDoc(page)).items.some(it => it.motion)).toBe(true)
 
   await page.keyboard.press('Escape')                                                                 // 고른 프레임이 있으면 발표가 그 장부터 — 처음부터 보려고 풂
-  await page.getByRole('button', { name: '발표', exact: true }).click()
+  await morePick(page, '발표')
   const pr = page.getByTestId('presenter'), step = page.frameLocator('[data-testid="presenter"] iframe[data-motion]').locator('#s')
   await expect(pr).toHaveAttribute('data-cur', id[0])
   await page.keyboard.press('ArrowRight'); await expect(pr).toHaveAttribute('data-cur', id[1])

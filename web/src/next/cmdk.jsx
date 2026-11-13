@@ -43,7 +43,7 @@ export function CommandBar({ getCommands, onClose }) {
     else if (e.key === 'ArrowDown' && rows.length) { e.preventDefault(); setAt((cur + 1) % rows.length) }
     else if (e.key === 'ArrowUp' && rows.length) { e.preventDefault(); setAt((cur - 1 + rows.length) % rows.length) }
   }
-  return <div ref={box} data-testid="cmd-bar" role="dialog" aria-label="명령 찾기" onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', zIndex: 45, left: '50%', top: 12, transform: 'translateX(-50%)', width: 'min(480px, calc(100% - 32px))',
+  return <div ref={box} data-testid="cmd-bar" role="dialog" aria-label="명령 찾기" onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', zIndex: 45, left: '50%', top: 'var(--mb-top, 60px)', transform: 'translateX(-50%)', width: 'min(480px, calc(100% - 32px))',
     background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, boxShadow: 'var(--mb-shadow)', font: "400 12.5px 'Pretendard', sans-serif", color: C.ink, overflow: 'hidden' }}>
     <div style={{ padding: '8px 12px', borderBottom: `1px solid ${C.line}` }}>
       <input ref={inp} role="combobox" aria-label="명령 찾기" aria-expanded={rows.length > 0} aria-controls="cmd-list" aria-activedescendant={rows.length ? `cmd-${cur}` : undefined} aria-autocomplete="list" value={q} onChange={e => { setQ(e.target.value); setAt(0) }} onKeyDown={key} placeholder="명령 찾기 — 이름이나 초성으로"

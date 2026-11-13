@@ -1,6 +1,6 @@
 // 흐름 20 — 버튼으로 넣는 자리(가운데 먼저·겹치면 빈자리) · 위 막대 도구 끌어다 놓기 · 메모 = 고른 채 바로 치기(2026-10-20 사용자)
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, toPage, clickScene, liveDoc } from './helpers.js'
+import { boardName, openBoard, setCam, toPage, clickScene, liveDoc, morePick } from './helpers.js'
 
 const btn = (page, name) => page.getByRole('button', { name, exact: true })
 const box = it => { const s = it.scale || 1, r = it.rect || [0, 0, 0, 0]; return { x: it.pos[0] + r[0] * s, y: it.pos[1] + r[1] * s, w: r[2] * s, h: r[3] * s } }
@@ -40,41 +40,39 @@ test('메모 = 만들면 고른 채(바로 끌기), 치면 글, 빈 메모엔 �
   expect(m.lines.map(l => l.t).join('')).toBe('안녕 메모')
 })
 
-test('위 막대 끌어 놓기 — 선·화살표·글자·번호·메모·표·프레임', async ({ page }) => {
+test('도구 줄 끌어 놓기 — 선·화살표·글자·메모·프레임(번호·표는 2026-11-14 B1부터 ⋯ 안이라 끌기 없음)', async ({ page }) => {
   await openBoard(page, boardName('tooldrag')); await setCam(page)
   await dragTool(page, '선', 0, 0)
   await dragTool(page, '화살표', 0, 100)
-  await dragTool(page, '번호', 300, 0); await dragTool(page, '번호', 360, 0)
   await dragTool(page, '메모', 500, 0); await page.keyboard.press('Escape')
-  await dragTool(page, '표', 0, 300)
   await dragTool(page, '프레임', 600, 400)
   await dragTool(page, '글자', 300, 200); await page.keyboard.type('놓은 글'); await clickScene(page, 900, 700)
   const d = await liveDoc(page), of = t => d.items.filter(it => it.type === t)
   expect(of('line')).toHaveLength(1)
   expect(Math.round(of('line')[0].line[2] - of('line')[0].line[0])).toBe(120)   // 화면 기준 길이(100% = 120)
   expect(of('sarrow').length + of('arrow').length).toBe(1)
-  expect(of('badge').map(b => b.number)).toEqual([1, 2])
   expect(of('memo')).toHaveLength(1)
-  expect(of('table')[0].rows).toBe(3)
   expect(of('frame')).toHaveLength(1)
   expect(JSON.stringify(of('text'))).toContain('놓은 글')
   const ln = of('line')[0]; expect(Math.abs(ln.pos[0] + (ln.line[0] + ln.line[2]) / 2)).toBeLessThan(2)   // 놓은 자리가 선의 가운데(pos + 선 좌표)
 })
 
-test('위 막대 다각형 끌기 = 첫 선분 놓고 이어 찍기, 웹 끌기 = 주소 칸', async ({ page }) => {
+test('⋯ 안 다각형 = 도구가 켜지고 ⋯ 단추가 켜짐 표시 · 웹 카드 = 주소 칸(2026-11-14 B1)', async ({ page }) => {
   await openBoard(page, boardName('polydrag')); await setCam(page)
-  await dragTool(page, '다각형', 100, 100)
-  await expect(btn(page, '다각형')).toHaveAttribute('aria-pressed', 'true')
-  await clickScene(page, 160, 200)
+  await morePick(page, '다각형')
+  await expect(page.getByTestId('tools-more')).not.toHaveCSS('box-shadow', 'none')   // ⋯ 안 도구가 켜졌다는 표시
+  await clickScene(page, 100, 100); await clickScene(page, 220, 100); await clickScene(page, 160, 200)
   await page.keyboard.press('Enter')
   const pg = (await liveDoc(page)).items.filter(it => it.type === 'polygon')
-  expect(pg).toHaveLength(1); expect(pg[0].pts).toHaveLength(3)              // 끌어 놓은 두 점 + 이어 찍은 한 점
-  await dragTool(page, '웹', 400, 300)
+  expect(pg).toHaveLength(1); expect(pg[0].pts).toHaveLength(3)
+  await morePick(page, '웹 카드 넣기…')
   await expect(page.getByPlaceholder(/유튜브·웹페이지 주소/)).toBeVisible()
 })
 
-test('위 막대 — 「다 보기」 대신 「전체 화면」, 다 보기는 Z', async ({ page }) => {
+test('☰ 메뉴 — 「다 보기」 대신 「전체 화면」, 다 보기는 Z', async ({ page }) => {
   await openBoard(page, boardName('fullbtn'))
-  await expect(btn(page, '전체 화면')).toBeVisible()
-  await expect(btn(page, '다 보기')).toHaveCount(0)
+  await page.getByTestId('main-menu').click()
+  const list = page.getByTestId('main-menu-list')
+  await expect(list.getByRole('menuitem', { name: /^전체 화면/ })).toBeVisible()
+  await expect(list.getByRole('menuitem', { name: /다 보기/ })).toHaveCount(0)
 })

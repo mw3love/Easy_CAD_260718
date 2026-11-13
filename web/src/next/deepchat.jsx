@@ -229,7 +229,7 @@ export function SlidesPlan({ m, flip, drop, build, show, busy, css, base = 1, cr
     </div>
     {m.built ? <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
         <button data-testid="slides-show" style={css.done} onClick={show}>✓ 프레임 {m.frames}장을 지었어요 — 보기</button>
-        <span style={css.meta}>위 막대 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모(발표 화면엔 안 나옴)</span></div>
+        <span style={css.meta}>도구 줄 ⋯ 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모(발표 화면엔 안 나옴)</span></div>
       : m.stale ? <span style={css.meta}>아래에 고친 계획이 있어요</span>
       : <><button data-testid="slides-build" style={GO} disabled={!!busy} onClick={build}>
           이대로 만들기{est ? ` · 약 ${rng(est.credits, '크레딧')}` : ''}</button>

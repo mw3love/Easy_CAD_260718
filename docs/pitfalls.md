@@ -1794,3 +1794,5 @@
 - ⚠ 웹 컴포넌트 안에서 모듈 상수와 같은 이름(`css`)으로 가린 뒤 정규식으로 `{...hitG}`를 넣을 때 범위를 「그 컴포넌트부터 파일 끝」으로 잡으면 뒤의 다른 컴포넌트(`ModelSettings`)에도 들어가 `hitG is not defined` — 빌드는 통과하고 그 창을 열 때만 화면이 통째로 사라짐(2026-11-11 화면 검사 9단계, flow3이 잡음).
 - ⚠ Playwright 시험 파일의 `test.use({ hasTouch, isMobile })`는 그 파일 안 `browser.newContext()`에도 물려 들어간다 — 마우스 PC를 따로 재려면 `hasTouch: false, isMobile: false`를 직접 준다(안 주면 `(pointer: coarse)`가 맞아 PC 값이 틀리게 나옴, 2026-11-11 flow76).
 - ⚠ 휴대폰 화면 전체 대화창에 뒤 칸 `inert`를 걸 때 그 칸 안에 나중에 여는 `<dialog>`(문서 큰 창)가 있으면 창도 inert라 안 눌림 — 휴대폰은 문서 창을 `document.body`로 포털, inert는 `#root` 안만(2026-11-11).
+- ⚠ React 상태 갱신 함수 안에서 이벤트를 읽지 말 것 — `setX(m => m ? null : menuBelow(e))`는 갱신이 밀리면(같은 틱에 다른 갱신이 있으면) 함수가 이벤트가 끝난 뒤 돌아 `e.currentTarget`이 null → 앱 전체가 하얗게 꺼짐. 손 시험에선 통과하고 Playwright에서만 터졌음(2026-11-14). 값은 이벤트 안에서 먼저 꺼내 두고(`const at = menuBelow(e)`) 갱신 함수엔 그 값만.
+- ⚠ 훅 의존 배열에 그 아래에서 선언한 상태를 넣으면 렌더 중 TDZ(「Cannot access 'M' before initialization」)로 앱이 안 뜸 — 빌드는 통과함. 새 효과는 쓰는 상태가 다 선언된 뒤에 둔다(2026-11-14 `placeTools`).

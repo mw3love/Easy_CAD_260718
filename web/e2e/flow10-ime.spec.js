@@ -2,7 +2,7 @@
 // Playwright 글쇠(type)는 조합 없이 완성 글자만 넣어서, 크롬 개발자 기능(CDP)으로 실제 입력기 순서를 흉내 낸다:
 // keydown 「Process」(229) → 조합 중(ㅎ → 하 → 한) → 확정. 실제 MS 입력기와 완전히 같지는 않음(마지막 손맛은 사람 몫).
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, pickShape, dragScene, clickScene, liveDoc } from './helpers.js'
+import { boardName, openBoard, setCam, pickShape, dragScene, clickScene, liveDoc, morePick } from './helpers.js'
 
 async function imeType(page, cdp, syllables) {   // syllables = [['ㅎ','하','한'], ['ㄱ','그','글']] — 글자마다 조합 단계
   for (const steps of syllables) {
@@ -40,7 +40,7 @@ test('이미 고른 상자를 눌러 끌고 난 뒤 바로 한글 — 「한글�
 
 test('표 칸을 고른 채 바로 한글 — 「한글」 그대로', async ({ page }) => {
   await openBoard(page, boardName('ime3')); await setCam(page)
-  await page.getByRole('button', { name: '표', exact: true }).click()
+  await morePick(page, '표 넣기…')
   await page.getByRole('button', { name: '넣기', exact: true }).click()
   const t = (await liveDoc(page)).items.find(it => it.type === 'table')
   const [x, y] = t.pos, [, , w, h] = t.rect

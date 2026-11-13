@@ -1035,7 +1035,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     commit([...m.items, ...out], ids, '슬라이드')
     bringIn({ x: at.x, y: at.y, w: BW, h: BH }); setTool('select')
     const np = pages.filter(s => s.layout === '그림' && ok(s.pic)).length, nb = pages.filter(branch).length
-    setStatus(`슬라이드 ${pages.length}장${np || nb ? `(${[np && `그림 장 ${np}`, nb && `아래 그림 판 ${nb}`].filter(Boolean).join(' · ')})` : ''} — 위 막대 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모`)
+    setStatus(`슬라이드 ${pages.length}장${np || nb ? `(${[np && `그림 장 ${np}`, nb && `아래 그림 판 ${nb}`].filter(Boolean).join(' · ')})` : ''} — 도구 줄 ⋯ 「발표」로 바로 · 장마다 아래 회색 메모 = 발표자 메모`)
     return { ids, frames: ids.length, nos }
   }
   // 장 사이 화살표(작은 책 ③, 2026-11-04) — 프레임 테두리에 붙음(프레임을 옮기면 따라옴). right = 오른쪽 변 → 왼쪽 변(높이 450 — 3:2 그림 장과 16:9 글 장이 섞여도 곧게),
@@ -2297,6 +2297,11 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const MEET_KEY = `mb-meet:${DOC_NAME}`
   const [meet, setMeetS] = useState(() => { if (readOnly) return null; try { const d = JSON.parse(localStorage.getItem(MEET_KEY) || 'null'); return d?.segs?.length ? { ...d, part: '', state: 'saved' } : null } catch { return null } })
   const meetRef = useRef(meet), meetStopFn = useRef(null), meetRec = useRef(null)   // meetRec = PC에 같이 녹음한 것 { blob, gap } — 이 창에만(새로 열면 없음), 인터넷이 끊겨도 녹음은 남음(2026-10-26)
+  // 남아 있던 회의 틀이 떠 있는 섬 밑(칠판 위쪽 --mb-top)이면 화면을 그만큼 내림 — 위 막대를 걷은 뒤(2026-11-14 B1) 틀 맨 위 「정리하기·버리기」가 도구 줄에 가렸음
+  const savedMeet = meet?.state === 'saved'
+  useEffect(() => { if (!savedMeet || !svg.current) return
+    const m = meetRef.current, top = (parseFloat(getComputedStyle(svg.current).getPropertyValue('--mb-top')) || 0) + 8, c = R.current.cam, sy = m.at.y * c.z + c.y
+    if (sy < top) setCam({ ...c, y: c.y + top - sy }) }, [savedMeet])   // eslint-disable-line react-hooks/exhaustive-deps
   const GAP_MSG = '인터넷이 끊긴 동안의 말은 녹음에만 있어요 — 「녹음으로 정리」 = 녹음 전체로 회의록(인터넷이 돌아온 뒤) · 「녹음 받기」 = 파일로 보관'
   const setMeet = f => { const v = typeof f === 'function' ? f(meetRef.current) : f; meetRef.current = v; setMeetS(v) }
   useEffect(() => { onMeet?.(meet ? meet.state : '') }, [meet?.state])   // eslint-disable-line react-hooks/exhaustive-deps

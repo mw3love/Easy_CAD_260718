@@ -6,7 +6,7 @@ import { writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
-import { boardName, openBoard, setCam, pickShape, dragScene, clickScene, liveDoc } from './helpers.js'
+import { boardName, openBoard, setCam, pickShape, dragScene, clickScene, liveDoc, menuPick, morePick } from './helpers.js'
 
 const slides = page => page.evaluate(d => window.__mb.ed.slidesBoard(d), { title: 't', sources: [], slides: [{ title: '표지', layout: '표지', bullets: ['a'], notes: '오늘은 송신소 이야기입니다.' },
   { title: '아주 긴 이름의 두 번째 장 — 송신소에서 전파가 나가기까지 거치는 길', layout: '글머리', bullets: ['b'] }, { title: '끝', layout: '마무리', bullets: ['c'] }] })
@@ -14,7 +14,7 @@ async function present(page, name, { size } = {}) {
   if (size) await page.setViewportSize(size)
   await openBoard(page, boardName(name)); await setCam(page, { x: 0, y: 0, z: 0.25 })
   await slides(page); await page.keyboard.press('Escape')
-  await page.getByRole('button', { name: '발표', exact: true }).click()
+  await morePick(page, '발표')
   await expect(page.getByTestId('presenter')).toBeVisible()
 }
 const slideG = page => page.getByTestId('presenter').locator('svg').first().locator('> g > g').first()
@@ -70,8 +70,8 @@ test('🔊 402 = 「크레딧이 모자라요」 + 단추 꺼짐, 알림은 다�
 test('발표 = 진짜 창 — 열면 초점이 발표로, 끝나면 연 단추로 · 우클릭 = 공용 메뉴(「다음 장」)', async ({ page }) => {
   await openBoard(page, boardName('pres-dlg')); await setCam(page, { x: 0, y: 0, z: 0.25 })
   await slides(page); await page.keyboard.press('Escape')
-  const open = page.getByRole('button', { name: '발표', exact: true })
-  await open.click()
+  const open = page.getByTestId('tools-more')   // 발표 = 도구 줄 ⋯ 안(2026-11-14 B1) — 끝나면 ⋯ 단추로
+  await morePick(page, '발표')
   const pr = page.getByTestId('presenter')
   await expect(pr).toHaveAttribute('role', 'dialog'); await expect(pr).toHaveAttribute('aria-modal', 'true'); await expect(pr).toHaveAttribute('aria-label', '발표')
   await expect(pr).toBeFocused()
@@ -123,7 +123,7 @@ const DOC = `<!doctype html><html><head><style>body{font-family:'Pretendard',san
 <body><h1>송신소 안내 문서</h1>${Array.from({ length: 40 }, (_, i) => `<p>${i + 1}번째 단락 — 송신소는 방송 신호를 전파로 바꾸어 멀리 보내는 마지막 관문입니다. 전력·냉각·안테나를 늘 살핍니다.</p>`).join('')}<img src="x" onerror="parent.__evil=1"></body></html>`
 
 async function exportAs(page, fmt) {
-  await page.getByRole('button', { name: '내보내기', exact: true }).click()
+  await menuPick(page, '내보내기…')
   const form = page.locator('div', { hasText: /^내보내기/ }).filter({ has: page.getByTestId('export-preview') }).last()
   await form.getByRole('button', { name: fmt, exact: true }).click()
   await expect(page.getByTestId('export-thumb').first()).toBeVisible()

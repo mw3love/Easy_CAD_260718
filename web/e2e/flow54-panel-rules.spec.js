@@ -82,8 +82,8 @@ test('프레임 판 — 이름 Esc = 처음 이름으로 · 줄 ▶는 회색(�
   expect(await play.evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
   await row.getByTestId('frame-more').click(); await expect(page.getByTestId('frame-menu')).toContainText('이 장부터 발표')
   await page.keyboard.press('Escape'); await expect(page.getByTestId('frame-menu')).toHaveCount(0)
-  // 위 막대 마우스 올림 = 회색 — 묶음 안은 묶음 바탕(--mb-group)보다 한 단계 진한 --mb-group-hover(2026-11-10 0단계 B4), 켜짐만 코랄
-  const btn = page.getByRole('button', { name: '표', exact: true }); await btn.hover()
-  const [bg, group] = await btn.evaluate(el => [getComputedStyle(el).backgroundColor, getComputedStyle(document.documentElement).getPropertyValue('--mb-group-hover').trim()])
+  // 도구 줄 마우스 올림 = 회색(공용 HOVER = --mb-group), 켜짐만 코랄(2026-11-14 B1 — 묶음 바탕이 없어져 묶음용 진한 회색은 안 씀)
+  const btn = page.getByTestId('isl-tools').getByRole('button', { name: '글자', exact: true }); await btn.hover()
+  const [bg, group] = await btn.evaluate(el => [getComputedStyle(el).backgroundColor, getComputedStyle(document.documentElement).getPropertyValue('--mb-group').trim()])
   expect(bg).toBe(await page.evaluate(c => { const d = document.createElement('div'); d.style.color = c; document.body.append(d); const v = getComputedStyle(d).color; d.remove(); return v }, group))
 })

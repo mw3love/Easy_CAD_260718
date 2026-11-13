@@ -1,7 +1,7 @@
 // 흐름 51 — 프레임 「발표」 켜고 끄기 + 「프레임으로 감싸고 AI 말풍선」(2026-10-28 사용자).
 // 끈 프레임 = 칠판엔 그대로 · 판 번호 「—」 · 발표·「프레임만」 내보내기에서 빠짐. 여럿 우클릭 = 프레임(처음부터 발표 꺼짐)으로 감싸고 그 프레임 말풍선 — 안의 그림까지 보냄. 진짜 KAIROS는 안 부름.
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, pickShape, dragScene, clickScene, liveDoc, toPage } from './helpers.js'
+import { boardName, openBoard, setCam, pickShape, dragScene, clickScene, liveDoc, toPage, morePick } from './helpers.js'
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAFElEQVR4nGP4z8DAwMDAwMDAwAAAHwAB/2Y2E7QAAAAASUVORK5CYII='
 
@@ -25,7 +25,7 @@ test('발표 끄기 = 판 「—」·발표에서 빠짐·칠판엔 그대로 ·
   expect(frames.map(f => !!f.skip)).toEqual([false, true, false])
   expect(frames).toHaveLength(3)                                                    // 칠판엔 그대로
   await clickScene(page, 600, 700)
-  await page.getByRole('button', { name: '발표', exact: true }).click()
+  await morePick(page, '발표')
   const bar = page.getByTestId('present-bar')
   await expect(bar).toContainText('1 / 2')
   await page.keyboard.press('ArrowRight'); await expect(bar).toContainText('2 / 2')

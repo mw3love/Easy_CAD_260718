@@ -1,6 +1,6 @@
 // 흐름 66 — 명령 찾기(Ctrl+K, 2026-11-08): 이름·초성·찾는 말로 찾기 · Enter/누르기 = 실행 · 고른 물건의 우클릭 명령도 · Esc/바깥/Ctrl+K = 닫기 · 닫은 뒤 칠판 글쇠 그대로
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, pickShape, dragScene, clickScene, liveDoc } from './helpers.js'
+import { boardName, openBoard, setCam, pickShape, dragScene, clickScene, liveDoc, menuPick } from './helpers.js'
 
 const tool = (page, label) => page.getByRole('button', { name: label, exact: true })
 const bar = page => page.getByTestId('cmd-bar')
@@ -74,11 +74,10 @@ test('닫은 뒤 칠판 글쇠 그대로 — 찾는 칸에 친 글이 도형으�
   r = (await liveDoc(page)).items.find(it => it.type === 'rect'); expect(r.label?.text).toBe('A')
 })
 
-test('입구 — 위 막대 「명령 검색」을 누르면 열리고 다시 누르면 닫힘', async ({ page }) => {
+test('입구 — ☰ 메뉴 「명령 검색」을 누르면 열리고 Ctrl+K로 닫힘(2026-11-14 B1 — 위 막대 단추였음)', async ({ page }) => {
   await openBoard(page, boardName('cmdbtn')); await setCam(page)
-  const open = page.getByTestId('cmd-open')
-  await open.click(); await expect(bar(page)).toBeVisible(); await expect(bar(page).locator('input')).toBeFocused()
-  await open.click(); await expect(bar(page)).toHaveCount(0)
+  await menuPick(page, '명령 검색'); await expect(bar(page)).toBeVisible(); await expect(bar(page).locator('input')).toBeFocused()
+  await page.keyboard.press('Control+k'); await expect(bar(page)).toHaveCount(0)
 })
 
 test('칠판 — 「새 칠판」은 바로 새 주소로, 내 칠판은 이름으로 찾아 옮겨 감', async ({ page }) => {

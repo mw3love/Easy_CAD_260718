@@ -1,7 +1,7 @@
 // 흐름 39 — 10-26 실검증 손질: 스타일 복사 Alt+C/V(Ctrl+Alt+C = 윈도 Copilot) · 발표 레이저(끌면 빨간 자취·글 선택 안 잡힘, 도구를 켜면 그 커서) ·
 // 대화창 「취소」 한 줄(긴 진행 글에 눌려 세로였음) · 창을 닫으면 접속자 이름이 바로 빠짐(전엔 20초쯤 남음) · 선을 고르고 우클릭 「범례 넣기」(10-27)
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, clickScene, pickShape, dragScene, liveDoc, toPage, aiMake } from './helpers.js'
+import { boardName, openBoard, setCam, clickScene, pickShape, dragScene, liveDoc, toPage, aiMake, morePick } from './helpers.js'
 
 const menuBtns = page => page.locator('div[style*="z-index: 30"] > div > button').allInnerTexts()
 
@@ -23,7 +23,7 @@ test('발표 레이저 — 끌면 빨간 자취(글 선택 안 잡힘), 펜을 �
   await page.getByRole('button', { name: '프레임', exact: true }).click()
   await dragScene(page, { x: -40, y: -40 }, { x: 640, y: 340 })
   await clickScene(page, 300, 700)
-  await page.getByRole('button', { name: '발표', exact: true }).click()
+  await morePick(page, '발표')
   const pres = page.getByTestId('presenter'); await expect(pres).toBeVisible()
   const vp = page.viewportSize()
   const LASER = /^url\("data:image\/svg\+xml/                                                // 레이저 점 = 커서 그림(10-28 — 화면에 그린 점은 늦게 따라왔음)

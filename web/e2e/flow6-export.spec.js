@@ -2,10 +2,10 @@
 import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { boardName, openBoard, setCam, pickShape, dragScene, clickScene } from './helpers.js'
+import { boardName, openBoard, setCam, pickShape, dragScene, clickScene, menuPick } from './helpers.js'
 
 async function exportAs(page, fmt) {
-  await page.getByRole('button', { name: '내보내기', exact: true }).click()
+  await menuPick(page, '내보내기…')
   const form = page.locator('div', { hasText: /^내보내기/ }).filter({ has: page.getByTestId('export-preview') }).last()
   await form.getByRole('button', { name: fmt, exact: true }).click()
   await expect(page.getByTestId('export-thumb').first()).toBeVisible()

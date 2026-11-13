@@ -77,3 +77,8 @@ export async function pinCandidate(page, n = 0) {
   await page.getByTestId('image-pick').nth(n).getByTestId('image-pin').click()
   await page.getByTestId('image-pick').nth(n).and(page.locator('[data-picked="1"]')).waitFor()
 }
+
+// 떠 있는 섬(2026-11-14 B1) — ☰ 메뉴·도구 줄 ⋯ 메뉴의 줄 누르기(위 막대 단추였던 것: 저장·내보내기·밝기 / 다각형·번호·웹·표·회의·발표)
+export async function menuPick(page, name) { await page.getByTestId('main-menu').click(); await page.getByTestId('main-menu-list').getByRole('menuitem', { name: itemName(name) }).click() }
+export async function morePick(page, name) { await page.getByTestId('tools-more').click(); await page.getByTestId('tools-more-list').getByRole('menuitem', { name: itemName(name) }).click() }
+const itemName = n => new RegExp('^' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))   // 메뉴 줄 이름 뒤에 글쇠(「내보내기… Ctrl+P」)가 붙음

@@ -2,7 +2,7 @@
 // → 「끝내기」 = 남은 말 받고 서버 요약(/api/meeting/<칠판>/live) → 파일 회의록과 같은 프레임. 새로 열면 받아 적던 회의가 「정리하기 · 버리기」로 살아남음.
 // 마이크 = 크롬 가짜 장치, KAIROS 소켓 = Playwright routeWebSocket 가짜(Soniox 실시간 형식). 진짜 KAIROS·진짜 목소리는 손 확인.
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, liveDoc } from './helpers.js'
+import { boardName, openBoard, setCam, liveDoc, morePick } from './helpers.js'
 
 test.use({ launchOptions: { args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] }, permissions: ['microphone'] })
 
@@ -38,7 +38,7 @@ async function fakeKairos(page) {
 test('회의 → 화자별 글 → 연결 닫혀도 다시 붙음 → 끝내기 = 회의록 프레임', async ({ page }) => {
   const name = boardName('meetlive'), k = await fakeKairos(page)
   await openBoard(page, name); await setCam(page)
-  await page.getByRole('button', { name: '회의', exact: true }).click()
+  await morePick(page, '회의 받아 적기')
   await expect.poll(() => k.configs.length).toBe(1)
   expect(k.configs[0]).toMatchObject({ model: 'stt-rt-v5', enable_speaker_diarization: true, language_hints: ['ko'] })
   const live = page.getByTestId('meeting-live')
@@ -76,14 +76,14 @@ test('회의 → 화자별 글 → 연결 닫혀도 다시 붙음 → 끝내기 
   const d = await liveDoc(page), frame = d.items.find(it => it.type === 'frame'), full = d.items.find(it => it.type === 'memo' && it.fold)
   expect(frame.name).toContain('송신소 점검 일정')
   expect(full.lines[1].t).toBe('[00:00] 화자 1: 오늘 회의는 점검 일정입니다.')
-  await expect(page.getByRole('button', { name: '회의', exact: true })).toBeVisible()
+  await expect(page.getByTestId('isl-tools').getByRole('button', { name: /끝내기|정리하기/ })).toHaveCount(0)   // 회의가 끝나면 도구 줄의 「끝내기」가 사라짐(시작은 ⋯ 안 — 2026-11-14 B1)
   expect(await page.evaluate(n => localStorage.getItem(`mb-meet:${n}`), name)).toBeNull()   // 다 만들면 임시 저장도 지움
 })
 
 test('받아 적던 회의는 새로 열어도 남음 → 정리하기 / 버리기', async ({ page }) => {
   const name = boardName('meetsave'), k = await fakeKairos(page)
   await openBoard(page, name); await setCam(page)
-  await page.getByRole('button', { name: '회의', exact: true }).click()
+  await morePick(page, '회의 받아 적기')
   await expect.poll(() => k.sockets.length).toBe(1)
   k.sockets[0].send(JSON.stringify({ tokens: [tok('창이 닫히기 전 말', '1', 0, 900)] }))
   await expect(page.getByTestId('meeting-live')).toContainText('창이 닫히기 전 말')
@@ -108,7 +108,7 @@ test('서버가 옛 버전(요약 주소 없음)이면 다시 켜라고 알림 �
   const name = boardName('meetold'), k = await fakeKairos(page)
   await page.route('**/api/meeting/**', r => r.fulfill({ status: 404, body: '{"error":"none"}', contentType: 'application/json' }))
   await openBoard(page, name); await setCam(page)
-  await page.getByRole('button', { name: '회의', exact: true }).click()
+  await morePick(page, '회의 받아 적기')
   await expect.poll(() => k.sockets.length).toBe(1)
   k.sockets[0].send(JSON.stringify({ tokens: [tok('남아야 할 말', '1', 0, 900)] }))
   await expect(page.getByTestId('meeting-live')).toContainText('남아야 할 말')
@@ -122,7 +122,7 @@ test('쉬지 않고 말해도 5초 안에 저장 · 요약이 안 되면 서버 
   const name = boardName('meetsafe'), k = await fakeKairos(page)
   await page.route('**/api/meeting/**', r => r.fulfill({ status: 502, json: { error: 'KAIROS 요약 실패(가짜)' } }))
   await openBoard(page, name); await setCam(page)
-  await page.getByRole('button', { name: '회의', exact: true }).click()
+  await morePick(page, '회의 받아 적기')
   await expect.poll(() => k.sockets.length).toBe(1)
   for (let i = 0; i < 8; i++) { k.sockets[0].send(JSON.stringify({ tokens: [tok(` 쉬지 않는 말 ${i}.`, '1', i * 1000, i * 1000 + 900)] })); await page.waitForTimeout(800) }   // 0.8초마다 새 말 — 전엔 「3초 조용하면」이라 안 저장됐음
   expect(await page.evaluate(n => localStorage.getItem(`mb-meet:${n}`), name)).toContain('쉬지 않는 말 0.')
@@ -154,7 +154,7 @@ test('소리가 10초째 안 들어오면 경고 → 다시 들리면 사라짐'
   const name = boardName('meetmute'), k = await fakeKairos(page)
   await page.addInitScript(SOUND)
   await openBoard(page, name); await setCam(page)
-  await page.getByRole('button', { name: '회의', exact: true }).click()
+  await morePick(page, '회의 받아 적기')
   await expect.poll(() => k.sockets.length).toBe(1)
   const warn = page.getByTestId('meeting-live-warn')
   await page.waitForTimeout(7000); await expect(warn).toBeHidden()                 // 10초 전엔 조용
@@ -168,7 +168,7 @@ test('마이크가 끊기면(장치 빠짐) 알리고 받아 적던 회의로 �
   const name = boardName('meetgone'), k = await fakeKairos(page)
   await page.addInitScript(SOUND)
   await openBoard(page, name); await setCam(page)
-  await page.getByRole('button', { name: '회의', exact: true }).click()
+  await morePick(page, '회의 받아 적기')
   await expect.poll(() => k.sockets.length).toBe(1)
   k.sockets[0].send(JSON.stringify({ tokens: [tok('끊기기 전 말', '1', 0, 900)] }))
   const live = page.getByTestId('meeting-live')
@@ -184,7 +184,7 @@ test('받아쓰기 답이 끊기면(조용히 죽은 연결) 8초 뒤 경고 →
   const name = boardName('meetnet'), k = await fakeKairos(page)
   await page.addInitScript(SOUND)
   await openBoard(page, name); await setCam(page)
-  await page.getByRole('button', { name: '회의', exact: true }).click()
+  await morePick(page, '회의 받아 적기')
   await expect.poll(() => k.sockets.length).toBe(1)
   await page.evaluate(() => { window.__mbGain.gain.value = 0.5 })                 // 소리는 들어옴 — 무음 경고와 헷갈리지 않게
   k.mute = 0                                                                       // 첫 연결만 조용히 죽음
@@ -199,7 +199,7 @@ test('인터넷이 끊기면 녹음은 계속 → 끝내기 = 글만으로 요�
   const name = boardName('meetoff'), k = await fakeKairos(page)
   await page.addInitScript(SOUND)
   await openBoard(page, name); await setCam(page)
-  await page.getByRole('button', { name: '회의', exact: true }).click()
+  await morePick(page, '회의 받아 적기')
   await expect.poll(() => k.sockets.length).toBe(1)
   await page.evaluate(() => { window.__mbGain.gain.value = 0.5 })
   k.sockets[0].send(JSON.stringify({ tokens: [tok('끊기기 전 말', '1', 0, 900)] }))

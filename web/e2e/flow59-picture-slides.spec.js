@@ -2,7 +2,7 @@
 // 장 계획 🖼 = 그 장을 그림 한 장으로(어림 크레딧이 따라 바뀜) → 만들기 = 그림 장은 프레임 비율이 그림 비율(3:2), 그림이 프레임을 꽉 채움 · 글 장은 16:9 그대로.
 // 내보내기 PDF 용지 「프레임」 = 쪽마다 그 프레임 크기·여백 0. 진짜 KAIROS는 안 부름(그림 = 3×2 PNG).
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, liveDoc, routeCall, askChat } from './helpers.js'
+import { boardName, openBoard, setCam, liveDoc, routeCall, askChat, menuPick, morePick } from './helpers.js'
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAEElEQVR4nGO4VR4GQQxwFgBmUAnrgvT2ZQAAAABJRU5ErkJggg==', 'base64')   // 3×2 코랄
 const PLAN = { title: '전파가 오는 길', slides: [{ title: '표지', point: '', source: 'ai', pic: false }, { title: '송신소', point: '', source: 'ai', pic: true },
@@ -73,7 +73,7 @@ test('PDF 용지 「프레임」 — 프레임만 내보낼 때만 보이고, �
   const deck = { title: 't', sources: [], slides: [{ title: '표지', layout: '표지', bullets: ['a'] }, { title: '그림', layout: '그림', bullets: ['b'], pic: { data: PNG.toString('base64'), w: 3, h: 2 } }] }
   await page.evaluate(d => window.__mb.ed.slidesBoard(d), deck)
   await page.keyboard.press('Escape')
-  await page.getByRole('button', { name: '내보내기' }).click()
+  await menuPick(page, '내보내기…')
   await page.getByRole('button', { name: /^프레임만/ }).click()
   await page.getByRole('button', { name: '프레임', exact: true }).first().click()   // 내보내기 창 용지 칸(위 막대 「프레임」 도구보다 앞)
   await expect(page.getByTestId('export-frame-page')).toBeVisible()
@@ -184,7 +184,7 @@ test('작은 책 ③ — 갈래가 있는 책은 장끼리 →·장에서 판으
   const arrows = doc.items.filter(it => it.type === 'sarrow' && it.slide_link)
   expect(arrows.map(a => [id.indexOf(doc.items[a.bind1].uid), id.indexOf(doc.items[a.bind2].uid)]).sort())   // 저장 꼴 bind = 목록 순번.toEqual([[0, 1], [1, 2], [1, 3], [3, 4]].sort())   // 표지→송신소→중계소→끝, 송신소↓판
   await page.keyboard.press('Escape')
-  await page.getByRole('button', { name: '발표', exact: true }).click()
+  await morePick(page, '발표')
   const pr = page.getByTestId('presenter'), fork = page.getByTestId('present-fork')
   await expect(pr).toHaveAttribute('data-cur', id[0]); await expect(fork).toHaveCount(0)
   await page.keyboard.press(' '); await expect(pr).toHaveAttribute('data-cur', id[1])

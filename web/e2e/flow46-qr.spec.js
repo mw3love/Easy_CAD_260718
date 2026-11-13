@@ -1,7 +1,7 @@
 // 흐름 46 — 칠판 QR(2026-10-28 대회 시연): 공유 창 「QR 크게」 = 이 주소 + 칠판 코드 · 게시 탭 = 보기 링크(코드 없음) · 발표 중 Q = TV에 크게(Esc는 QR만 닫음)
 // · 칠판 판 「칠판 코드로 열기」 = 코드 8자(대문자·띄어 써도) → 그 칠판, 없는 코드 = 알림. QR 내용은 같은 계산(`qrpath.js`)으로 되만들어 대조(진짜 풀기는 🖼 캡처 + OpenCV로 따로)
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, dragScene, waitSaved } from './helpers.js'
+import { boardName, openBoard, setCam, dragScene, waitSaved, morePick } from './helpers.js'
 import { qrPath } from '../src/next/qrpath.js'
 
 const ABC = 'abcdefghjkmnpqrstuvwxyz23456789'
@@ -33,7 +33,7 @@ test('공유 「QR 크게」 · 게시 QR · 발표 중 Q · 칠판 코드로 �
 
   // 발표 중 Q — 게시 전 = 같이 고치는 주소
   await page.keyboard.press('Escape')
-  await page.getByRole('button', { name: '발표', exact: true }).click()
+  await morePick(page, '발표')
   await expect(page.getByTestId('presenter')).toBeVisible()
   await page.keyboard.press('q')
   await qrShows(page, board)
@@ -56,7 +56,7 @@ test('공유 「QR 크게」 · 게시 QR · 발표 중 Q · 칠판 코드로 �
   await page.keyboard.press('Escape')
 
   // 게시한 뒤 발표 중 Q = 보기 링크
-  await page.getByRole('button', { name: '발표', exact: true }).click()
+  await morePick(page, '발표')
   await page.keyboard.press('q')
   await qrShows(page, view)
   await page.keyboard.press('q'); await expect(page.getByTestId('qr-big')).toHaveCount(0)   // Q 한 번 더 = 닫기

@@ -1,7 +1,7 @@
 // 직접 만드는 Magic Board 웹 칠판(§8 항목61 「바뀐 결정」, 2026-10-17).
 // 1단계 뼈대(무한 칠판·.ecad 열기/저장·모든 종류 그리기) + 2단계 기본 편집(Editor.jsx).
 // 화면 틀(사용자 선택): 위 막대는 데스크톱처럼 아이콘 밑 짧은 이름, 칠판 위 떠 있는 카드(좌상 도형), 오른쪽 KAIROS 대화창(4단계).
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createPortal } from 'react-dom'
 import { Editor, rightInset, personColor } from './Editor.jsx'
@@ -42,31 +42,29 @@ function useSize(ref) {
   return s
 }
 
-// 위 막대 버튼 — 아이콘 밑 짧은 이름(데스크톱 첫 화면 원칙), 켜짐은 옅은 코랄 바탕
-// 좁은 창(NARROW_W 미만 — 브라우저 옆에 띄워 쓸 때, 2026-10-19 사용자 선택)은 아이콘만(이름은 툴팁) — 지침 「자리가 모자랄 때만 아이콘만」
-const NARROW_W = 1440, TOOLS_ROOM = 1180,   /* 위 막대에서 판 끝선 오른쪽에 도구·오른쪽 묶음이 들어갈 자리(2026-11-09 실측 — 도구 811 + 명령 검색~KAIROS 300 + 여유) */ Narrow = createContext(false), InGroup = createContext(false)
+const NARROW_W = 1440   // 좁은 창(브라우저 옆에 띄워 쓸 때) = 대화창이 칠판 위에 뜸
 // 휴대폰(2026-10-27, 기준 `ui.jsx` `isPhone`) = 보기·묻기·회의만 — 위 막대는 이름(누르면 칠판 판)·되돌리기, 아래 큰 버튼, 왼쪽 판 없음, 대화창은 화면 전체, 손가락 = 이동·확대
 // special = KAIROS(2026-10-23 사용자: 다른 버튼과 다른 특별한 버튼 — 오른쪽 구석, 코랄로 채움. 열림은 한 단계 진하게)
 const SPECIAL_BG = on => (on ? '#c4613f' : 'var(--mb-accent)')
 // 「도구 유지」 반복 화살표 — 데스크톱에 없는 웹 버튼이라 icons.json(데스크톱에서 뽑음) 대신 여기, 같은 선 굵기 1.6(2026-10-27).
 // 자물쇠였다가 반복으로(2026-11-04 사용자 — 레이어 「잠금」과 뜻이 겹침), 켜짐은 버튼 바탕(코랄)이 보여 줌
 const KEEP_ICONS = { keep: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11V9.5A3.5 3.5 0 0 1 7.5 6H19"/><path d="M16 3l3 3-3 3"/><path d="M20 13v1.5a3.5 3.5 0 0 1-3.5 3.5H5"/><path d="M8 21l-3-3 3-3"/></svg>' }
-// 묶음 안 버튼(넓은 창) = 큰 버튼 + 작은 버튼 2단(2026-11-08 사용자 선택 — RustGIS 리본 비교 시안 D: 높이 54 그대로, 버튼 줄 약 400px 짧게). small = 자주 안 누르는 것 · 좁은 창은 예전처럼 아이콘 한 줄
-const Btn = ({ icon, label, onClick, onDown, title, on, disabled, special, small }) => { const narrow = useContext(Narrow); const grp = useContext(InGroup), inGroup = grp && !narrow, sz = inGroup && small ? 15 : 18
-  const slot = !inGroup ? null : small ? { flexDirection: 'row', justifyContent: 'flex-start', height: 24, minWidth: 0, gap: 5, padding: '1px 6px', boxSizing: 'border-box' } : { gridRow: 'span 2', justifyContent: 'center', height: 48, minWidth: 44, padding: '2px 6px', boxSizing: 'border-box' }
-  const bg = o => (special ? SPECIAL_BG(o) : o ? 'var(--mb-on)' : 'transparent'); return (
-  <button onClick={onClick} onPointerDown={onDown} title={keyLabel(title || label)} aria-label={label} disabled={disabled} aria-pressed={on === undefined ? undefined : !!on} style={{ all: 'unset', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.35 : 1,
-    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: narrow ? '4px 4px' : '4px 8px', borderRadius: 6, minWidth: narrow ? 24 : 40, ...slot,   // 좁은 창 옆 여백 6 → 4px: 「칠판」 버튼이 늘며 960px에서 상태 글이 0px로 눌렸음(2026-10-19)
-    background: bg(on), boxShadow: on && !special ? 'var(--mb-on-ring)' : 'none', font: special ? "700 11px 'Pretendard', sans-serif" : "400 11px 'Pretendard', sans-serif", color: special ? '#fff' : C.ink }}
-    onMouseEnter={e => { if (!disabled && (special || !on)) e.currentTarget.style.background = special ? SPECIAL_BG(true) : grp ? 'var(--mb-group-hover)' : HOVER }} onMouseLeave={e => { e.currentTarget.style.background = bg(on) }}>
-    {(ICONS[icon] || KEEP_ICONS[icon]) ? <span aria-hidden className={special ? undefined : 'mb-btn-icon'} style={{ width: sz, height: sz, display: 'block', color: special ? '#fff' : 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: (ICONS[icon] || KEEP_ICONS[icon]).replace('<svg ', `<svg width="${sz}" height="${sz}" `) }} />
-      : <span style={{ fontSize: 16, lineHeight: '18px' }}>{icon}</span>}{!narrow && <span style={{ whiteSpace: 'nowrap' }}>{label}</span>}   {/* 이름은 한 줄(「전체 화면」이 두 줄로 꺾여 위 막대가 높아졌음 — 2026-10-20) */}
-  </button>
-) }
-// 펼침 창(표·웹 등)을 버튼 아래에 붙이는 칸 — 칸 안 버튼도 옆으로(2026-10-19 다잡기: 칸이 버튼을 위아래로 쌓아 위 막대가 95px로 늘고 칠판이 밀렸음)
-const ANCHOR = { position: 'relative', display: 'flex', gap: 2 }
-const Group = ({ children }) => { const narrow = useContext(Narrow); return <InGroup.Provider value><div style={{ ...(narrow ? { display: 'flex', gap: 2 } : { display: 'grid', gridAutoFlow: 'column', gridTemplateRows: 'repeat(2, 24px)', gap: '0 2px' }), background: C.group, borderRadius: 8, padding: narrow ? 2 : 1 }}>{children}</div></InGroup.Provider> }
-const SMALL_TOOLS = new Set(['line', 'polygon', 'pen', 'badge'])
+// 떠 있는 섬(2026-11-14 화면 틀 B1 — 위 막대를 걷고 Excalidraw처럼 칠판 위에 뜬 조각만): 단추 36·아이콘만(이름 = 마우스 올림·글 읽기)·구석에 글쇠
+// 시안·확정 경위 `~/.claude/design-system/projects/easy-cad.md` 「화면 틀 뼈대 재검토」
+const ISL = { position: 'absolute', zIndex: 18, display: 'flex', alignItems: 'center', gap: 2, padding: 4, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, boxShadow: 'var(--mb-shadow)', boxSizing: 'border-box' }
+const ISL_ICONS = { menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
+  more: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>' }
+const ISep = () => <span aria-hidden style={{ width: 1, height: 20, background: C.line, margin: '0 4px', flex: 'none' }} />
+const IBtn = ({ icon, label, onClick, onDown, title, on, disabled, k, testid, pop, open, wide, special }) => { const bg = o => (special ? SPECIAL_BG(o) : o ? 'var(--mb-on)' : 'transparent'), svg = ICONS[icon] || KEEP_ICONS[icon] || ISL_ICONS[icon]
+  return <button data-testid={testid} onClick={onClick} onPointerDown={onDown} title={keyLabel(title || label)} aria-label={label} disabled={disabled} aria-pressed={on === undefined || pop ? undefined : !!on} aria-haspopup={pop ? 'menu' : undefined} aria-expanded={pop ? !!open : undefined}
+    style={{ all: 'unset', position: 'relative', flex: 'none', boxSizing: 'border-box', minWidth: 36, height: 36, padding: wide ? '0 10px' : 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: 6, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.35 : 1,
+      background: bg(on || open), boxShadow: (on || open) && !special ? 'var(--mb-on-ring)' : 'none', color: special ? '#fff' : C.ink, font: "600 13px 'Pretendard', sans-serif", whiteSpace: 'nowrap' }}
+    onMouseEnter={e => { if (!disabled && (special || !(on || open))) e.currentTarget.style.background = special ? SPECIAL_BG(true) : HOVER }} onMouseLeave={e => { e.currentTarget.style.background = bg(on || open) }}>
+    {svg && <span aria-hidden className={special ? undefined : 'mb-btn-icon'} style={{ width: 18, height: 18, display: 'block', color: special ? '#fff' : 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: svg.replace('<svg ', '<svg width="18" height="18" ') }} />}
+    {wide && <span>{label}</span>}
+    {k && <span aria-hidden style={{ position: 'absolute', right: 3, bottom: 2, fontSize: 9, lineHeight: 1, color: C.muted }}>{k}</span>}
+  </button> }
+const MORE_TOOLS = new Set(['polygon', 'badge'])   // 도구 줄 ⋯ 안(2026-11-14 B1 — 자주 안 쓰는 그리기)
 const TOOLS = [['select', 'select', '선택', '1'], ['arrow', 'sarrow', '화살표', '2'], ['text', 'text', '글자', '3'], ['line', 'line', '선', '4'], ['polygon', 'polygon', '다각형', '5'], ['pen', 'pen', '펜', '6'], ['badge', 'badge', '번호', '7']]   // [도구, 아이콘(icons.json), 이름, 글쇠]
 
 // 위 막대 작은 창(표·웹·내보내기)을 화면 안으로 — 오른쪽으로 넘치면 왼쪽으로 밀고, 아래가 모자라면 남은 높이까지만(안은 굴림). 2026-11-10 2단계(200% 확대·폭 320에서 단추가 화면 밖)
@@ -610,6 +608,7 @@ function PhoneShare({ title = '' }) {
 
 function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목67)에서 내 팀 이름(관리자 = '관리자'), 팀 없는 서버면 없음 · openServer = 비밀번호 없는 서버(칠판 주소 = 열쇠)
   const [tableOpen, setTableOpen] = useState(false), [exportOpen, setExportOpen] = useState(false), [webOpen, setWebOpen] = useState(false)
+  const [mainMenu, setMainMenu] = useState(null), [moreMenu, setMoreMenu] = useState(null)   // 떠 있는 섬의 ☰ 메뉴·도구 줄 ⋯ 메뉴(2026-11-14 B1)
   const [dockTab, setDockTabS] = useState(() => { try { const v = localStorage.getItem('mb-dock'); return v ?? (window.innerWidth < NARROW_W ? '' : 'shape') } catch { return 'shape' } })   // 왼쪽 판 열린 칸('' = 접힘) — 이 브라우저에 기억, 좁은 창은 처음엔 접힘
   const setDockTab = v => { setDockTabS(v); try { localStorage.setItem('mb-dock', v) } catch { /* 기억 못 해도 그만 */ } }
   const [dockW, setDockWS] = useState(() => { try { return Math.max(DOCK_W, Math.min(DOCK_MAX, +localStorage.getItem('mb-dock-w') || DOCK_W)) } catch { return DOCK_W } })   // 왼쪽 판 폭 — 이 브라우저에 기억
@@ -618,9 +617,9 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
   useEffect(() => { try { localStorage.setItem('mb-chat-open', chatOpen ? '1' : '0') } catch { /* 기억 못 해도 그만 */ } }, [chatOpen])
   const [chatW, setChatWS] = useState(() => { try { return chatClamp(+localStorage.getItem('mb-chat-w') || CHAT_W) } catch { return CHAT_W } })   // 대화창 폭 — 이 브라우저에 기억(왼쪽 판 `mb-dock-w`와 같게)
   const setChatW = v => { setChatWS(v); try { localStorage.setItem('mb-chat-w', String(v)) } catch { /* 기억 못 해도 그만 */ } }
-  const [winW, setWinW] = useState(() => window.innerWidth), [narrow, setNarrow] = useState(() => window.innerWidth < NARROW_W)   // 좁은 창 = 위 막대 아이콘만 + 대화창은 칠판 위에 뜸
+  const [narrow, setNarrow] = useState(() => window.innerWidth < NARROW_W)   // 좁은 창 = 위 막대 아이콘만 + 대화창은 칠판 위에 뜸
   const [phone, setPhone] = useState(isPhone), phoneRef = useRef(phone); phoneRef.current = phone
-  useEffect(() => { const on = () => { setWinW(window.innerWidth); setNarrow(window.innerWidth < NARROW_W); setPhone(isPhone()) }; window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
+  useEffect(() => { const on = () => { setNarrow(window.innerWidth < NARROW_W); setPhone(isPhone()) }; window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
   usePhoneViewport(phone)   // 브라우저 확대 막기(칠판 두 손가락 확대만 — `ui.jsx`)
   const [sheet, setSheet] = useState(false), [peopleOpen, setPeopleOpen] = useState(false)   // 휴대폰 칠판 판(2026-11-06 — 위 이름 톡: 내 칠판·새 칠판·코드로 열기·공유)
   const [activeLayer, setActiveLayer] = useState('default')   // 「그리는 중」 레이어(파일을 열면 기본부터 — 데스크톱 `_apply_loaded_layers`)
@@ -663,8 +662,6 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
   // 서버 답 전(첫 0.1초)에도 서버 있는 모습으로 그림 — 「Magic Board」·흐린 공유·동그라미 없음 → 바뀌며 위 막대가 좌우로 밀렸음(2026-10-28 사용자 「새 칠판 누르면 살짝 깜빡」)
   const live = server || !srvKnown
   // 위 막대 왼쪽 = 왼쪽 판의 머리(시안 C): 판이 열린 넓은 창만. 자리가 모자라면(창 폭 1440에서 판을 넓히면 버튼이 겹쳤음)·팀 이름표가 붙는 서버는 예전 배치. 코랄은 레일 아이콘이 맡음(이름 칸 전체가 칠해졌음)
-  const dockRight = RAIL_W + 1 + dockW + 1, headed = !phone && !narrow && !!dockTab && !(live && team) && dockRight <= winW - TOOLS_ROOM
-  const titleBg = dockTab === 'board' && !headed ? 'var(--mb-on)' : 'transparent'
   const [me, setMe] = useState(() => { try { return localStorage.getItem('mb.name') || '' } catch { return '' } }), [others, setOthers] = useState([]), [shareOpen, setShareOpen] = useState(false)
   const sync = useRef({ base: null, rev: 0, busy: false, again: false, id: Math.random().toString(36).slice(2, 10) }), modelRef = useRef(model); modelRef.current = model
   const box = useRef(null), size = useSize(box), file = useRef(null), ed = useRef(null), saveT = useRef(null)
@@ -795,6 +792,16 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
   const [aiBusy, setAiBusy] = useState('')   // 칠판 위 「📄 정리 문서 만드는 중…」 알약(대화창이 알려 줌)
   const [helpOpen, setHelpOpen] = useState(false), [findOpen, setFindOpen] = useState(0), [cmdOpen, setCmdOpen] = useState(0), [marks, setMarks] = useState([])   // findOpen = 열 때마다 새 번호(다시 Ctrl+F = 칸에 다시 포커스)
   const keyAct = useRef(null)
+  // 도구 줄 자리 = 잰 폭으로: 칠판 가운데 → 모자라면 이름 섬 바로 옆 → 그래도 모자라면 둘째 줄 가운데(좁은 창·대화창을 편 노트북 — 겹치거나 화면 밖으로 나갔음)
+  const islL = useRef(null), islT = useRef(null), islR = useRef(null), [toolsAt, setToolsAt] = useState({ left: '50%', top: 12, transform: 'translateX(-50%)' })
+  const placeTools = useCallback(() => {
+    const b = box.current, l = islL.current, t = islT.current, r = islR.current; if (!b || !l || !t || !r) return
+    const W = b.clientWidth - rightInset(b), lw = l.offsetWidth, tw = t.offsetWidth, rw = r.offsetWidth, G = 12
+    const at = W / 2 - tw / 2 >= G + Math.max(lw, rw) + G ? { left: W / 2, top: 12, transform: 'translateX(-50%)' }
+      : W - lw - rw - 4 * G >= tw ? { left: G + lw + G, top: 12, transform: 'none' } : { left: W / 2, top: 60, transform: 'translateX(-50%)' }
+    setToolsAt(p => (p.left === at.left && p.top === at.top && p.transform === at.transform ? p : at))
+  }, [])
+  useEffect(() => { const ro = new ResizeObserver(placeTools); [box, islL, islT, islR].forEach(x => x.current && ro.observe(x.current)); placeTools(); return () => ro.disconnect() }, [placeTools, phone, chatOpen, narrow])
   keyAct.current = { fit: () => fit(modelRef.current.items), save: () => (server ? saveServer() : saveFile()),
     zoom100: () => setCam(c => { const cx = (size.w - rightInset(box.current)) / 2, cy = size.h / 2; return { z: 1, x: cx - (cx - c.x) / c.z, y: cy - (cy - c.y) / c.z } }) }
   // 위 막대 팝업(내보내기·표·웹·공유) — 바깥 누르기·Esc = 닫기, 하나만(2026-10-22 디자인 점검: Esc는 팝업 안에 커서가 있을 때만 먹고 둘이 겹쳐 열렸음)
@@ -894,70 +901,10 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
       {phone && sheet === 'share' && server && <PhonePop side="right" testid="phone-share-pop" from="phone-share" label="공유" onClose={() => setSheet(false)}>
         {openServer ? <PhoneShare title={title} /> : <ShareForm inline people={crowd} title={title} onClose={() => setSheet(false)} />}</PhonePop>}
       <a href="#mb-main" className="mb-skip" onClick={e => { e.preventDefault(); const g = document.querySelector('[data-testid=empty-guide] button.mb-mi'); (g || document.getElementById('mb-main'))?.focus() }}>칠판으로 건너뛰기</a>   {/* 위 막대 Tab 25번을 건너뜀 — 첫 안내가 있으면 그 첫 줄로(2026-11-10 1단계) */}
-      <Narrow.Provider value={narrow}>
-      <div style={{ position: 'relative', display: phone ? 'none' : 'flex', flexWrap: narrow ? 'wrap' : 'nowrap', rowGap: 4, alignItems: 'center', gap: narrow ? 4 : 8, padding: narrow ? '4px 8px' : '1px 8px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>   {/* 좁은 PC 창(반 화면)은 두 줄로 — 한 줄이면 칠판 이름·공유·KAIROS가 잘렸음(2026-10-27 저녁) */}
-        {/* 칠판 이름 = 맨 왼쪽(2026-10-27 사용자 — Figma·Miro처럼 파일 이름은 왼쪽 위), 누르면 왼쪽 판 「칠판」 칸(새 칠판·최근 칠판·파일) */}
-        {/* 왼쪽 판이 위 막대 끝까지(2026-11-09 시안 C — 사용자: 판 끝선이 「저장·내보내기」에 걸쳐 있었음): 이름 칸 폭 = 판 폭, 도구는 판 끝선 오른쪽부터, 이름 밑 가로줄 없앰 */}
-        {headed && <><span aria-hidden data-testid="dock-head-cover" style={{ position: 'absolute', left: 0, bottom: -1, width: dockRight - 1, height: 1, background: C.bar }} /><span aria-hidden data-testid="dock-head-line" style={{ position: 'absolute', left: dockRight - 1, top: 0, bottom: 0, width: 1, background: C.line }} /></>}
-        <button data-testid="board-title" onClick={() => setDockTab(dockTab === 'board' ? '' : 'board')} title={server ? `칠판 「${DOC_NAME}」 — 누르면 새 칠판·최근 칠판·파일` : '새 칠판·최근 칠판·파일'}
-          style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, ...(headed ? { boxSizing: 'border-box', flex: 'none', width: dockRight - 14, marginRight: 6 } : { maxWidth: narrow ? 110 : 180 }), padding: '4px 8px', borderRadius: 6, font: "700 14px 'Pretendard', sans-serif", color: C.ink, background: titleBg }}
-          onMouseEnter={e => { if (dockTab !== 'board' || headed) e.currentTarget.style.background = HOVER }} onMouseLeave={e => { e.currentTarget.style.background = titleBg }}>
-          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{live ? title : 'Magic Board'}</span><span aria-hidden style={{ fontSize: 10, color: C.muted }}>▾</span></button>
-        {live && team && <span data-testid="team-badge" title={team === '관리자' ? '관리자 — 모든 팀의 칠판이 보여요' : `「${team}」 칠판만 보여요 · KAIROS 크레딧도 ${team} 것`}
-          style={{ flexShrink: 0, marginLeft: -4, padding: '2px 8px', borderRadius: 10, background: C.group, color: C.muted, font: "600 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap' }}>{team}</span>}
-        <Group>
- {/* 칠판·열기·내려받기는 왼쪽 판 「칠판」 칸으로(2026-10-23 사용자) */}
-          <Btn small icon="save" label="저장" onClick={server ? saveServer : saveFile} title={server ? `서버 「${DOC_NAME}」에 저장 (Ctrl+S)` : '.ecad로 내려받기 (Ctrl+S)'} />
-          <div data-pop="export" style={{ position: 'relative' }}>
-            <Btn small icon="pdf" label="내보내기" on={exportOpen} onClick={() => setExportOpen(o => !o)} title="PDF·PNG·SVG·HTML로 내보내기 — 전체 또는 고른 것 (Ctrl+P)" />
-            {exportOpen && <ExportForm hasSel={!!ed.current?.getSel().length} selFrames={ed.current?.selFrames() || 0} frameCount={model.items.filter(it => it.type === 'frame' || (it.type === 'titleblock' && it.plain)).length} items={model.items}
-            onPreview={o => ed.current?.exportPages(o) ?? Promise.resolve({ error: '' })} onReorder={ids => ed.current?.reorderFrames(ids)} onClose={() => setExportOpen(false)} onExport={async o => { const ok = await ed.current?.exportDoc({ ...o, name: DOC_NAME || 'magic-board' }); if (ok) setExportOpen(false) }} />}
-          </div>
-        </Group>
-        <Group>
-          <Btn small icon="undo" label="되돌리기" onClick={() => ed.current?.undo()} title="되돌리기 (Ctrl+Z)" />
-          <Btn small icon="redo" label="다시" onClick={() => ed.current?.redo()} title="다시 실행 (Ctrl+Y)" />
-        </Group>
-        <Group>{TOOLS.map(([k, icon, label, key]) => <Btn key={k} small={SMALL_TOOLS.has(k)} icon={icon} label={label} on={tool === k} onClick={() => setTool(k)} onDown={k === 'select' || k === 'pen' ? undefined : e => toolDown(e, k)} title={`${label} (${key})${k === 'select' || k === 'pen' ? '' : ' — 칠판으로 끌면 그 자리에'}`} />)}
-          <Btn small icon="keep" label="유지" on={keepTool} onClick={toggleKeep} title="도구 유지 (Q) — 켜면 그린 뒤에도 그 도구가 그대로(도구를 바꿔도), Esc·「선택」으로 멈춤" /></Group>
-        {/* 순서 = 프레임 · 메모 · 회의 · 웹 · 표 · 발표(2026-11-04 사용자 — 만들고 → 마지막에 발표) */}
-        <Group>
-          <Btn icon="frame" label="프레임" on={tool === 'frame'} onClick={() => setTool(t => (t === 'frame' ? 'select' : 'frame'))} onDown={e => toolDown(e, 'frame')} title="프레임 — 버튼을 칠판으로 끌면 그 자리에 16:9 · 칠판에서 끌어서 영역을 감싸면 그 안이 출력 한 쪽(번호 순서). 클릭만 = 16:9, 우클릭 「프레임으로 감싸기」도" />
-          <Btn icon="memo" label="메모" onClick={() => ed.current?.insertMemo()} onDown={e => toolDown(e, 'memo')} title="메모 — 칠판으로 끌면 그 자리에 · 줄마다 제목·목록·할 일·코드·인용(`# `·`- `·`[] `·`> ` 입력), 체크 상자는 칠판에서 바로" />
-          {/* 「회의」 = 칠판에 회의록을 넣는 도구(2026-10-23 사용자 — 전엔 오른쪽 KAIROS 옆). 폭 고정 = 이름이 회의 → 끝내기 → 정리하기로 바뀌어도 오른쪽 버튼이 안 밀림 */}
-          <div style={{ display: 'flex', justifyContent: 'center', minWidth: narrow ? undefined : 64, gridRow: 'span 2' }}>
-          <Btn icon="mic" label={meetSt === 'saved' ? '정리하기' : meetSt ? '끝내기' : '회의'} on={!!meetSt} disabled={meetSt === 'start' || meetSt === 'stopping'}
-            onClick={() => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : meetSt ? ed.current?.meetStop() : ed.current?.meetStart())}
-            title={meetSt ? '회의 끝내기 — 받아 적은 글을 요약·결정·할 일로 정리해 칠판에(KAIROS)' : '회의 받아 적기 — 마이크로 말한 사람별로 실시간 받아 적고, 끝내면 회의록으로 정리(KAIROS)'} /></div>
-          <div data-pop="web" style={ANCHOR}>
-          <Btn small icon="web" label="웹" on={webOpen} onClick={() => { setWebAt(null); setWebOpen(o => !o) }} onDown={e => toolDown(e, 'web')} title="웹 카드 — 칠판으로 끌면 그 자리에 · 유튜브·웹페이지 주소를 칠판에(칠판에 주소를 Ctrl+V 해도 돼요)" />
-          {webOpen && <WebForm onInsert={u => { const url = /^https?:\/\//i.test(u) ? u : 'https://' + u; setWebOpen(false); ed.current?.insertWeb(url, webAt || 'near') }} onClose={() => setWebOpen(false)} />}
-        </div><div data-pop="table" style={ANCHOR}>
-          <Btn small icon="table" label="표" on={tableOpen} onClick={() => setTableOpen(o => !o)} onDown={e => toolDown(e, 'table')} title="표 넣기 — 행·열을 고르면 화면 가운데(겹치면 가까운 빈자리) · 칠판으로 끌면 그 자리에(마지막 행·열)" />
-          {tableOpen && <TableForm onInsert={(r, c, h) => { setTableOpen(false); lastTable.current = [r, c, h]; ed.current?.insertTable(r, c, h) }} onLegend={() => { setTableOpen(false); ed.current?.insertLegend() }} onClose={() => setTableOpen(false)} />}
-        </div>
-          <Btn icon="present" label="발표" onClick={() => ed.current?.startPresent()} title="발표 — 프레임 순서대로 한 장씩 전체 화면(고른 프레임부터) · → 다음 · ← 이전 · M 이동/바로 · Esc 끝" />
-        </Group>
-        <Group>
-          <Btn small icon="zoom_fit" label={full ? '창으로' : '전체 화면'} on={full} onClick={toggleFull} title="전체 화면 ⇄ 창 (F11과 같음) — 다 보기는 Z 또는 미니맵의 %" />
-          <Btn small icon="theme" label={dark ? '밝게' : '어둡게'} onClick={toggleDark} title="밝은 화면 / 어두운 화면 (D)" />   {/* 보기 묶음으로(2026-10-23 사용자 — 오른쪽 구석은 KAIROS 몫) */}
-        </Group>
-        {!narrow && !server && <SampleSelect onPick={openSample} />}
-        <div style={{ marginLeft: 'auto' }} />
-        <button data-testid="cmd-open" data-cmd-btn aria-label="명령 검색" title="명령 검색 (Ctrl+K) — 모든 기능을 이름·초성으로" onClick={toggleCmd} {...hoverBg} style={{ all: 'unset', cursor: 'pointer', flexShrink: 0, boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 6, height: 28, padding: '0 8px', border: `1px solid ${C.line}`, borderRadius: 7, color: C.muted, font: "400 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap' }}>
-          <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5 L21 21" /></svg>{!narrow && <>명령 검색<span style={{ marginLeft: 14, fontSize: 11 }}>Ctrl+K</span></>}</button>   {/* 오른쪽 이름·배율 뺌(2026-10-27 사용자 — 이름은 왼쪽 끝, 배율은 미니맵 %와 겹침) */}
-        <div data-pop="share" style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, opacity: live ? 1 : 0.4 }}>   {/* 서버가 없으면 숨기지 않고 흐리게 — 안 보이면 왜 없는지 몰랐음(2026-10-20 사용자) */}
-          {live && <Faces list={crowd.map(p => ({ ...p, color: personColor(p.id) }))} onClick={() => setShareOpen(o => !o)} />}
-          <Btn icon="share" label="공유" on={shareOpen} onClick={() => (server ? setShareOpen(o => !o) : setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 공유·KAIROS를 쓸 수 있어요'))} title={server ? '공유 — 같이 고치기·보기 전용 링크(로그인 없이 보기·발표만, 큰 TV 발표용)' : '서버에 연결 안 됨 — python web/server.py를 켜면 공유할 수 있어요'} />
-          {server && shareOpen && <ShareForm people={crowd} title={title} onClose={() => setShareOpen(false)} />}
-        </div>
-        <Btn special icon="generate" label="KAIROS" on={chatOpen} onClick={() => setChatOpen(o => !o)} title="KAIROS 대화창 열기/닫기 — 답을 칠판에 카드로 붙여요" />   {/* 오른쪽 구석 = 대화창 바로 위(2026-10-23 사용자) */}
-        <input ref={file} type="file" accept=".ecad,application/json" hidden onChange={async e => {
+      <input ref={file} type="file" accept=".ecad,application/json" hidden onChange={async e => {
           const f = e.target.files?.[0]; e.target.value = ''; if (!f) return
           try { open(parseDoc(await f.text()), f.name) } catch (err) { setStatus('열기 실패: ' + err.message) }
         }} />
-      </div>
-      </Narrow.Provider>
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>   {/* 왼쪽 판 + 작업공간 + 오른쪽 KAIROS 대화창(좁은 창은 대화창만 칠판 위에 뜸) */}
       {!phone && <Dock tab={dockTab} setTab={setDockTab} width={dockW} setWidth={setDockW} help={helpOpen} onHelp={() => setHelpOpen(o => !o)} mini={w => <Minimap docked width={w} items={mapItems} cam={cam} size={size} setCam={setCam} dark={dark} />} panes={{
         board: <BoardForm docked open={openServer} myId={sync.current.id} me={me} onDownload={saveFile} keepDays={keepDays} onClose={() => {}}>
@@ -969,31 +916,85 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
         shape: <Palette docked lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} onPlace={k => ed.current?.placeShape(k)} mine={{ mine: mySyms, api: myApi }} say={setStatus} />,
         frame: orderedFrames(model.items).length ? <Frames docked items={model.items} sel={selKey ? selKey.split(',') : []} onReorder={ids => ed.current?.reorderFrames(ids)} onRename={(id, n) => ed.current?.renameFrame(id, n)} onGo={id => ed.current?.goFrame(id)} onPresent={id => ed.current?.startPresent(id)}
           onExport={id => { ed.current?.setSel([id]); setTimeout(() => setExportOpen(true)) /* 내보내기 창은 열 때 고른 것을 읽음 — 고른 것이 바뀐 다음에 열기 */ }} onRemove={id => ed.current?.removeFrame(id)} onSkip={(id, s) => ed.current?.skipFrames([id], s)} dark={dark} />
-          : <div data-testid="frames-empty" style={{ padding: '10px 12px', color: C.muted, fontSize: 12, lineHeight: 1.6 }}><div style={{ font: "700 15px 'Pretendard', sans-serif", color: C.ink, marginBottom: 6 }}>프레임</div>아직 없어요 — 위 막대 「프레임」을 눌러 칠판에서 영역을 감싸면 여기에 쌓여요(순서 = 출력·발표 순서).</div>,
+          : <div data-testid="frames-empty" style={{ padding: '10px 12px', color: C.muted, fontSize: 12, lineHeight: 1.6 }}><div style={{ font: "700 15px 'Pretendard', sans-serif", color: C.ink, marginBottom: 6 }}>프레임</div>아직 없어요 — 도구 줄 「프레임」을 눌러 칠판에서 영역을 감싸면 여기에 쌓여요(순서 = 출력·발표 순서).</div>,
         layer: <Layers docked model={model} setModel={setModel} active={activeLayer} setActive={setActiveLayer} onChanged={onCommit} dark={dark} /> }} />}
       {/* --mb-right-inset = 뜬 대화창 폭 — 우상 속성·우하 미니맵 카드가 그만큼 왼쪽으로 비킴 */}
       <div ref={box} onDragOver={e => { const ts = [...(e.dataTransfer?.types || [])]; if (ts.includes('Files') || ts.includes('text/uri-list')) e.preventDefault() }}
         onDrop={e => { const fs = [...(e.dataTransfer?.files || [])]; e.preventDefault()   // 끌어 놓기 — 파일(그림·녹음 = 회의록) 또는 주소(대화창 그림 후보·웹 주소 = 웹 카드). 막지 않으면 브라우저가 그 파일·주소로 떠남
           if (fs.length) return ed.current?.dropFiles(fs, e)
           const u = (e.dataTransfer?.getData('text/uri-list') || '').split(/\r?\n/).find(x => x && !x.startsWith('#')); if (u) ed.current?.dropUrl(u, e.dataTransfer.getData('text/x-mb-caption') || '', e) }}
-        id="mb-main" role="main" aria-label="칠판" tabIndex={-1} style={{ flex: 1, position: 'relative', overflow: 'hidden', outline: 'none', '--mb-right-inset': narrow && chatOpen ? `${chatW + 12}px` : '0px' }}>
+        id="mb-main" role="main" aria-label="칠판" tabIndex={-1} style={{ flex: 1, position: 'relative', overflow: 'hidden', outline: 'none', '--mb-right-inset': narrow && chatOpen ? `${chatW + 12}px` : '0px', '--mb-top': !phone && toolsAt.top > 12 ? '108px' : '60px' }}>   {/* --mb-top = 섬 아래 첫 자리(도구 줄이 둘째 줄이면 그 아래) */}
         <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} phone={phone} keepTool={keepTool} onKeepTool={toggleKeep} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onAddSymbol={(items, name, folder) => setSymAdd({ items, name, folder })} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onBubble={phone ? undefined : openBubble} onOpenDoc={phone ? phoneDoc : setDocView} onAsk={(text, kind, extra) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind, extra }) }} />
+        {!phone && <>   {/* 떠 있는 섬(2026-11-14 B1): 왼쪽 위 메뉴·이름 / 위 가운데 도구 / 오른쪽 위 사람·공유·KAIROS / 왼쪽 아래 되돌리기 */}
+          <div ref={islL} data-testid="isl-board" style={{ ...ISL, left: 12, top: 12, maxWidth: 'calc(100% - 24px - var(--mb-right-inset))' }}>
+            <div data-pop="export" style={{ position: 'relative', display: 'flex' }}>
+              <IBtn icon="menu" label="메뉴" testid="main-menu" pop open={!!mainMenu} title="메뉴 — 저장·내보내기·명령 검색·전체 화면·밝기·도움말" onClick={e => { const at = menuBelow(e); setMainMenu(m => (m ? null : at)) }} />
+              {exportOpen && <ExportForm hasSel={!!ed.current?.getSel().length} selFrames={ed.current?.selFrames() || 0} frameCount={model.items.filter(it => it.type === 'frame' || (it.type === 'titleblock' && it.plain)).length} items={model.items}
+                onPreview={o => ed.current?.exportPages(o) ?? Promise.resolve({ error: '' })} onReorder={ids => ed.current?.reorderFrames(ids)} onClose={() => setExportOpen(false)} onExport={async o => { const ok = await ed.current?.exportDoc({ ...o, name: DOC_NAME || 'magic-board' }); if (ok) setExportOpen(false) }} />}
+            </div>
+            <button data-testid="board-title" onClick={() => setDockTab(dockTab === 'board' ? '' : 'board')} title={server ? `칠판 「${DOC_NAME}」 — 누르면 내 칠판·새 칠판·파일` : '새 칠판·최근 칠판·파일'} {...hoverBg}
+              style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, height: 36, padding: '0 8px', borderRadius: 6, font: "700 14px 'Pretendard', sans-serif", color: C.ink, background: dockTab === 'board' ? 'var(--mb-on)' : 'transparent' }}>
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{live ? title : 'Magic Board'}</span><span aria-hidden style={{ fontSize: 10, color: C.muted }}>▾</span></button>
+            {live && team && <span data-testid="team-badge" title={team === '관리자' ? '관리자 — 모든 팀의 칠판이 보여요' : `「${team}」 칠판만 보여요 · KAIROS 크레딧도 ${team} 것`}
+              style={{ flexShrink: 0, margin: '0 4px', padding: '2px 8px', borderRadius: 10, background: C.group, color: C.muted, font: "600 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap' }}>{team}</span>}
+            {!server && <SampleSelect onPick={openSample} />}
+          </div>
+          <div ref={islT} data-testid="isl-tools" role="toolbar" aria-label="도구" style={{ ...ISL, ...toolsAt }}>
+            <IBtn icon="keep" label="유지" k="Q" on={keepTool} onClick={toggleKeep} title="도구 유지 (Q) — 켜면 그린 뒤에도 그 도구가 그대로(도구를 바꿔도), Esc·「선택」으로 멈춤" />
+            <ISep />
+            {TOOLS.filter(([k]) => !MORE_TOOLS.has(k)).map(([k, icon, label, key]) => <IBtn key={k} icon={icon} label={label} k={key} on={tool === k} onClick={() => setTool(k)} onDown={k === 'select' || k === 'pen' ? undefined : e => toolDown(e, k)} title={`${label} (${key})${k === 'select' || k === 'pen' ? '' : ' — 칠판으로 끌면 그 자리에'}`} />)}
+            <IBtn icon="frame" label="프레임" on={tool === 'frame'} onClick={() => setTool(t => (t === 'frame' ? 'select' : 'frame'))} onDown={e => toolDown(e, 'frame')} title="프레임 — 버튼을 칠판으로 끌면 그 자리에 16:9 · 칠판에서 끌어서 영역을 감싸면 그 안이 출력 한 쪽(번호 순서). 클릭만 = 16:9, 우클릭 「프레임으로 감싸기」도" />
+            <IBtn icon="memo" label="메모" onClick={() => ed.current?.insertMemo()} onDown={e => toolDown(e, 'memo')} title="메모 — 칠판으로 끌면 그 자리에 · 줄마다 제목·목록·할 일·코드·인용(`# `·`- `·`[] `·`> ` 입력), 체크 상자는 칠판에서 바로" />
+            <ISep />
+            <IBtn icon="more" label="더 보기" testid="tools-more" pop open={!!moreMenu || webOpen || tableOpen} on={MORE_TOOLS.has(tool)} title="더 보기 — 다각형·번호·웹 카드·표·회의·발표" onClick={e => { const at = menuBelow(e); setMoreMenu(m => (m ? null : at)) }} />
+            <div data-pop="web" style={{ position: 'relative' }}>{webOpen && <WebForm onInsert={u => { const url = /^https?:\/\//i.test(u) ? u : 'https://' + u; setWebOpen(false); ed.current?.insertWeb(url, webAt || 'near') }} onClose={() => setWebOpen(false)} />}</div>
+            <div data-pop="table" style={{ position: 'relative' }}>{tableOpen && <TableForm onInsert={(r, c, h) => { setTableOpen(false); lastTable.current = [r, c, h]; ed.current?.insertTable(r, c, h) }} onLegend={() => { setTableOpen(false); ed.current?.insertLegend() }} onClose={() => setTableOpen(false)} />}</div>
+            {meetSt && <><ISep /><IBtn icon="mic" wide special label={meetSt === 'saved' ? '정리하기' : '끝내기'} disabled={meetSt === 'start' || meetSt === 'stopping'} onClick={() => ed.current?.meetStop()} title="회의 끝내기 — 받아 적은 글을 요약·결정·할 일로 정리해 칠판에(KAIROS)" /></>}   {/* 회의 중엔 끝낼 길이 늘 보이게 — 시작은 ⋯ 안 */}
+          </div>
+          <div ref={islR} data-pop="share" data-testid="isl-right" style={{ position: 'absolute', zIndex: 18, right: 'calc(12px + var(--mb-right-inset))', top: 12, display: 'flex', alignItems: 'center', gap: 8, opacity: live ? 1 : 0.4 }}>   {/* 서버가 없으면 숨기지 않고 흐리게 — 안 보이면 왜 없는지 몰랐음(2026-10-20 사용자) */}
+            {live && <Faces list={crowd.map(p => ({ ...p, color: personColor(p.id) }))} onClick={() => setShareOpen(o => !o)} />}
+            <IBtn icon="share" label="공유" wide special open={shareOpen} onClick={() => (server ? setShareOpen(o => !o) : setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 공유·KAIROS를 쓸 수 있어요'))} title={server ? '공유 — 같이 고치기·보기 전용 링크(로그인 없이 보기·발표만, 큰 TV 발표용)' : '서버에 연결 안 됨 — python web/server.py를 켜면 공유할 수 있어요'} />
+            {server && shareOpen && <ShareForm people={crowd} title={title} onClose={() => setShareOpen(false)} />}
+            <div style={{ ...ISL, position: 'static', padding: 0 }}><IBtn icon="generate" label="KAIROS" wide on={chatOpen} onClick={() => setChatOpen(o => !o)} title="KAIROS 대화창 열기/닫기 — 답을 칠판에 카드로 붙여요" /></div>
+          </div>
+          <div data-testid="isl-undo" style={{ ...ISL, left: 12, bottom: 12 }}>
+            <IBtn icon="undo" label="되돌리기" onClick={() => ed.current?.undo()} title="되돌리기 (Ctrl+Z)" />
+            <IBtn icon="redo" label="다시" onClick={() => ed.current?.redo()} title="다시 실행 (Ctrl+Y)" />
+          </div>
+          {mainMenu && <FloatMenu testid="main-menu-list" at={mainMenu} onClose={() => setMainMenu(null)} entries={[
+            ['저장', 'Ctrl+S', () => { setMainMenu(null); (server ? saveServer : saveFile)() }],
+            ['내보내기…', 'Ctrl+P', () => { setMainMenu(null); setExportOpen(true) }],
+            '-',
+            ['명령 검색', 'Ctrl+K', () => { setMainMenu(null); toggleCmd() }],
+            [full ? '창으로' : '전체 화면', 'F11', () => { setMainMenu(null); toggleFull() }],
+            [dark ? '밝게' : '어둡게', 'D', () => { setMainMenu(null); toggleDark() }],
+            '-',
+            ['글쇠 도움말', 'F1', () => { setMainMenu(null); setHelpOpen(true) }]]} />}
+          {moreMenu && <FloatMenu testid="tools-more-list" at={moreMenu} onClose={() => setMoreMenu(null)} entries={[
+            ...TOOLS.filter(([k]) => MORE_TOOLS.has(k)).map(([k, , label, key]) => [label, key, () => { setMoreMenu(null); setTool(k) }]),
+            '-',
+            ['웹 카드 넣기…', '', () => { setMoreMenu(null); setWebAt(null); setWebOpen(true) }],
+            ['표 넣기…', '', () => { setMoreMenu(null); setTableOpen(true) }],
+            '-',
+            ['회의 받아 적기', '', () => { setMoreMenu(null); if (!server) setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요'); else if (!meetSt) ed.current?.meetStart() }],
+            ['발표', '', () => { setMoreMenu(null); document.querySelector('[data-testid=tools-more]')?.focus({ preventScroll: true }); ed.current?.startPresent() }]]} />}   {/* 발표가 끝나면 초점이 ⋯ 단추로(메뉴 줄은 사라짐) */}
+        </>}
         {!phone && Object.entries(threads).filter(([id, t]) => t?.length && !bubbles.includes(id)).map(([id, t]) => { const info = ed.current?.bubbleInfo(id)
           return info && <BubbleBadge key={'bb' + id} id={id} info={info} cam={cam} count={t.filter(m => m.role === 'user').length} onOpen={() => openBubble(id)} /> })}
         {docView && (it => it && (dv => (phone ? createPortal(dv, document.body) : dv))(<DocView key={'dv' + it._id} it={it} size={size} phone={phone} readOnly={typeof docView !== 'string'} threads={threads} onThread={setThread} onClose={() => setDocView('')} onStatus={setStatus}
           onHtml={(html, label) => !!ed.current?.setFields(it._id, { html }, label || '블록 고침')} onLives={lives => !!ed.current?.setFields(it._id, { lives }, '움직이는 카드')} onPrint={() => ed.current?.printDoc(it)} onHwpx={() => ed.current?.saveHwpx(it)} />))(typeof docView === 'string' ? model.items.find(x => x._id === docView) : docView)}
         {!phone && bubbles.map(id => <Bubble key={'b' + id} id={id} info={ed.current?.bubbleInfo(id)} cam={cam} size={size} thread={threads[id] || []} first={bubbleFirst[id]} onThread={msgs => setThread(id, msgs)}
           onClose={() => setBubbles(bs => bs.filter(x => x !== id))} onEdit={md => ed.current?.bubbleEdit(id, md)} onFields={patch => ed.current?.setFields(id, patch)} onImage={(data, aspect) => ed.current?.setImage(id, data, aspect)} onStatus={setStatus} />)}
-        {offline && !gone && <div data-testid="offline-banner" role="alert" style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 25, display: 'flex', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', gap: 10, maxWidth: 'calc(100% - 16px)', boxSizing: 'border-box', padding: '8px 12px', borderRadius: 10, background: DANGER, color: '#fff', font: "600 13px 'Pretendard', sans-serif", boxShadow: 'var(--mb-shadow)' }}>
+        {offline && !gone && <div data-testid="offline-banner" role="alert" style={{ position: 'absolute', top: 'var(--mb-top, 60px)', left: '50%', transform: 'translateX(-50%)', zIndex: 25, display: 'flex', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', gap: 10, maxWidth: 'calc(100% - 16px)', boxSizing: 'border-box', padding: '8px 12px', borderRadius: 10, background: DANGER, color: '#fff', font: "600 13px 'Pretendard', sans-serif", boxShadow: 'var(--mb-shadow)' }}>
           저장 안 됨 — 서버에 다시 연결되면 저절로 보내요
           <button onClick={() => flushRef.current?.()} style={{ all: 'unset', cursor: 'pointer', padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,.22)' }}>지금 다시 보내기</button>
           <button onClick={saveFile} style={{ all: 'unset', cursor: 'pointer', padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,.22)' }}>내려받기</button></div>}
-        {gone && <div data-testid="gone-banner" style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 25, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 10, background: DANGER, color: '#fff', font: "600 13px 'Pretendard', sans-serif", boxShadow: 'var(--mb-shadow)', flexWrap: 'wrap', maxWidth: 'calc(100% - 16px)' }}>
+        {gone && <div data-testid="gone-banner" style={{ position: 'absolute', top: 'var(--mb-top, 60px)', left: '50%', transform: 'translateX(-50%)', zIndex: 25, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 10, background: DANGER, color: '#fff', font: "600 13px 'Pretendard', sans-serif", boxShadow: 'var(--mb-shadow)', flexWrap: 'wrap', maxWidth: 'calc(100% - 16px)' }}>
           이 칠판은 다른 창에서 지워졌어요 — 고친 것은 저장되지 않아요
           <button onClick={saveFile} style={{ all: 'unset', cursor: 'pointer', padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,.22)' }}>내려받기</button>
           <button onClick={() => { forgetBoard(DOC_NAME); location.href = location.pathname }} style={{ all: 'unset', cursor: 'pointer', padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,.22)' }}>쓰던 칠판으로</button></div>}   {/* 2026-10-28 칠판 지우기 — 열어 둔 창 */}
         {/* 예시 칠판 띠(2026-10-28 사용자 — 만져 보다 망가지면 한 번에 처음으로): 이 사람 사본만 되돌림(칠판·대화·예시 심볼), 되돌리면 고친 것이 사라져 한 번 물음 */}
-        {example && !gone && !exHide && !phone && <div data-testid="example-band" style={{ position: 'absolute', top: 10, left: 'calc((100% - var(--mb-right-inset)) / 2)', transform: 'translateX(-50%)', zIndex: 19, display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px 6px 14px', borderRadius: 10,
+        {example && !gone && !exHide && !phone && <div data-testid="example-band" style={{ position: 'absolute', top: 'var(--mb-top, 60px)', left: 'calc((100% - var(--mb-right-inset)) / 2)', transform: 'translateX(-50%)', zIndex: 19, display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px 6px 14px', borderRadius: 10,
           background: C.card, border: `1px solid ${C.line}`, color: C.ink, font: "400 13px 'Pretendard', sans-serif", boxShadow: 'var(--mb-shadow)', whiteSpace: 'nowrap', flexWrap: 'wrap', justifyContent: 'center', rowGap: 6, maxWidth: 'calc(100% - var(--mb-right-inset) - 16px)', boxSizing: 'border-box' }}>   {/* 좁으면 단추가 다음 줄로(2026-11-10 1단계 사용자 고름 — 640에서 잘렸음) */}
           <span style={{ whiteSpace: 'normal' }}><b style={{ fontWeight: 700 }}>예시 칠판</b> — 마음껏 만져 보세요{narrow ? '' : '. 망가져도 한 번에 되돌려요'}</span>   {/* 띠 = 칠판 보이는 칸 가운데(떠 있는 대화창 빼고)·위 막대 팝업(20) 밑, 좁은 창은 짧게 — 속성 카드·공유 창·대화창 머리를 덮었음(2026-11-03 UX 검토) */}
           {/* 차례로 보기(2026-11-03) — 처음 온 사람은 전체 보기라 노트북에서 글씨가 안 읽힘 → 1번 프레임부터 발표처럼. 띠의 대표 행동이라 코랄은 이쪽(규칙 A1), 되돌리기는 회색 테두리(규칙 ⑧ 따로 보이는 단추는 그대로) */}
@@ -1011,7 +1012,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
         <span data-testid="save-note" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{saveNote}</span>
         {status && <div data-testid="status-toast" role="status" title={status} style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 6, maxWidth: 'min(640px, max(240px, calc(100% - 480px)))', padding: '6px 14px', borderRadius: 12, whiteSpace: 'normal', textAlign: 'center',
           background: 'rgba(24,24,27,.86)', color: '#fff', font: "400 13px 'Pretendard', sans-serif", pointerEvents: 'none', opacity: toastOn ? 1 : 0, transition: 'opacity .3s' }}>{status}</div>}
-        {aiBusy && <div data-testid="ai-busy" role="status" style={{ position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 6, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 99,
+        {aiBusy && <div data-testid="ai-busy" role="status" style={{ position: 'absolute', top: 'var(--mb-top, 60px)', left: '50%', transform: 'translateX(-50%)', zIndex: 6, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 99,
           background: 'var(--mb-card)', border: '1px solid var(--mb-line)', boxShadow: '0 2px 8px rgba(0,0,0,.12)', font: "600 13px 'Pretendard', sans-serif", color: 'var(--mb-ink)', pointerEvents: 'none', whiteSpace: 'nowrap' }}><Spinner />{aiBusy}</div>}   {/* 정돈·정리 문서 중 — 칠판만 보고 있어도 도는 게 보이게(2026-10-20 사용자) */}
         {cmdOpen > 0 && !phone && <CommandBar key={cmdOpen} getCommands={commandList} onClose={() => setCmdOpen(0)} />}
         {findOpen > 0 && <FindBar key={findOpen} items={model.items} server={server} onMarks={setMarks} onGo={id => ed.current?.showItem(id)} onClose={() => setFindOpen(0)} />}
