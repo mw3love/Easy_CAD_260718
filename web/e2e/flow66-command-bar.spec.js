@@ -14,7 +14,7 @@ test('열고 닫기 — Ctrl+K · 다시 Ctrl+K · Esc · 바깥 누르기, 입�
   await page.keyboard.press('Control+k'); await expect(bar(page)).toHaveCount(0)
   await page.keyboard.press('Control+k'); await page.keyboard.press('Escape'); await expect(bar(page)).toHaveCount(0)
   await page.keyboard.press('Control+k'); await clickScene(page, 700, 500); await expect(bar(page)).toHaveCount(0)
-  await page.getByPlaceholder('도형·심볼 검색 (이름·초성)').click()
+  await page.getByPlaceholder('심볼 찾기 (이름·초성)').click()
   await page.keyboard.press('Control+k'); await expect(bar(page)).toBeVisible(); await page.keyboard.press('Escape')
   await page.keyboard.press('F1'); await expect(page.getByTestId('help-card')).toContainText('Ctrl+K'); await page.keyboard.press('Escape')
 })

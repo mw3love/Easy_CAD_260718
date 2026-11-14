@@ -93,9 +93,11 @@ test('발표 = 진짜 창 — 열면 초점이 발표로, 끝나면 연 단추�
 test('◀ ▶ 자리 = 장을 넘겨도 그대로(장 단추 폭 고정 · 전체 이름은 풍선)', async ({ page }) => {
   await present(page, 'pres-fix')
   const bar = page.getByTestId('present-bar'), prev = bar.getByRole('button', { name: '이전 장' }), next = bar.getByRole('button', { name: '다음 장' })
-  const a = [await prev.boundingBox(), await next.boundingBox()]
+  const settle = async () => { let p = [await prev.boundingBox(), await next.boundingBox()]   // 막대가 자리 잡을 때까지(전체 시험 중 무거우면 들어오는 움직임 도중에 쟀음 — 2026-11-14)
+    for (let i = 0; i < 20; i++) { await page.waitForTimeout(100); const q = [await prev.boundingBox(), await next.boundingBox()]; if (Math.abs(q[0].x - p[0].x) < 0.5 && Math.abs(q[1].x - p[1].x) < 0.5) return q; p = q } return p }
+  const a = await settle()
   await page.keyboard.press('ArrowRight'); await expect(bar).toContainText('2 / 3')
-  const b = [await prev.boundingBox(), await next.boundingBox()]
+  const b = await settle()
   expect(b[0].x).toBeCloseTo(a[0].x, 0); expect(b[1].x).toBeCloseTo(a[1].x, 0)
   await expect(bar.getByTestId('present-slide')).toHaveAttribute('title', /아주 긴 이름의 두 번째 장 — 송신소에서 전파가 나가기까지 거치는 길/)
   expect(await bar.getByTestId('present-slide').evaluate(el => getComputedStyle(el).fontVariantNumeric)).toContain('tabular-nums')

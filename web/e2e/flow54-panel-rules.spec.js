@@ -12,7 +12,7 @@ test('도형 판 — 메뉴 닫힘 · 이름 칸 저장·취소 · 빈 폴더는
   await expect(mine.getByRole('button', { name: '카메라' })).toBeVisible()
   // ⋯ → 메뉴, 판 안(검색 칸) 누르기 = 닫힘(옛 자체 메뉴는 안 닫혔음)
   await sec(page, '방송').getByTestId('folder-menu').click(); await expect(menu).toBeVisible()
-  await page.getByPlaceholder('도형·심볼 검색 (이름·초성)').click(); await expect(menu).toHaveCount(0)
+  await page.getByPlaceholder('심볼 찾기 (이름·초성)').click(); await expect(menu).toHaveCount(0)
   // 같은 ⋯ 다시 누르기 = 닫기
   await sec(page, '방송').getByTestId('folder-menu').click(); await expect(menu).toBeVisible()
   await sec(page, '방송').getByTestId('folder-menu').click(); await expect(menu).toHaveCount(0)
@@ -32,7 +32,7 @@ test('도형 판 — 메뉴 닫힘 · 이름 칸 저장·취소 · 빈 폴더는
   await expect(sec(page, '빈칸')).toBeVisible(); await expect(sec(page, '바뀐칸')).toHaveCount(0)
   // 이름 바꾸기 — 바깥 누르기 = 저장(옛 칸은 바깥 = 취소라 고친 글이 사라졌음)
   await sec(page, '빈칸').getByTestId('folder-menu').click(); await menu.getByRole('menuitem', { name: '이름 바꾸기' }).click()
-  await page.getByTestId('mine-pop').locator('input').fill('바뀐칸'); await page.getByPlaceholder('도형·심볼 검색 (이름·초성)').click()
+  await page.getByTestId('mine-pop').locator('input').fill('바뀐칸'); await page.getByPlaceholder('심볼 찾기 (이름·초성)').click()
   await expect(sec(page, '바뀐칸')).toBeVisible()
   // 빈 폴더 지우기 = 묻지 않음(잃을 것 없음)
   await sec(page, '바뀐칸').getByTestId('folder-menu').click(); await menu.getByRole('menuitem', { name: '지우기', exact: true }).click()

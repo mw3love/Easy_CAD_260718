@@ -1,4 +1,4 @@
-// 좌상 「도형·심볼」 카드 — 데스크톱 첫 화면 좌상 카드(`host_ui` 팔레트): ★ 즐겨찾기 · 기본 도형 8종 · 내 심볼 폴더들.
+// 「심볼」 판(2026-11-14 B1 3단계 — 옛 좌상 「도형·심볼」 카드): 찾기 · 최근 쓴 것 · 묶음(함께 쓰는·내 묶음) · 아래 「＋ 고른 것 담기」·「묶음 더 찾기」. 기본 도형 8종은 도구 줄 「도형」 펼침(`Cell`·`shapeIcon`을 main이 씀).
 // 함께 쓰는 심볼은 데스크톱과 같은 파일(`symbol_library/symbol_library.json`, 서버 `/api/symbols`)을 읽기만 한다(등록·폴더 고치기는 데스크톱에서).
 // 「내 심볼 — 이 브라우저」(2026-10-27, `mysym.js`)는 여기서 폴더 만들기·이름 바꾸기·지우기·파일로 저장·불러오기, 넣기는 칠판 우클릭 「내 심볼에 추가」.
 // 칸 제목 줄 색 = 데스크톱 규칙(2026-10-12): 사용자가 고른 색만, 안 고른 폴더는 회색·기본 도형은 연한 파랑. 버튼 = 그림 + 짧은 이름.
@@ -15,7 +15,6 @@ import { Confirm, btnHead, menuBelow, btnSecondary } from './ui.jsx'
 
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', on: 'var(--mb-accent)' }
 export const BASIC = [['rect', '사각형'], ['ellipse', '원'], ['sym:triangle', '삼각형'], ['sym:decision', '판단'], ['sym:terminal', '시작/끝'], ['sym:data', '입출력'], ['sym:prep', '준비'], ['sym:database', '저장소']]
-const FOLDER_GRAY = '#9e9e9e', BASIC_BLUE = '#7fbdff'
 // 초성(데스크톱 검색 「이름·초성」, 예: ㅇㅌ) — 한글 음절은 첫소리로, 나머지는 그대로
 const CHO = 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ'
 const chosung = s => [...s].map(ch => { const c = ch.charCodeAt(0) - 0xac00; return c >= 0 && c < 11172 ? CHO[Math.floor(c / 588)] : ch }).join('')
@@ -44,7 +43,7 @@ export const shapeIcon = (key, W = 30, H = 20, sw = 1.4) => { const k = key.repl
   return <svg width={W} height={H} viewBox={`-1 -1 ${W + 2} ${H + 2}`} fill="none" stroke="currentColor" strokeWidth={sw}><g transform={`translate(${(W - w) / 2} ${(H - h) / 2})`}>
     {k === 'rect' ? <rect x="0" y="0" width={w} height={h} /> : k === 'ellipse' ? <ellipse cx={w / 2} cy={h / 2} rx={w / 2} ry={h / 2} /> : <path d={symbolPath(k, w, h).d} />}</g></svg> }
 
-function Cell({ k, name, icon, on, onDown, onClick, onPeek, onMenu, onPlace }) {   // onMenu(e) = 우클릭(이 브라우저 심볼 — 이름 바꾸기·지우기)   // onPeek(칸 자리 | null) = 내 심볼 크게 보기(마우스 올림)
+export function Cell({ k, name, icon, on, onDown, onClick, onPeek, onMenu, onPlace }) {   // onMenu(e) = 우클릭(이 브라우저 심볼 — 이름 바꾸기·지우기)   // onPeek(칸 자리 | null) = 내 심볼 크게 보기(마우스 올림)
   return <button title={onPeek ? undefined : `${name} — 클릭하면 그리기, 칠판으로 끌면 바로 놓기`} aria-label={name} aria-pressed={on} onPointerDown={e => { onPeek?.(null); onDown(e, k) }} onClick={() => onClick(k)} onKeyDown={onPlace && (e => { if (e.key === 'Enter') { e.preventDefault(); onPlace(k) } })}   /* Enter = 화면 가운데에 놓기(2026-11-10 4단계 — 끌기·칠판 누르기 말고 길이 없었음) */
     onContextMenu={onMenu && (e => { e.preventDefault(); onPeek?.(null); onMenu(e) })} onPointerEnter={onPeek && (e => onPeek(e.currentTarget.getBoundingClientRect()))} onPointerLeave={onPeek && (() => onPeek(null))}
     style={{ all: 'unset', boxSizing: 'border-box', cursor: 'pointer', width: 38, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, padding: '3px 0', borderRadius: 6,
@@ -55,7 +54,10 @@ function Cell({ k, name, icon, on, onDown, onClick, onPeek, onMenu, onPlace }) {
 }
 // 칸 격자 = auto-fill — 왼쪽 판을 넓히면 한 줄에 더(2026-10-23 판 폭 조절)
 // 칸 접기(2026-10-27 실검증 — 데스크톱처럼): 제목 줄을 누르면 접힘 ▸ / 펼침 ▾, 이 브라우저에 기억(`mb-pal-fold`, 칸 이름들)
-const FOLD_KEY = 'mb-pal-fold'
+const FOLD_KEY = 'mb-pal-fold', RECENT_KEY = 'mb-sym-recent'
+// 최근 쓴 심볼(2026-11-14 B1 3단계 — 즐겨찾기 대신 저절로 쌓임, 8개) — 누르거나 끌 때 맨 앞으로
+const readRecent = () => { try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]').filter(k => typeof k === 'string') } catch { return [] } }
+export const noteRecent = k => { if (!k.startsWith('customsym:')) return; try { localStorage.setItem(RECENT_KEY, JSON.stringify([k, ...readRecent().filter(x => x !== k)].slice(0, 8))) } catch { /* 기억 못 해도 그만 */ } }
 function useSectionFold() {
   const [shut, setShut] = useState(() => { try { return new Set(JSON.parse(localStorage.getItem(FOLD_KEY) || '[]')) } catch { return new Set() } })
   const toggle = id => setShut(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); try { localStorage.setItem(FOLD_KEY, JSON.stringify([...n])) } catch { /* 기억 못 해도 그만 */ } return n })
@@ -74,7 +76,7 @@ function Section({ title, color, count, children, shut, onToggle, onMenu, folder
 }
 
 // lib = 서버 심볼 파일(없으면 기본 도형만), tool = 지금 도구, onDown/onClick = 끌기 시작/클릭(main.jsx paletteDown·setTool)
-export function Palette({ lib, tool, onDown, onClick, onPlace, dark, docked, mine, say }) {   // mine = { mine, api } 이 브라우저 심볼(`useMySymbols`), say = 알림
+export function Palette({ lib, tool, onDown, onClick, onPlace, dark, docked, mine, say, onAddSel }) {   // mine = { mine, api } 이 브라우저 심볼(`useMySymbols`), say = 알림, onAddSel = 칠판에서 고른 것 담기(2026-11-14 B1 3단계)
   const [f0, toggleFold] = useFold('shapes'), folded = !docked && f0
   const [q, setQ] = useState('')
   const [shut, toggle] = useSectionFold()
@@ -99,36 +101,35 @@ export function Palette({ lib, tool, onDown, onClick, onPlace, dark, docked, min
       ['지우기…', '', () => { setMenu(null); setDel({ title: `「${s.name}」 심볼을 지울까요?`, body: '이 브라우저에서 지워져요. 되돌릴 수 없어요.', ok: () => { mine.api.delSymbol(s.id); say?.(`「${s.name}」 심볼을 지웠어요`) } }) }]]) }
   // 내려받기 — folder가 있으면 그 폴더만(파일 이름 = 폴더 이름). 불러오기는 「불러오기…」가 파일 속 폴더 이름대로 넣음
   const download = folder => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([mine.api.exportText(folder)], { type: 'application/json' })); a.download = `${folder || '내 심볼'}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000) }
-  const syms = lib?.symbols || [], folders = lib?.folders || [], fav = lib?.favorites || []
+  const syms = lib?.symbols || [], folders = lib?.folders || []
   const basicName = Object.fromEntries(BASIC)
   const thumb = e => <SymIcon e={e} dark={dark} />
   const cellOf = key => {
-    if (key.startsWith('customsym:')) { const e = syms.find(s => 'customsym:' + s.id === key); return e && <Cell key={key} k={key} name={e.name} icon={thumb(e)} on={tool === key} onDown={onDown} onClick={onClick} onPlace={onPlace} onPeek={peekAt(e)} onMenu={mine && isMine(e.folder) ? symMenu(e) : undefined} /> }
+    if (key.startsWith('customsym:')) { const e = syms.find(s => 'customsym:' + s.id === key); return e && <Cell key={key} k={key} name={e.name} icon={thumb(e)} on={tool === key} onDown={(ev, k) => { noteRecent(k); onDown(ev, k) }} onClick={k => { noteRecent(k); onClick(k) }} onPlace={onPlace} onPeek={peekAt(e)} onMenu={mine && isMine(e.folder) ? symMenu(e) : undefined} /> }
     const name = basicName[key] || SYMBOLS[key.replace(/^sym:/, '')]?.name; return name && <Cell key={key} k={key} name={name} icon={shapeIcon(key)} on={tool === key} onDown={onDown} onClick={onClick} onPlace={onPlace} />
   }
   return <div ref={root} data-folded={folded || undefined} data-symdrop={mine ? '' : undefined} onPointerDown={e => e.stopPropagation()} style={{ pointerEvents: 'auto', width: 192, boxSizing: 'border-box', minHeight: 0, flex: '0 1 auto', overflowY: 'auto',
     background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 8px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', color: C.ink, display: 'flex', flexDirection: 'column', gap: 8, userSelect: 'none', ...(docked ? { ...DOCKED, flex: '1 1 auto' } : {}), ...(drop ? { boxShadow: `inset 0 0 0 2px ${C.on}` } : {}) }}>   {/* 끄는 도형이 위 = 코랄 테두리 */}
     {drop && (r => <div data-testid="symdrop-hint" style={{ position: 'fixed', left: r.left, top: r.top, width: r.width, boxSizing: 'border-box', zIndex: 45, pointerEvents: 'none', padding: '8px 10px', background: C.on, color: '#fff', font: "600 12px 'Pretendard', sans-serif" }}>
       {drop.folder ? `여기 놓으면 「${drop.folder}」에 추가` : '여기 놓으면 내 심볼에 추가'}</div>)(root.current.getBoundingClientRect())}   {/* 칸 위에 떠 있음 — 흐름에 끼우면 내용이 밀려 놓을 자리가 어긋났음 */}
-    <div style={{ display: 'flex', alignItems: 'center' }}><span style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1 }}>도형·심볼</span>{!docked && <FoldBtn folded={folded} onClick={toggleFold} />}</div>
-    <input className="mb-field" aria-label="도형·심볼 검색" value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') setQ('') }} placeholder="도형·심볼 검색 (이름·초성)"
+    <div style={{ display: 'flex', alignItems: 'center' }}><span style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1 }}>심볼</span>{!docked && <FoldBtn folded={folded} onClick={toggleFold} />}</div>
+    <input className="mb-field" aria-label="심볼 찾기" value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') setQ('') }} placeholder="심볼 찾기 (이름·초성)"
       title="이름 일부나 초성(예: ㅇㅌ)으로 찾기 — Esc로 지우기" style={{ boxSizing: 'border-box', width: '100%', height: 30, border: '1px solid var(--mb-ctl)', borderRadius: 7, background: 'transparent', color: C.ink, font: "400 12px 'Pretendard', sans-serif", padding: '0 8px' }} />
     {/* 검색 중엔 즐겨찾기·기본 도형·폴더를 숨기고 기본 도형까지 한 목록으로(데스크톱 `_on_palette_search`) */}
     {q.trim() ? (() => { const hits = [...BASIC.filter(([, n]) => nameMatch(n, q)).map(([k]) => k), ...syms.filter(s => nameMatch(s.name, q)).map(s => 'customsym:' + s.id)]
-      return hits.length ? <Section title="검색 결과" count={hits.length}>{hits.map(cellOf)}</Section> : <div style={{ fontSize: 12, color: C.muted, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>「{q.trim()}」에 맞는 도형·심볼이 없어요<button onClick={() => setQ('')} style={btnSecondary}>검색 지우기</button></div> })() : <>
-    {fav.length > 0 && <Section title={<><span style={{ color: C.on }}>★</span> 즐겨찾기</>} count={fav.length} shut={shut.has('★')} onToggle={() => toggle('★')}>{fav.map(cellOf)}</Section>}
-    <Section title="기본 도형" color={lib?.section_colors?.basic || BASIC_BLUE} count={BASIC.length} shut={shut.has('□')} onToggle={() => toggle('□')}>{BASIC.map(([k]) => cellOf(k))}</Section>
-    {folders.filter(f => !isMine(f)).map(f => { const list = syms.filter(s => s.folder === f); return <Section key={f} title={f} color={lib?.folder_colors?.[f] || FOLDER_GRAY} count={list.length} shut={shut.has('f:' + f)} onToggle={() => toggle('f:' + f)}>{list.map(s => cellOf('customsym:' + s.id))}</Section> })}
+      return hits.length ? <Section title="검색 결과" count={hits.length}>{hits.map(cellOf)}</Section> : <div style={{ fontSize: 12, color: C.muted, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>「{q.trim()}」에 맞는 심볼이 없어요 — 「묶음 더 찾기」로 파일을 불러올 수 있어요<button onClick={() => setQ('')} style={btnSecondary}>찾기 지우기</button></div> })() : <>
+    {(rec => rec.length > 0 && <Section title="최근 쓴 것" count={rec.length}>{rec.map(cellOf)}</Section>)(readRecent().filter(k => syms.some(s => 'customsym:' + s.id === k)))}   {/* 즐겨찾기 대신(2026-11-14 B1 3단계) — 기본 도형은 도구 줄 「도형」으로 */}
+    {folders.filter(f => !isMine(f)).map(f => { const list = syms.filter(s => s.folder === f); return <Section key={f} title={<>{f} <span style={{ fontWeight: 400, color: C.muted }}>· 함께 쓰는</span></>} count={list.length} shut={shut.has('f:' + f)} onToggle={() => toggle('f:' + f)}>{list.map(s => cellOf('customsym:' + s.id))}</Section> })}
     {mine && <div data-testid="mine" style={{ display: 'flex', flexDirection: 'column', gap: 6, ...(folders.some(f => !isMine(f)) ? { borderTop: `1px solid ${C.line}`, paddingTop: 8 } : {}) }}>   {/* 예시를 복사한 뒤엔 서버 폴더가 없어 구분선도 없음 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-        <span title="이 브라우저에 저장돼요 — 다른 PC·브라우저로 옮기려면 ⋯ 「내려받기」 → 그 PC에서 「불러오기…」" style={{ flex: 1, whiteSpace: 'nowrap', font: "700 13px 'Pretendard', sans-serif" }}>내 심볼</span>
-        <button data-testid="mine-new-folder" title="새 폴더 만들기" onClick={e => { const at = menuBelow(e); setMenu(null); setAsk({ ...near(at.x, at.y), label: '새 폴더 이름', value: '', ok: v => mine.api.addFolder(v) }) }} style={btnHead}>＋ 새 폴더</button>
+        <span title="이 브라우저에 저장돼요 — 다른 PC·브라우저로 옮기려면 ⋯ 「내려받기」 → 그 PC에서 「묶음 더 찾기」" style={{ flex: 1, whiteSpace: 'nowrap', font: "700 13px 'Pretendard', sans-serif" }}>내 묶음</span>
+        <button data-testid="mine-new-folder" title="새 묶음 만들기" onClick={e => { const at = menuBelow(e); setMenu(null); setAsk({ ...near(at.x, at.y), label: '새 묶음 이름', value: '', ok: v => mine.api.addFolder(v) }) }} style={btnHead}>＋ 새 묶음</button>
         <button data-testid="mine-more" aria-label="내 심볼 메뉴" title="내려받기 · 불러오기" onClick={e => openMenu('mine', menuBelow(e), [
           ...(mine.mine.symbols.length ? [['내려받기 (.json)', '', () => { setMenu(null); download() }]] : []), ['불러오기…', '', () => { setMenu(null); file.current.click() }]])}
           style={{ all: 'unset', cursor: 'pointer', padding: '0 4px', borderRadius: 4, color: C.muted, font: "700 12px 'Pretendard', sans-serif" }}>⋯</button>
       </div>
-      {folders.filter(isMine).map(f => { const list = syms.filter(s => s.folder === f); return <Section key={f} title={folderTitle(f)} color={FOLDER_GRAY} count={list.length} shut={shut.has('f:' + f)} onToggle={() => toggle('f:' + f)} onMenu={folderMenu(f)} folder={folderTitle(f)} lit={drop?.folder === folderTitle(f)}>{list.map(s => cellOf('customsym:' + s.id))}</Section> })}
-      {!mine.mine.symbols.length && <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.5 }}>칠판에서 도형·아이콘을 고르고 우클릭 「내 심볼에 추가」</div>}
+      {folders.filter(isMine).map(f => { const list = syms.filter(s => s.folder === f); return <Section key={f} title={folderTitle(f)} count={list.length} shut={shut.has('f:' + f)} onToggle={() => toggle('f:' + f)} onMenu={folderMenu(f)} folder={folderTitle(f)} lit={drop?.folder === folderTitle(f)}>{list.map(s => cellOf('customsym:' + s.id))}</Section> })}
+      {!mine.mine.symbols.length && <div data-testid="sym-empty" style={{ fontSize: 12, color: C.muted, lineHeight: 1.6 }}>아직 담은 심볼이 없어요 — 칠판에서 도형을 고르고 아래 「＋ 고른 것 담기」를 누르거나, 이 판으로 끌어다 놓으면 여기에 모여요.</div>}
       {(n => n > 0 && <button data-testid="sym-reseed" title="지운 예시 심볼(방송·기술·업무)만 다시 넣어요 — 내가 넣은 심볼은 그대로" onClick={() => { const k = mine.api.reseed(); say?.(k ? `예시 심볼 ${k}개를 되돌렸어요` : '빠진 예시가 없어요') }}
         style={{ all: 'unset', cursor: 'pointer', alignSelf: 'flex-start', padding: '1px 6px', borderRadius: 4, border: '1px solid var(--mb-ctl)', font: "400 11px 'Pretendard', sans-serif", color: C.muted }}>↺ 예시 심볼 되돌리기 ({n}개)</button>)(mine.api.missing())}   {/* 빠진 예시가 있을 때만(2026-10-28 사용자 — 메뉴 안 「예시 다시 넣기」를 따로 보이는 단추로) */}
       <input ref={file} type="file" accept=".json,application/json" hidden onChange={async e => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return
@@ -138,6 +139,9 @@ export function Palette({ lib, tool, onDown, onClick, onPlace, dark, docked, min
     </div>}
     </>}
     {!lib && !mine && <div style={{ fontSize: 11, color: C.muted }}>내 심볼은 저장 서버를 켜면 보여요</div>}
+    {mine && <div data-testid="sym-foot" style={{ position: 'sticky', bottom: -10, marginTop: 'auto', display: 'flex', gap: 6, padding: '8px 0 2px', background: C.card, borderTop: `1px solid ${C.line}` }}>   {/* 판 맨 아래 단추 둘(5라운드 확정 — 굴려도 늘 보임) */}
+      <button data-testid="sym-add-sel" onClick={() => { if (!onAddSel?.()) say?.('칠판에서 담을 도형을 먼저 고르세요') }} title="칠판에서 고른 것을 내 묶음에 담기(칠판 우클릭 「내 심볼에 추가…」와 같음)" style={{ ...btnSecondary, flex: 1, textAlign: 'center', whiteSpace: 'nowrap', padding: '4px 2px' }}>＋ 고른 것 담기</button>
+      <button data-testid="sym-more-find" onClick={() => file.current?.click()} title="심볼 묶음 파일(.json) 불러오기 — 다른 PC에서 내려받은 내 묶음 등" style={{ ...btnSecondary, flex: 1, textAlign: 'center', whiteSpace: 'nowrap', padding: '4px 2px' }}>묶음 더 찾기</button></div>}
     {menu && <FloatMenu testid="mine-menu" at={menu} onClose={() => setMenu(null)} entries={menu.entries} />}
     {/* 이름 칸 — Enter·바깥 = 저장, Esc = 취소(칠판 줄 이름 고치기와 같게, 규칙 ⑦) */}
     {ask && <div data-testid="mine-pop" onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} style={{ position: 'fixed', left: ask.x, top: Math.min(ask.y, window.innerHeight - 90), zIndex: 45, minWidth: 150, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 4, boxShadow: 'var(--mb-shadow)', display: 'flex', flexDirection: 'column', gap: 2 }}>

@@ -11,7 +11,7 @@ import { diffModel, rebase, snapshotModel } from './sync.js'
 import { Viewer } from './viewer.jsx'
 import { fromEcad, toEcad } from './model.js'
 import { setInkDark } from './render.jsx'
-import { Palette, useLibrary } from './palette.jsx'
+import { Palette, useLibrary, Cell, BASIC, shapeIcon } from './palette.jsx'
 import { useMySymbols, mergeLib } from './mysym.js'
 import { Layers, layersOf, layerIdOf } from './layers.jsx'
 import { Frames } from './frames.jsx'
@@ -52,7 +52,8 @@ const KEEP_ICONS = { keep: '<svg viewBox="0 0 24 24" fill="none" stroke="current
 // 떠 있는 섬(2026-11-14 화면 틀 B1 — 위 막대를 걷고 Excalidraw처럼 칠판 위에 뜬 조각만): 단추 36·아이콘만(이름 = 마우스 올림·글 읽기)·구석에 글쇠
 // 시안·확정 경위 `~/.claude/design-system/projects/easy-cad.md` 「화면 틀 뼈대 재검토」
 const ISL = { position: 'absolute', zIndex: 18, pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 2, padding: 4, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, boxShadow: 'var(--mb-shadow)', boxSizing: 'border-box' }
-const ISL_ICONS = { shape: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1"/><circle cx="17" cy="7.3" r="3.8" fill="currentColor"/><path d="M7.3 13.5l4 7h-8z"/><path d="M17 13.5l3.8 3.5-3.8 3.5-3.8-3.5z"/></svg>',
+const ISL_ICONS = { book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H19"/><path d="M9 7h6"/></svg>',
+  shape: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1"/><circle cx="17" cy="7.3" r="3.8" fill="currentColor"/><path d="M7.3 13.5l4 7h-8z"/><path d="M17 13.5l3.8 3.5-3.8 3.5-3.8-3.5z"/></svg>',
   menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
   more: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>' }
 const ISep = () => <span aria-hidden style={{ width: 1, height: 20, background: C.line, margin: '0 4px', flex: 'none' }} />
@@ -65,7 +66,8 @@ const IBtn = ({ icon, label, onClick, onDown, title, on, disabled, k, testid, po
     {wide && <span>{label}</span>}
     {k && <span aria-hidden style={{ position: 'absolute', right: 3, bottom: 2, fontSize: 9, lineHeight: 1, color: C.muted }}>{k}</span>}
   </button> }
-const MORE_TOOLS = new Set(['polygon', 'badge'])   // 도구 줄 ⋯ 안(2026-11-14 B1 — 자주 안 쓰는 그리기)
+const MORE_TOOLS = new Set(['polygon', 'badge'])
+const BASIC_KEYS = new Set(BASIC.map(b => b[0]))   // 도구 줄 「도형」 펼침 안의 순서도 8개   // 도구 줄 ⋯ 안(2026-11-14 B1 — 자주 안 쓰는 그리기)
 const TOOLS = [['select', 'select', '선택', '1'], ['arrow', 'sarrow', '화살표', '2'], ['text', 'text', '글자', '3'], ['line', 'line', '선', '4'], ['polygon', 'polygon', '다각형', '5'], ['pen', 'pen', '펜', '6'], ['badge', 'badge', '번호', '7']]   // [도구, 아이콘(icons.json), 이름, 글쇠]
 
 // 위 막대 작은 창(표·웹·내보내기)을 화면 안으로 — 오른쪽으로 넘치면 왼쪽으로 밀고, 아래가 모자라면 남은 높이까지만(안은 굴림). 2026-11-10 2단계(200% 확대·폭 320에서 단추가 화면 밖)
@@ -590,6 +592,8 @@ function PhoneShare({ title = '' }) {
 
 function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목67)에서 내 팀 이름(관리자 = '관리자'), 팀 없는 서버면 없음 · openServer = 비밀번호 없는 서버(칠판 주소 = 열쇠)
   const [tableOpen, setTableOpen] = useState(false), [exportOpen, setExportOpen] = useState(false), [webOpen, setWebOpen] = useState(false)
+  const [shapeOpen, setShapeOpen] = useState(false), [lastShape, setLastShapeS] = useState(() => { try { const v = localStorage.getItem('mb-last-shape'); return BASIC_KEYS.has(v) ? v : 'rect' } catch { return 'rect' } })   // 도구 줄 「도형」 펼침·마지막에 쓴 도형
+  const setLastShape = k => { setLastShapeS(k); try { localStorage.setItem('mb-last-shape', k) } catch { /* 기억 못 해도 그만 */ } }
   const [mainMenu, setMainMenu] = useState(null), [moreMenu, setMoreMenu] = useState(null)   // 떠 있는 섬의 ☰ 메뉴·도구 줄 ⋯ 메뉴(2026-11-14 B1)
   const [dockTab, setDockTabS] = useState(() => { try { const v = localStorage.getItem('mb-dock'); return v ?? '' } catch { return 'shape' } })   // 왼쪽 판 열린 칸('' = 접힘) — 이 브라우저에 기억, 좁은 창은 처음엔 접힘
   const setDockTab = v => { setDockTabS(v); try { localStorage.setItem('mb-dock', v) } catch { /* 기억 못 해도 그만 */ } }
@@ -789,15 +793,15 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
   keyAct.current = { fit: () => fit(modelRef.current.items), save: () => (server ? saveServer() : saveFile()),
     zoom100: () => setCam(c => { const cx = (size.w - rightInset(box.current)) / 2, cy = size.h / 2; return { z: 1, x: cx - (cx - c.x) / c.z, y: cy - (cy - c.y) / c.z } }) }
   // 위 막대 팝업(내보내기·표·웹·공유) — 바깥 누르기·Esc = 닫기, 하나만(2026-10-22 디자인 점검: Esc는 팝업 안에 커서가 있을 때만 먹고 둘이 겹쳐 열렸음)
-  const anyPop = exportOpen || tableOpen || webOpen || shareOpen
+  const anyPop = exportOpen || tableOpen || webOpen || shareOpen || shapeOpen
   useEffect(() => {
     if (!anyPop) return
-    const close = (keep = '') => { if (keep !== 'export') setExportOpen(false); if (keep !== 'table') setTableOpen(false); if (keep !== 'web') setWebOpen(false); if (keep !== 'share') setShareOpen(false) }
+    const close = (keep = '') => { if (keep !== 'shape') setShapeOpen(false); if (keep !== 'export') setExportOpen(false); if (keep !== 'table') setTableOpen(false); if (keep !== 'web') setWebOpen(false); if (keep !== 'share') setShareOpen(false) }
     const down = e => close(e.target.closest?.('[data-pop]')?.dataset.pop || '')   // 그 팝업(버튼 포함) 안이면 그것만 남김 — 다른 팝업 버튼 = 앞 것 닫고 새로 열기
-    const key = e => { if (e.key === 'Escape' && !document.querySelector('[data-qr-big]') && !document.querySelector('dialog[open]')) { e.stopImmediatePropagation(); const w = exportOpen ? 'export' : tableOpen ? 'table' : webOpen ? 'web' : 'share'; close(); document.querySelector(w === 'web' || w === 'table' ? '[data-testid=tools-more]' : `[data-pop="${w}"] button`)?.focus({ preventScroll: true }) } }   // 웹·표 창은 ⋯ 메뉴에서 열림(2026-11-14 B1) — 닫으면 ⋯ 단추로   // 닫으면 연 단추로(2026-11-10 2단계 — 초점이 사라졌음)   // 칠판의 Esc(고른 것 풀기)보다 먼저 — 팝업만 닫음. 큰 QR이 떠 있으면 Esc는 QR만(qr.jsx)
+    const key = e => { if (e.key === 'Escape' && !document.querySelector('[data-qr-big]') && !document.querySelector('dialog[open]')) { e.stopImmediatePropagation(); const w = shapeOpen ? 'shape' : exportOpen ? 'export' : tableOpen ? 'table' : webOpen ? 'web' : 'share'; close(); document.querySelector(w === 'web' || w === 'table' ? '[data-testid=tools-more]' : `[data-pop="${w}"] button`)?.focus({ preventScroll: true }) } }   // 웹·표 창은 ⋯ 메뉴에서 열림(2026-11-14 B1) — 닫으면 ⋯ 단추로   // 닫으면 연 단추로(2026-11-10 2단계 — 초점이 사라졌음)   // 칠판의 Esc(고른 것 풀기)보다 먼저 — 팝업만 닫음. 큰 QR이 떠 있으면 Esc는 QR만(qr.jsx)
     window.addEventListener('pointerdown', down, true); window.addEventListener('keydown', key, true)
     return () => { window.removeEventListener('pointerdown', down, true); window.removeEventListener('keydown', key, true) }
-  }, [anyPop])
+  }, [anyPop])   // eslint-disable-line react-hooks/exhaustive-deps
   // 알림 = 칠판 아래 가운데에 잠깐(글 길이만큼 3~10초 — 2026-11-10 4단계: 긴 안내가 2~6초에 사라졌음, 두 줄까지 보임). 다 지나도 글은 남기고 투명하게만(시험이 글을 찾음)
   const [toastOn, setToastOn] = useState(false)
   useEffect(() => { if (!status) return; setToastOn(true); const t = setTimeout(() => setToastOn(false), Math.min(10000, 3000 + status.length * 80)); return () => clearTimeout(t) }, [status])
@@ -869,7 +873,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
               <button key={l} onClick={f} title={t} style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px 4px 7px', borderRadius: 6, border: `1px solid ${C.line}`, font: "400 12px 'Pretendard', sans-serif" }}>
                 <span aria-hidden style={{ width: 16, height: 16, display: 'block', color: 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ICONS[ic].replace('<svg ', '<svg width="16" height="16" ') }} />{l}</button>)}
           </div>}</BoardForm>,
-        shape: <Palette docked lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} onPlace={k => ed.current?.placeShape(k)} mine={{ mine: mySyms, api: myApi }} say={setStatus} />,
+        shape: <Palette docked lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} onPlace={k => ed.current?.placeShape(k)} mine={{ mine: mySyms, api: myApi }} say={setStatus} onAddSel={() => { if (!ed.current?.getSel().length) return false; ed.current.addToMySymbols(); return true }} />,
         frame: orderedFrames(model.items).length ? <Frames docked items={model.items} sel={selKey ? selKey.split(',') : []} onReorder={ids => ed.current?.reorderFrames(ids)} onRename={(id, n) => ed.current?.renameFrame(id, n)} onGo={id => ed.current?.goFrame(id)} onPresent={id => ed.current?.startPresent(id)}
           onExport={id => { ed.current?.setSel([id]); setTimeout(() => setExportOpen(true)) /* 내보내기 창은 열 때 고른 것을 읽음 — 고른 것이 바뀐 다음에 열기 */ }} onRemove={id => ed.current?.removeFrame(id)} onSkip={(id, s) => ed.current?.skipFrames([id], s)} dark={dark} />
           : <div data-testid="frames-empty" style={{ padding: '10px 12px', color: C.muted, fontSize: 12, lineHeight: 1.6 }}><div style={{ font: "700 15px 'Pretendard', sans-serif", color: C.ink, marginBottom: 6 }}>프레임</div>아직 없어요 — 도구 줄 「프레임」을 눌러 칠판에서 영역을 감싸면 여기에 쌓여요(순서 = 출력·발표 순서).</div>,
@@ -921,10 +925,17 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
             <IBtn icon="keep" label="유지" k="Q" on={keepTool} onClick={toggleKeep} title="도구 유지 (Q) — 켜면 그린 뒤에도 그 도구가 그대로(도구를 바꿔도), Esc·「선택」으로 멈춤" />
             <ISep />
             {TOOLS.filter(([k]) => !MORE_TOOLS.has(k)).map(([k, icon, label, key]) => <IBtn key={k} icon={icon} label={label} k={key} on={tool === k} onClick={() => setTool(k)} onDown={k === 'select' || k === 'pen' ? undefined : e => toolDown(e, k)} title={`${label} (${key})${k === 'select' || k === 'pen' ? '' : ' — 칠판으로 끌면 그 자리에'}`} />)}
+            <div data-pop="shape" style={{ position: 'relative', display: 'flex' }}>   {/* 기본 도형 = 도구 줄 「도형」 한 칸 → 순서도 8개 펼침(2026-11-14 B1 3단계, Claude 화이트보드식) — 단추엔 마지막에 쓴 도형 */}
+              <button data-testid="shape-tool" aria-label="도형" aria-haspopup="true" aria-expanded={shapeOpen} title="도형 — 누르면 순서도 도형 8개(고른 도형이 단추에 남음)" onClick={() => setShapeOpen(o => !o)} {...hoverBg}
+                style={{ all: 'unset', position: 'relative', boxSizing: 'border-box', width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, cursor: 'pointer', color: 'var(--mb-icon)', background: BASIC_KEYS.has(tool) || shapeOpen ? 'var(--mb-on)' : 'transparent', boxShadow: BASIC_KEYS.has(tool) || shapeOpen ? 'var(--mb-on-ring)' : 'none' }}>
+                {shapeIcon(lastShape, 20, 14, 1.6)}<span aria-hidden style={{ position: 'absolute', right: 2, bottom: 1, fontSize: 8, color: C.muted }}>▾</span></button>
+              {shapeOpen && <div data-testid="shape-pop" role="group" aria-label="도형 고르기" style={{ ...ISL, top: 44, left: -4, display: 'grid', gridTemplateColumns: 'repeat(4, 38px)', gap: 2, padding: 6 }}>
+                {BASIC.map(([k, name]) => <Cell key={k} k={k} name={name} icon={shapeIcon(k)} on={tool === k} onDown={paletteDown} onClick={k2 => { setTool(k2); setLastShape(k2); setShapeOpen(false) }} onPlace={k2 => { ed.current?.placeShape(k2); setLastShape(k2); setShapeOpen(false) }} />)}</div>}
+            </div>
             <IBtn icon="frame" label="프레임" on={tool === 'frame'} onClick={() => setTool(t => (t === 'frame' ? 'select' : 'frame'))} onDown={e => toolDown(e, 'frame')} title="프레임 — 버튼을 칠판으로 끌면 그 자리에 16:9 · 칠판에서 끌어서 영역을 감싸면 그 안이 출력 한 쪽(번호 순서). 클릭만 = 16:9, 우클릭 「프레임으로 감싸기」도" />
             <IBtn icon="memo" label="메모" onClick={() => ed.current?.insertMemo()} onDown={e => toolDown(e, 'memo')} title="메모 — 칠판으로 끌면 그 자리에 · 줄마다 제목·목록·할 일·코드·인용(`# `·`- `·`[] `·`> ` 입력), 체크 상자는 칠판에서 바로" />
             <ISep />
-            <IBtn icon="shape" label="도형·심볼" testid="dock-shape" on={dockTab === 'shape'} onClick={() => setDockTab(dockTab === 'shape' ? '' : 'shape')} title="도형·심볼 — 칠판으로 끌거나 눌러서 그리기(다시 누르면 닫힘)" />
+            <IBtn icon="book" label="심볼" testid="dock-shape" on={dockTab === 'shape'} onClick={() => { const open = dockTab !== 'shape'; setDockTab(open ? 'shape' : ''); if (open) requestAnimationFrame(() => { const at = document.activeElement; if (!at || at === document.body || at.dataset?.testid === 'dock-shape') document.querySelector('[aria-label="심볼 찾기"]')?.focus() }) }} title="심볼 — 내 묶음·함께 쓰는 심볼·최근 쓴 것(다시 누르면 닫힘)" />   {/* 눌러 열 때만 찾기 칸으로(다시 연 칠판에서 판이 열려 있어도 글쇠를 빼앗지 않게) */}
             <IBtn icon="more" label="더 보기" testid="tools-more" pop open={!!moreMenu || webOpen || tableOpen} on={MORE_TOOLS.has(tool)} title="더 보기 — 다각형·번호·웹 카드·표·회의·발표" onClick={e => { const at = menuBelow(e); setMoreMenu(m => (m ? null : at)) }} />
             <div data-pop="web" style={{ position: 'relative' }}>{webOpen && <WebForm onInsert={u => { const url = /^https?:\/\//i.test(u) ? u : 'https://' + u; setWebOpen(false); ed.current?.insertWeb(url, webAt || 'near') }} onClose={() => setWebOpen(false)} />}</div>
             <div data-pop="table" style={{ position: 'relative' }}>{tableOpen && <TableForm onInsert={(r, c, h) => { setTableOpen(false); lastTable.current = [r, c, h]; ed.current?.insertTable(r, c, h) }} onLegend={() => { setTableOpen(false); ed.current?.insertLegend() }} onClose={() => setTableOpen(false)} />}</div>

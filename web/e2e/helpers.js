@@ -71,7 +71,9 @@ export async function clickScene(page, x, y, opts) {
 }
 
 /** 팔레트(좌상 카드) 기본 도형 고르기 — 이름은 툴팁 앞부분(사각형·원 …) */
-export async function pickShape(page, name) {   // 도형·심볼 판은 떠 있는 판 — 닫혀 있으면 도구 줄 「도형·심볼」로 먼저 염(2026-11-14 B1 2단계)
+const BASIC_NAMES = new Set(['사각형', '원', '삼각형', '판단', '시작/끝', '입출력', '준비', '저장소'])
+export async function pickShape(page, name) {   // 기본 도형 8 = 도구 줄 「도형」 펼침 · 심볼 = 떠 있는 「심볼」 판(닫혀 있으면 엶) — 2026-11-14 B1 3단계
+  if (BASIC_NAMES.has(name)) { await page.getByTestId('shape-tool').click(); return page.getByTestId('shape-pop').getByRole('button', { name, exact: true }).click() }
   const b = page.locator(`button[title^="${name} —"]`).first()
   if (!(await b.isVisible())) await page.getByTestId('dock-shape').click()
   await b.click()

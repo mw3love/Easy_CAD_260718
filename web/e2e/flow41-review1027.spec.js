@@ -65,7 +65,7 @@ test('내 심볼(이 브라우저) — 우클릭 추가 → 판에 보임 → �
   const dlg = page.getByTestId('symadd'); await expect(dlg).toBeVisible()
   await dlg.getByPlaceholder('예: 송신탑').fill('동그라미'); await dlg.getByRole('button', { name: '추가' }).click()
   const mine = page.getByTestId('mine'); await expect(mine.getByRole('button', { name: '동그라미' })).toBeVisible()   // 폴더 없으면 「내 심볼」
-  await expect(mine).toContainText('내 심볼'); await expect(mine.getByRole('button', { name: '카메라' })).toBeVisible()   // 서버 예시도 내 심볼로 복사돼 있음
+  await expect(mine).toContainText('내 묶음'); await expect(mine.getByRole('button', { name: '카메라' })).toBeVisible()   // 「내 심볼」 → 「내 묶음」(2026-11-14 B1 3단계)   // 서버 예시도 내 심볼로 복사돼 있음
   const n0 = (await liveDoc(page)).items.length
   await mine.getByRole('button', { name: '동그라미' }).click(); await clickScene(page, 400, 300)
   await expect.poll(async () => (await liveDoc(page)).items.length).toBe(n0 + 1)
@@ -118,7 +118,7 @@ test('예시 폴더도 지울 수 있음 — 지우면 새로 고쳐도 안 생�
 })
 
 test('도형을 끌어 도형 칸(폴더 위)에 놓기 = 그 폴더로 추가 창 · 도형은 제자리 · 칸이 밝아짐', async ({ page }) => {
-  await openBoard(page, boardName('symdrag')); await setCam(page)
+  await openBoard(page, boardName('symdrag')); await setCam(page); await openPane(page, 'shape')   // 심볼 판을 열어 둠(놓을 자리)
   await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 150, y: 100 }); await page.keyboard.press('Escape')
   const pos0 = (await liveDoc(page)).items.find(it => it.type === 'rect').pos
   await clickScene(page, 75, 50)

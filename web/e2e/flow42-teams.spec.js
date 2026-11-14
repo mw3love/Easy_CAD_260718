@@ -53,7 +53,7 @@ test('팀 비밀번호 = 우리 팀 칠판만 · 다른 팀 칠판은 막힘 · 
   await expect(a.getByTestId('board-new-why')).toContainText('다른 팀이 쓰는 이름')
   await a.getByPlaceholder('새 칠판 이름 (예: 송신소점검)').fill('A새판'); await a.keyboard.press('Enter')
   await expect(a.getByText('서버 「A새판」', { exact: false }).first()).toBeVisible()
-  await a.locator('button[title^="사각형 —"]').first().click()
+  await a.getByTestId('shape-tool').click(); await a.getByTestId('shape-pop').getByRole('button', { name: '사각형', exact: true }).click()   // 기본 도형 = 도구 줄 「도형」 펼침(2026-11-14 B1)
   const box = await a.getByTestId('board').boundingBox()
   await a.mouse.move(box.x + 400, box.y + 300); await a.mouse.down(); await a.mouse.move(box.x + 560, box.y + 380, { steps: 8 }); await a.mouse.up()
   await expect.poll(() => JSON.parse(readFileSync(join(DATA, 'teams.json'), 'utf8'))[0].boards, { timeout: 5000 }).toEqual(['A회의', 'A새판'])
