@@ -1,4 +1,4 @@
-// 글쇠 도움말 카드(§8 항목61 다잡기, 2026-10-19) — keys.js 표를 그대로. F1·왼쪽 레일 「?」로 열고 Esc·F1·「?」·바깥 누르기로 닫음.
+// 글쇠 도움말 카드(§8 항목61 다잡기, 2026-10-19) — keys.js 표를 그대로. F1·왼쪽 아래 되돌리기 섬 「?」로 열고 Esc·F1·「?」·바깥 누르기로 닫음.
 import { useEffect, useRef, useState } from 'react'
 import { KEY_TABLE } from './keys.js'
 import { keyLabel } from './keylabel.js'
