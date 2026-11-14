@@ -71,7 +71,17 @@ export async function clickScene(page, x, y, opts) {
 }
 
 /** 팔레트(좌상 카드) 기본 도형 고르기 — 이름은 툴팁 앞부분(사각형·원 …) */
-export const pickShape = (page, name) => page.locator(`button[title^="${name} —"]`).first().click()
+export async function pickShape(page, name) {   // 도형·심볼 판은 떠 있는 판 — 닫혀 있으면 도구 줄 「도형·심볼」로 먼저 염(2026-11-14 B1 2단계)
+  const b = page.locator(`button[title^="${name} —"]`).first()
+  if (!(await b.isVisible())) await page.getByTestId('dock-shape').click()
+  await b.click()
+}
+// 떠 있는 판 열기 — board = 칠판 이름 ▾ · shape = 도구 줄 「도형·심볼」 · frame·layer = ☰ 「프레임 목록」·「레이어」(옛 왼쪽 레일 단추 dock-*)
+export async function openPane(page, k) {
+  if (k === 'board') return page.getByTestId('board-title').click()
+  if (k === 'shape') return page.getByTestId('dock-shape').click()
+  return menuPick(page, k === 'frame' ? '프레임 목록' : '레이어')
+}
 // 대화창 그림 후보를 칠판에 붙이기 — 왼쪽 위 「＋ 칠판에 추가」(2026-10-20 — 사진 누르기는 크게 보기)
 export async function pinCandidate(page, n = 0) {
   await page.getByTestId('image-pick').nth(n).getByTestId('image-pin').click()

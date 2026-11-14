@@ -14,7 +14,7 @@ const count = async p => (await liveDoc(p)).items.length
 const withGuide = async browser => { const c = await browser.newContext(); await c.addInitScript(() => { try { localStorage.setItem('mb-chat-open', '0') } catch {} }); return c }
 const moved = async (p, u0) => { await p.waitForURL(u => u.href !== u0); await p.waitForFunction(() => !!window.__mb?.toEcad); await expect(p.getByTestId('example-band')).toBeVisible() }   // 새 주소로 옮겨 간 뒤에 읽기(옮기는 중엔 __mb가 없음)
 const viaGuide = async p => { await p.goto('/'); const u0 = p.url(); await p.getByTestId('empty-guide-예시 칠판 보기').click(); await moved(p, u0) }
-const viaPanel = async p => { await p.getByTestId('dock-board').waitFor(); if (!(await p.getByTestId('board-example-new').isVisible())) await p.getByTestId('dock-board').click(); const u0 = p.url(); await p.getByTestId('board-example-new').click()   // 칠판 판은 열린 채 기억됨 — 또 누르면 닫힘
+const viaPanel = async p => { await p.getByTestId('board-title').waitFor(); if (!(await p.getByTestId('board-example-new').isVisible())) await p.getByTestId('board-title').click(); const u0 = p.url(); await p.getByTestId('board-example-new').click()   // 칠판 판은 열린 채 기억됨 — 또 누르면 닫힘
   await moved(p, u0) }
 
 test('처음 = 빈 칠판 + 안내 「예시 칠판 보기」 → 예시 사본 · 사람마다 따로 · 「처음 모습으로」 = 칠판·대화가 원본으로', async ({ browser }) => {

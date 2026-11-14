@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { liveDoc, waitSaved } from './helpers.js'
+import { liveDoc, waitSaved, pickShape } from './helpers.js'
 
 const fresh = async browser => { const c = await browser.newContext(); await c.addInitScript(() => { try { localStorage.setItem('mb-guide-off', '1'); localStorage.setItem('mb-chat-open', '0') } catch {} }); return c }   // 처음 온 사람(이름·기억 없음)
 const CODE = /board=[a-z2-9]{8}$/   // 이름 없는 새 칠판 = 칠판 코드 8자뿐(링크가 짧고 영문뿐)
@@ -18,7 +18,7 @@ test('처음 = 새 비밀 주소의 빈 칠판(2026-11-04 — 예시는 따로 �
   await a.waitForFunction(() => !!window.__mb?.toEcad); await expect.poll(async () => (await liveDoc(a)).items.length).toBe(0)
   await expect(a.getByRole('button', { name: '들어가기' })).toHaveCount(0)               // 비밀번호·이름 안 물음
   const link = a.url(), rects = async p => (await liveDoc(p)).items.filter(it => it.type === 'rect').length, r0 = await rects(a)
-  await a.locator('button[title^="사각형 —"]').first().click()
+  await pickShape(a, '사각형')
   const box = await a.getByTestId('board').boundingBox()
   await a.mouse.move(box.x + 400, box.y + 300); await a.mouse.down(); await a.mouse.move(box.x + 560, box.y + 380, { steps: 8 }); await a.mouse.up()
   await waitSaved(a)
@@ -36,10 +36,10 @@ test('처음 = 새 비밀 주소의 빈 칠판(2026-11-04 — 예시는 따로 �
   await b.getByRole('button', { name: '들어가기' }).click()
   await b.waitForFunction(() => !!window.__mb?.toEcad)   // 칠판이 뜬 뒤에 읽기(옛 시험은 「칠판 이름」 알림을 기다리며 시간을 벌었음 — 빈 칠판은 이름이 없음)
   await expect.poll(() => rects(b)).toBe(r0 + 1)
-  await b.getByTestId('dock-board').click()
+  await b.getByTestId('board-title').click()
   await expect(b.getByTestId('board-row')).toHaveCount(1)                               // 내 칠판 = 받은 칠판만(서버의 다른 칠판은 안 보임)
   await b.goto('/'); await expect(b).toHaveURL(link)                                    // 받은 칠판도 「마지막 칠판」
-  await expect(b.getByTestId('dock-board')).toHaveAttribute('aria-pressed', 'true')   // 연 칸은 이 브라우저에 기억
+  await expect(b.getByTestId('board-form')).toBeVisible()   // 연 칸은 이 브라우저에 기억
   await b.getByTestId('board-new').click()                                              // 누르면 바로 = 코드만(2026-10-28 — 이름 칸 없음)
   await expect.poll(() => b.url()).not.toBe(link); await expect(b).toHaveURL(CODE)   // 새 주소는 서버에 겹침을 물은 뒤(2026-11-05)
   await expect(b.getByRole('button', { name: '들어가기' })).toHaveCount(0)               // 내가 만든 새 칠판 = 안 물음
@@ -84,7 +84,7 @@ test('새 칠판 코드가 있는 칠판과 겹치면 다시 뽑음 — 처음 �
   await expect.poll(() => new URL(p.url()).searchParams.get('board')).toMatch(/^(?!aaaaaaaa$)[a-z2-9]{8}$/)   // 처음 방문 = 다른 코드로(주소창은 먼저 뽑은 코드였다가 바뀜)
   await p.waitForFunction(() => !!window.__mb?.toEcad)
   await p.evaluate(() => { window.__zeros = 1 })
-  await p.getByTestId('dock-board').click(); await p.getByTestId('board-new').click()
+  await p.getByTestId('board-title').click(); await p.getByTestId('board-new').click()
   const before = p.url()
   await expect.poll(() => p.url()).not.toBe(before)
   expect(new URL(p.url()).searchParams.get('board')).toMatch(/^(?!aaaaaaaa$)[a-z2-9]{8}$/)   // 「＋ 새 칠판」도

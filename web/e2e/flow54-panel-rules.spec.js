@@ -2,12 +2,12 @@
 // 되돌릴 수 없는 지우기만 확인 창(빈 폴더는 바로)·이름 칸 Enter·바깥 = 저장, Esc = 취소·「＋ 새 ○○」 = 머리줄·마우스 올림 = 회색·이 폴더만 내려받기
 import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
-import { boardName, openBoard, setCam, liveDoc, clickScene, pickShape, dragScene } from './helpers.js'
+import { boardName, openBoard, setCam, liveDoc, clickScene, pickShape, dragScene, openPane } from './helpers.js'
 
 const sec = (page, name) => page.getByTestId('pal-sec').filter({ hasText: name })
 
 test('도형 판 — 메뉴 닫힘 · 이름 칸 저장·취소 · 빈 폴더는 바로 · 심볼 든 폴더는 확인 창 · 이 폴더만 내려받기', async ({ page }) => {
-  await openBoard(page, boardName('palrule'))
+  await openBoard(page, boardName('palrule')); await openPane(page, 'shape')
   const mine = page.getByTestId('mine'), menu = page.getByTestId('mine-menu')
   await expect(mine.getByRole('button', { name: '카메라' })).toBeVisible()
   // ⋯ → 메뉴, 판 안(검색 칸) 누르기 = 닫힘(옛 자체 메뉴는 안 닫혔음)
@@ -51,7 +51,7 @@ test('도형 판 — 메뉴 닫힘 · 이름 칸 저장·취소 · 빈 폴더는
 
 test('레이어 판 — 「＋ 새 레이어」 머리줄 · 줄 ⋯(올렸을 때만)·우클릭 = 공용 메뉴 · 이름 Esc = 취소', async ({ page }) => {
   await openBoard(page, boardName('layrule'))
-  await page.getByTestId('dock-layer').click()
+  await openPane(page, 'layer')
   await page.getByTestId('layer-new').click(); await expect(page.getByTestId('layer-row')).toHaveCount(2)
   const row = page.getByTestId('layer-row').nth(1), menu = page.getByTestId('layer-menu')
   await expect(row.getByTestId('layer-more')).toBeHidden(); await row.hover(); await expect(row.getByTestId('layer-more')).toBeVisible()
@@ -72,7 +72,7 @@ test('프레임 판 — 이름 Esc = 처음 이름으로 · 줄 ▶는 회색(�
   await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 200, y: 120 }); await page.keyboard.press('Escape')
   await clickScene(page, 100, 60); await page.keyboard.press('Alt+g')
   await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'frame').length).toBe(1)
-  await page.getByTestId('dock-frame').click()
+  await openPane(page, 'frame')
   const row = page.getByTestId('frame-row').first(), name0 = (await liveDoc(page)).items.find(it => it.type === 'frame').name || ''
   await row.locator('[data-frame-name]').dblclick()
   await row.locator('input:not([type=color])').fill('표지'); await expect.poll(async () => (await liveDoc(page)).items.find(it => it.type === 'frame').name).toBe('표지')   // 치는 대로 바로

@@ -1,7 +1,7 @@
 // 흐름 41 — 10-27 사용자 UI 점검: 프레임으로 감싸면 안에 든 것으로 이름 · 레이어 판의 「선택 → 그리는 중」 단추 뺌(우클릭 「레이어로 이동」이 같은 일) ·
 // 칠판 칸 = 「＋ 새 칠판」 먼저 · 접속자 = 이름 첫 글자 동그라미(4칸 넘으면 +N)
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, liveDoc, clickScene, pickShape, dragScene, toPage } from './helpers.js'
+import { boardName, openBoard, setCam, liveDoc, clickScene, pickShape, dragScene, toPage, openPane } from './helpers.js'
 
 const frames = async page => (await liveDoc(page)).items.filter(it => it.type === 'frame')
 
@@ -24,7 +24,7 @@ test('프레임으로 감싸기 = 안에 든 것으로 이름(하나 = 종류 ·
 test('레이어 판엔 「선택 → 그리는 중」 단추 없음 · 우클릭 「레이어로 이동」은 있음', async ({ page }) => {
   await openBoard(page, boardName('layerbtn')); await setCam(page)
   await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 150, y: 100 }); await page.keyboard.press('Escape')
-  await page.getByTestId('dock-layer').click(); await expect(page.getByRole('button', { name: '＋ 새 레이어' })).toBeVisible()
+  await openPane(page, 'layer'); await expect(page.getByRole('button', { name: '＋ 새 레이어' })).toBeVisible()
   await expect(page.getByRole('button', { name: '선택 → 그리는 중' })).toHaveCount(0)
   const p = await toPage(page, 75, 50); await page.mouse.click(p.x, p.y, { button: 'right' })
   expect((await page.locator('div[style*="z-index: 30"] > div > button').allInnerTexts()).some(n => n.startsWith('레이어로 이동'))).toBe(true)
@@ -104,7 +104,7 @@ test('화살표를 고르고 바로 치면 글 — 라벨 없으면 가운데에
 })
 
 test('예시 폴더도 지울 수 있음 — 지우면 새로 고쳐도 안 생김 · 빠졌을 때만 보이는 「예시 심볼 되돌리기」로 돌아옴(2026-10-28)', async ({ page }) => {
-  await openBoard(page, boardName('seed'))
+  await openBoard(page, boardName('seed')); await openPane(page, 'shape')
   const mine = page.getByTestId('mine'), sec = name => page.getByTestId('pal-sec').filter({ hasText: name })
   await expect(mine.getByRole('button', { name: '카메라' })).toBeVisible()
   await sec('방송').getByTestId('folder-menu').click(); await page.getByTestId('mine-menu').getByRole('menuitem', { name: /지우기/ }).click(); await page.getByTestId('mine-delete-ok').click()

@@ -14,7 +14,7 @@ export function HelpCard({ onClose }) {
     window.addEventListener('pointerdown', down, true); window.addEventListener('keydown', key, true)
     return () => { window.removeEventListener('pointerdown', down, true); window.removeEventListener('keydown', key, true) }
   }, [onClose])
-  return <div ref={ref} tabIndex={-1} data-testid="help-card" role="dialog" aria-label="글쇠 도움말" style={{ outline: 'none', position: 'absolute', zIndex: 40, left: '50%', top: 56, transform: 'translateX(-50%)', width: 'min(560px, calc(100% - 32px))',
+  return <div ref={ref} tabIndex={-1} data-testid="help-card" role="dialog" aria-label="글쇠 도움말" style={{ outline: 'none', position: 'absolute', zIndex: 40, left: '50%', top: 'var(--mb-top, 60px)', transform: 'translateX(-50%)', width: 'min(560px, calc(100% - 32px))',
     maxHeight: 'calc(100% - 80px)', overflowY: 'auto', boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: '14px 16px', boxShadow: 'var(--mb-shadow)',
     font: "400 12.5px 'Pretendard', sans-serif", color: C.ink }}>
     <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 8, marginBottom: 6 }}>

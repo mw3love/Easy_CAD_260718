@@ -190,7 +190,7 @@ test('태블릿 — PC 화면 그대로 + 두 손가락 확대 · 빈 곳 한 �
   expect((await p.request.put(`/api/doc/${name}`, { data: frameDoc('태블릿 시험') })).ok()).toBeTruthy()
   await openBoard(p, name)
   await expect(p.getByTestId('phone-bar')).toHaveCount(0)                                // 짧은 변 810 = 태블릿
-  await expect(p.getByTestId('dock')).toBeVisible()
+  await expect(p.getByTestId('isl-tools')).toBeVisible()                               // PC 화면(떠 있는 섬)
   await p.evaluate(() => window.__mb.setCam({ x: 300, y: 600, z: 0.3 }))
   const before = JSON.stringify((await liveDoc(p)).items.map(it => it.pos))
   const b = await p.getByTestId('board').boundingBox(), x = b.x + 40, y = b.y + b.height - 80   // 칠판 왼쪽 아래 빈 곳

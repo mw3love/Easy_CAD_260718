@@ -8,7 +8,7 @@ test('「＋ 새 칠판」 = 바로 새 칠판(칠판 코드만) · 빈 칠판�
   await openBoard(page, a); await setCam(page)
   await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 200, y: 100 }); await waitSaved(page)
 
-  await page.getByTestId('dock-board').click()                                       // 왼쪽 판 「칠판」 칸(2026-10-23)
+  await page.getByTestId('board-title').click()                                       // 왼쪽 판 「칠판」 칸(2026-10-23)
   const form = page.getByTestId('board-form'), rows = form.getByTestId('board-row')
   await expect(rows.filter({ hasText: a })).toBeVisible()                             // 지금 칠판 = 내 칠판(이 브라우저)
   await expect(rows).toHaveCount(1)                                                   // 서버의 다른 칠판(다른 시험이 만든 것)은 안 보임 — 비밀번호 없는 서버 = 주소가 열쇠(2026-10-27)
@@ -21,7 +21,7 @@ test('「＋ 새 칠판」 = 바로 새 칠판(칠판 코드만) · 빈 칠판�
   await expect.poll(() => savedDoc(b)?.items?.length).toBe(0)                         // 아무것도 안 그려도 서버에 빈 칠판(칠판 코드로도 찾힘)
   await expect(page).toHaveTitle('제목 없음 — Magic Board')                            // 탭 제목 = 칠판 이름
 
-  await expect(page.getByTestId('dock-board')).toHaveAttribute('aria-pressed', 'true')   // 옮겨 가도 연 칸은 그대로(이 브라우저에 기억)
+  await expect(page.getByTestId('board-form')).toBeVisible()   // 옮겨 가도 연 칸은 그대로(이 브라우저에 기억)
   await expect(rows).toHaveCount(2)
   await expect(rows.nth(0)).toHaveAttribute('data-board', b)                          // 새 칠판 = 맨 위
   await expect(rows.nth(0)).toHaveText(/^제목 없음\s*· \d+\/\d+ \d\d:\d\d/)               // 이름 없는 칠판 = 만든 때로 구별, 칠판 코드는 안 보임(2026-10-28)
@@ -71,7 +71,7 @@ test('「▾ › 파일로 새 칠판」 = 지금 칠판은 그대로 · 줄 ⋯
   const a = `보드F${Date.now().toString(36)}`
   await openBoard(page, a); await setCam(page)
   await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 200, y: 100 }); await waitSaved(page)
-  await page.getByTestId('dock-board').click()
+  await page.getByTestId('board-title').click()
   const form = page.getByTestId('board-form')
   const dl = page.waitForEvent('download')
   await form.locator(`[data-board="${a}"]`).hover(); await form.locator(`[data-board="${a}"]`).getByTestId('board-more').click()
@@ -100,7 +100,7 @@ test('칠판 지우기 — 확인 창(지금 있는 사람) · 휴지통으로 �
   const c2 = await browser.newContext(), other = await c2.newPage()
   await openBoard(other, a, { who: '박기자' })
 
-  await page.getByTestId('dock-board').click()
+  await page.getByTestId('board-title').click()
   const row = page.getByTestId('board-form').locator(`[data-board="${a}"]`)
   await expect(row.getByTestId('board-people')).toHaveText(/시.*박|박.*시/, { timeout: 6000 })
   await row.click({ button: 'right' })
@@ -122,7 +122,7 @@ test('칠판 지우기 — 확인 창(지금 있는 사람) · 휴지통으로 �
 test('칠판 지우기 확인 창 — 엔터 = 지우기(초점이 지우기), Esc = 취소', async ({ page }) => {
   const a = `보드E${Date.now().toString(36)}`, b = `보드G${Date.now().toString(36)}`
   await openBoard(page, b); await openBoard(page, a)
-  await page.getByTestId('dock-board').click()
+  await page.getByTestId('board-title').click()
   const row = n => page.getByTestId('board-form').locator(`[data-board="${n}"]`), item = page.locator('div[style*="z-index: 30"] > div > button', { hasText: '칠판 지우기…' })
   await row(b).click({ button: 'right' }); await item.click()
   await expect(page.getByTestId('board-delete-ok')).toBeFocused()

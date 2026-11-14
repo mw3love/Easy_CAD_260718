@@ -1,7 +1,7 @@
 // 흐름 43 — 10-27 사용자 전수조사(「상식적으로 이상한 것」): 우클릭 메뉴에서 하는 일 없는 항목 숨김(감싼 그대로 다시 감싸기·상자 하나 반전·이미 한 묶음 「그룹」·
 // 그림/프레임 스타일 복사·글 없는 정리 문서·메모/표 내 심볼) + 프레임 메뉴(발표·이름·틀만 지우기)·왼쪽 프레임 판/칠판 판 줄 우클릭
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, liveDoc, toPage } from './helpers.js'
+import { boardName, openBoard, setCam, liveDoc, toPage, openPane } from './helpers.js'
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAFElEQVR4nGP4z8DAwMDAwMDAwAAAHwAB/2Y2E7QAAAAASUVORK5CYII='
 const MENU = 'div[style*="z-index: 30"] > div > button'
@@ -53,7 +53,7 @@ test('왼쪽 프레임 판 줄 우클릭 = 발표·이름 바꾸기·내보내�
   const name = boardName('dockmenu')
   await openBoard(page, name); await load(page, [R(0, 0), R(200, 0)])
   await page.keyboard.press('Control+a'); await page.keyboard.press('Alt+g'); await page.keyboard.press('Escape')
-  await page.getByTestId('dock-frame').click()
+  await openPane(page, 'frame')
   await page.getByTestId('frame-row').first().click({ button: 'right' })
   expect(await names(page)).toEqual(['이 장부터 발표', '발표에서 빼기', '이름 바꾸기', '이 프레임 내보내기…', '프레임만 지우기 (안의 것은 남김)'])   // 발표에서 빼기 = 2026-10-28
   await page.locator(MENU, { hasText: '이름 바꾸기' }).click()
@@ -65,7 +65,7 @@ test('왼쪽 프레임 판 줄 우클릭 = 발표·이름 바꾸기·내보내�
   await page.getByTestId('frame-row').first().click({ button: 'right' }); await page.locator(MENU, { hasText: '프레임만 지우기' }).click()
   await expect.poll(async () => (await liveDoc(page)).items.map(it => it.type).sort()).toEqual(['rect', 'rect'])
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
-  await page.getByTestId('dock-board').click()   // 지금 칠판 = 「내 칠판 — 이 브라우저」에 있음
+  await page.getByTestId('board-title').click()   // 지금 칠판 = 「내 칠판 — 이 브라우저」에 있음
   await page.getByTestId('board-row').filter({ hasText: name }).click({ button: 'right' })
   const MOVE = ['위로 옮기기', '아래로 옮기기']   // 옮길 수 있을 때만(2026-11-09 — 끌기의 글쇠·메뉴 길)
   expect((await names(page)).filter(n => !MOVE.includes(n))).toEqual(['이름 바꾸기', '새 탭에서 열기', '주소 복사', '내려받기 (.ecad)', '칠판 지우기…'])   // 이름 바꾸기 = 문서 이름만(2026-10-28 — 주소 그대로)

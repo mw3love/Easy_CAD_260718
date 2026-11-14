@@ -65,7 +65,7 @@ test('공유 「QR 크게」 · 게시 QR · 발표 중 Q · 칠판 코드로 �
   // 다른 브라우저에서 칠판 코드로 열기 — 대문자·띄어 쓴 코드도
   const c2 = await browser.newContext(), p2 = await c2.newPage()
   await openBoard(p2, boardName('qr2'))
-  await p2.getByTestId('dock-board').click()
+  await p2.getByTestId('board-title').click()
   await p2.getByTestId('board-new-more').click(); await p2.getByTestId('board-code-open').click()   // 「＋ 새 칠판 ▾」 메뉴 안(2026-10-28)
   await p2.getByTestId('board-code').fill('zzzz zzzz')                              // 없는 코드
   await p2.keyboard.press('Enter')

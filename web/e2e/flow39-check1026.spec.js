@@ -1,7 +1,7 @@
 // 흐름 39 — 10-26 실검증 손질: 스타일 복사 Alt+C/V(Ctrl+Alt+C = 윈도 Copilot) · 발표 레이저(끌면 빨간 자취·글 선택 안 잡힘, 도구를 켜면 그 커서) ·
 // 대화창 「취소」 한 줄(긴 진행 글에 눌려 세로였음) · 창을 닫으면 접속자 이름이 바로 빠짐(전엔 20초쯤 남음) · 선을 고르고 우클릭 「범례 넣기」(10-27)
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, clickScene, pickShape, dragScene, liveDoc, toPage, aiMake, morePick } from './helpers.js'
+import { boardName, openBoard, setCam, clickScene, pickShape, dragScene, liveDoc, toPage, aiMake, morePick, openPane } from './helpers.js'
 
 const menuBtns = page => page.locator('div[style*="z-index: 30"] > div > button').allInnerTexts()
 
@@ -121,7 +121,7 @@ test('도구 유지(Q·「유지」) — 켜면 그린 뒤에도 그 도구, 도
 })
 
 test('내 심볼 칸 — 제목 줄 누르면 접힘(새로고침해도 그대로) · 심볼에 마우스를 올리면 크게 보기', async ({ page }) => {
-  await openBoard(page, boardName('palfold'))
+  await openBoard(page, boardName('palfold')); await openPane(page, 'shape')   // 도형·심볼 = 떠 있는 판(처음엔 닫힘 — 2026-11-14 B1)
   const sec = page.getByTestId('pal-sec').filter({ hasText: '방송·기술' })
   await expect(sec.getByRole('button', { name: '카메라' })).toBeVisible()
   await sec.getByRole('button', { name: '카메라' }).hover()

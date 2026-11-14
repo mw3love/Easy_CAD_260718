@@ -1,6 +1,6 @@
 // 흐름 5 — 프레임으로 감싸기 → 순서 → 발표(넘기기·마지막 장 멈춤·판서·끝) → 새로고침
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, pickShape, dragScene, clickScene, liveDoc, waitSaved, morePick } from './helpers.js'
+import { boardName, openBoard, setCam, pickShape, dragScene, clickScene, liveDoc, waitSaved, morePick, openPane } from './helpers.js'
 
 test('프레임 셋 → 발표 넘기기·마지막에서 멈춤·판서는 끝나면 지움·「남기기」 = 「판서」 레이어 → 새로고침해도 프레임 순서 그대로', async ({ page }) => {
   const name = boardName('present')
@@ -16,7 +16,7 @@ test('프레임 셋 → 발표 넘기기·마지막에서 멈춤·판서는 끝�
   let doc = await liveDoc(page)
   const frames = doc.items.filter(it => it.type === 'frame')
   expect(frames).toHaveLength(3)
-  await page.getByTestId('dock-frame').click()                                    // 프레임 목록 = 왼쪽 판 「프레임」 칸(2026-10-23)
+  await openPane(page, 'frame')                                    // 프레임 목록 = 왼쪽 판 「프레임」 칸(2026-10-23)
   await expect(page.getByTestId('frame-row')).toHaveCount(3)
 
   await clickScene(page, 600, 700)   // 빈 곳 — 고른 프레임이 있으면 그 장부터 시작(의도된 동작)

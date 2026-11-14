@@ -1,6 +1,6 @@
 // 흐름 66 — 명령 찾기(Ctrl+K, 2026-11-08): 이름·초성·찾는 말로 찾기 · Enter/누르기 = 실행 · 고른 물건의 우클릭 명령도 · Esc/바깥/Ctrl+K = 닫기 · 닫은 뒤 칠판 글쇠 그대로
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, pickShape, dragScene, clickScene, liveDoc, menuPick } from './helpers.js'
+import { boardName, openBoard, setCam, pickShape, dragScene, clickScene, liveDoc, menuPick, openPane } from './helpers.js'
 
 const tool = (page, label) => page.getByRole('button', { name: label, exact: true })
 const bar = page => page.getByTestId('cmd-bar')
@@ -8,7 +8,7 @@ const rows = page => page.getByTestId('cmd-row')
 const box = async (page, x, y) => { await pickShape(page, '사각형'); await dragScene(page, { x, y }, { x: x + 120, y: y + 60 }) }
 
 test('열고 닫기 — Ctrl+K · 다시 Ctrl+K · Esc · 바깥 누르기, 입력 칸 안에서도 열림, 도움말 표에 있음', async ({ page }) => {
-  await openBoard(page, boardName('cmdopen')); await setCam(page)
+  await openBoard(page, boardName('cmdopen')); await setCam(page); await openPane(page, 'shape')   // 뒤에서 도형·심볼 검색 칸을 씀
   await page.keyboard.press('Control+k'); await expect(bar(page)).toBeVisible()
   await expect(bar(page).locator('input')).toBeFocused()
   await page.keyboard.press('Control+k'); await expect(bar(page)).toHaveCount(0)
