@@ -18,9 +18,9 @@ test('네모 글 → 메모(화살표 그대로·자리 가운데·Ctrl+Z 한 �
   await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'sarrow').length).toBe(1)
   const center = box.pos[0] + box.rect[2] / 2
 
-  // 속성 카드 머리말 → 목록 맨 위 「메모로 바꾸기」
+  // 속성 막대 「모양」 → 목록 맨 위 「메모로 바꾸기」
   await clickScene(page, 160, 140)
-  await page.getByTitle('다른 도형으로 바꾸기', { exact: false }).click()
+  await page.getByTestId('bar-swap').click()
   const list = page.getByTestId('pop-swap'), first = list.locator('button').first()
   await expect(first).toHaveAttribute('data-testid', 'convert-memo')
   await first.click()
@@ -35,10 +35,9 @@ test('네모 글 → 메모(화살표 그대로·자리 가운데·Ctrl+Z 한 �
   await page.keyboard.press('Control+y')
   await expect.poll(async () => (await liveDoc(page)).items.find(it => it.uid === box.uid).type).toBe('memo')
 
-  // 메모 = 머리말이 「다른 물건으로」 목록(사각형·글 상자)
-  await page.getByTitle('클릭: 다른 물건으로 바꾸기', { exact: false }).click()
-  await expect(page.getByTestId('pop-swap').locator('button')).toHaveCount(2)
-  await page.getByTestId('convert-rect').click()
+  // 메모 = ⋯ 메뉴의 「다른 물건으로」(사각형·글 상자 — 메모 막대엔 「모양」이 없음, 2026-11-14)
+  await page.getByTestId('bar-more').click()
+  await page.getByRole('menuitem', { name: '사각형으로 바꾸기' }).click()
   d = await liveDoc(page); m = d.items.find(it => it.uid === box.uid)
   expect(m.type).toBe('rect'); expect(m.label.text).toBe('• 송신기\n• 예비기'); expect(m.label.align).toBe('left')
 

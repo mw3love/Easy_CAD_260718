@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { boardName, openBoard, setCam, liveDoc, toPage, waitSaved } from './helpers.js'
+import { boardName, openBoard, setCam, liveDoc, toPage, waitSaved, openCard } from './helpers.js'
 
 const PDF_B64 = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'two-pages.pdf')).toString('base64')   // 1쪽 위 「Alpha line」·아래 「Bravo line」, 2쪽 「Charlie」
 const pasteFile = (page, name, type, b64) => page.evaluate(([n, t, b]) => {
@@ -118,6 +118,7 @@ test('Alt 누르면 십자 커서 + 「끌어서 오려 오기」 · 여러 번 
   await page.keyboard.press('Escape')                                       // 넘겨 보기 끝
   const ip0 = await toPage(page, imgs[2].pos[0] + 10, imgs[2].pos[1] + 5)
   // 오려 온 직후 = 그 그림만 고른 채 → 속성 카드 설명 = 첫 줄 + 접힌 글(2026-10-22 사용자: 너무 길어짐)
+  await openCard(page)                                                        // ⋯ 「속성 자세히…」(2026-11-14)
   await expect(page.getByTestId('image-alt')).toHaveText('two-pages.pdf · 1쪽')
   await expect(page.getByTestId('image-alt-more')).toContainText('들어 있음 ▸')
   await expect(page.getByText('Alpha line', { exact: true })).toHaveCount(0)

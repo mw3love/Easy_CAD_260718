@@ -84,8 +84,9 @@ test('여러 개 고르면 속성 카드 맨 위에 정렬 아이콘 줄 — 왼
   await openBoard(page, boardName('alignrow')); await setCam(page)
   for (const [x, y] of [[0, 0], [260, 140], [90, 300]]) { await pickShape(page, '사각형'); await dragScene(page, { x, y }, { x: x + 120, y: y + 60 }); await clickScene(page, 900, 600) }
   await clickScene(page, 60, 30)
-  await expect(page.getByTestId('align-row')).toHaveCount(0)                   // 하나만 고르면 없음
+  await expect(page.getByTestId('bar-arrange')).toHaveCount(0)                  // 하나만 고르면 없음
   await page.keyboard.press('Control+a')
+  await page.getByTestId('bar-arrange').click()                                // 속성 막대 맨 앞 「맞춤 · 분배」(2026-11-14)
   await expect(page.getByTestId('align-row')).toBeVisible()
   await page.getByRole('button', { name: '왼쪽 맞춤' }).click()
   let rs = (await liveDoc(page)).items.filter(it => it.type === 'rect')

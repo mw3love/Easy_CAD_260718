@@ -3,7 +3,7 @@
 // 첫 화면 규칙(CLAUDE.md): 폭 192, 제목 15px 굵게, 켜짐만 코랄.
 import TOOL_ICONS from './icons.json' with { type: 'json' }   // 위 막대 손그림 아이콘(메모·글자 — 「다른 물건으로」 목록)
 import { isMine, folderTitle } from './mysym.js'
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ColorChip, FloatPanel } from './colorpop.jsx'
 import { FmtButtons, edAct, edRun, edState, useEdTick } from './textfmt.jsx'
 import { FoldBtn, useFold } from './fold.jsx'
@@ -17,6 +17,7 @@ import { cellPt, labelNeedW, labelShownPt, tableAutoPt } from './render.jsx'
 import { WEB_ZOOMS } from './webcard.js'
 import { STYLE_NAMES, rowName } from './legend.js'
 import { CHART_KINDS, CHART_MIN, chartWhys, isChart } from './chart.js'
+import { convertLine } from './memo.js'
 const LG_WIDTHS = [0.5, 1, 1.5, 2, 3, 4, 5, 6, 8]
 // 글 있는 칸들의 지금 크기(pt)
 const tableCellPts = it => { const out = []; for (let r = 0; r < it.rows; r++) for (let c = 0; c < it.cols; c++) if (it.cells?.[r]?.[c]) out.push(cellPt(it, r, c)); return out.length ? out : [tableAutoPt(it)] }
@@ -174,9 +175,9 @@ const ALIGNS = [
   ['bottom', '아래쪽 맞춤', AL(<path d="M1.5 14h13" />, [[3.5, 6.5, 3, 7], [9.5, 2.5, 3, 11]])],
 ]
 const DISTS = [['x', '가로 균등 분배(3개부터)', AL(<path d="M1.5 2v12M14.5 2v12" />, [[6.5, 4, 3, 8]])], ['y', '세로 균등 분배(3개부터)', AL(<path d="M2 1.5h12M2 14.5h12" />, [[4, 6.5, 8, 3]])]]
-function AlignRow({ align }) {   // 정렬 여섯 한 줄 + 분배 둘 아랫줄(2026-11-10 4단계 사용자 고름 — 20px 여덟 개가 누르기 작았음)
+function AlignRow({ align, bare }) {   // bare = 속성 막대 펼침 속(카드 구분선 없음)   // 정렬 여섯 한 줄 + 분배 둘 아랫줄(2026-11-10 4단계 사용자 고름 — 20px 여덟 개가 누르기 작았음)
   const b = dis => btn(false, { width: 28, height: 26, flex: 'none', opacity: dis ? 0.35 : 1, cursor: dis ? 'default' : 'pointer' })
-  return <div data-testid="align-row" style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingBottom: 4, marginBottom: 2, borderBottom: `1px solid ${C.line}` }}>
+  return <div data-testid="align-row" style={{ display: 'flex', flexDirection: 'column', gap: 2, ...(bare ? {} : { paddingBottom: 4, marginBottom: 2, borderBottom: `1px solid ${C.line}` }) }}>
     <div style={{ display: 'flex', justifyContent: 'space-between' }}>{ALIGNS.map(([m, t, ic]) => <button key={m} title={t} aria-label={t} onClick={() => align.align(m)} style={b(false)}>{ic}</button>)}</div>
     <div style={{ display: 'flex', gap: 2 }}>{DISTS.map(([a, t, ic]) => <button key={a} title={t} aria-label={t.replace(/\(.*\)/, '')} disabled={align.n < 3} onClick={() => align.dist(a)} style={b(align.n < 3)}>{ic}</button>)}</div>
   </div>
@@ -223,12 +224,12 @@ function Stepper({ values, step = 1, fmt = v => v, onStep, onSet, title, grow, t
   </div>
 }
 // 선 모양 고르기 — 지금 모양 버튼 + 떠 있는 목록(카드에 안 잘림, 고르는 동안 열린 채 — 닫기는 바깥·Esc). 속성 카드 선 줄·범례 줄 공용
-function DashPick({ id, pop, setPop, value, onPick, title = '선 모양' }) {
+function DashPick({ id, pop, setPop, value, onPick, title = '선 모양', bar }) {   // bar = 속성 막대 단추(32 높이, 바탕 없음)
   const ref = useRef(null), open = pop === id
   return <div ref={ref} data-ppop={id} style={{ flex: 'none' }}>
-    <button title={title} aria-label={title} aria-expanded={open} onClick={() => setPop(open ? null : id)} style={btn(open, { width: 52, background: C.seg, justifyContent: 'space-between', padding: '0 6px' })}>
+    <button title={title} aria-label={title} aria-haspopup="true" aria-expanded={open} onClick={() => setPop(open ? null : id)} style={btn(open, bar ? { width: 46, height: 32, gap: 2, padding: '0 4px' } : { width: 52, background: C.seg, justifyContent: 'space-between', padding: '0 6px' })}>
       {value ? <svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" stroke="currentColor" strokeWidth="2" strokeDasharray={DASH[value]} strokeLinecap="round" /></svg> : <span style={{ fontSize: 11, color: C.muted }}>섞임</span>}<span style={{ color: C.muted }}>▾</span></button>
-    {open && <FloatPanel anchor={ref} id={id} width={126} testid={'pop-' + id}>
+    {open && <FloatPanel autoFocus anchor={ref} id={id} width={126} testid={'pop-' + id}>
       {STYLES.map(([st, name]) => <button key={st} title={name} onClick={() => onPick(st)} style={btn(value === st, { width: '100%', justifyContent: 'space-between', padding: '0 8px' })}>
         {dashIcon(st)}<span style={{ fontSize: 11, color: C.muted }}>{name}</span></button>)}
     </FloatPanel>}
@@ -254,21 +255,25 @@ function chartPatch(it, k) {
 }
 const wrap360 = a => +((((a % 360) + 360) % 360).toFixed(1))
 
-// items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
-// kind = 고른 것이 모두 화살표이고 종류가 같으면 그것('straight'|'curved'|'ortho'), onKind(k) = 화살표 종류 바꾸기
-// 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)
-export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, convert = [], onConvert, dark, cells, setCells, onLegend, align, liveEd }) {
-  const swapRef = useRef(null)
-  const [pop, setPop] = useState(null)   // 지금 열린 펼침 하나 — 'swap'·'dash'·색 칸 이름(한 번에 하나만)
+// 지금 열린 펼침 하나(한 번에 하나만) — 그 펼침(버튼 포함) 밖을 누르거나 Esc면 닫음. 속성 카드·속성 막대 공용
+function usePop() {
+  const [pop, setPop] = useState(null)
   useEffect(() => {
     if (!pop) return
-    const down = e => { if (e.target.closest?.('[data-ppop]')?.dataset.ppop !== pop) setPop(null) }   // 그 펼침(버튼 포함) 밖을 누르면 닫음
-    const key = e => { if (e.key === 'Escape') { e.stopImmediatePropagation(); setPop(null) } }   // 칠판의 Esc(고른 것 풀기)보다 먼저
+    const down = e => { if (e.target.closest?.('[data-ppop]')?.dataset.ppop !== pop) setPop(null) }
+    const key = e => { if (e.key !== 'Escape') return
+      if (e.target.tagName === 'INPUT' && e.target.type === 'text' && e.target.closest?.('[data-ppop]')?.dataset.ppop === pop) return   // 펼침 속 입력 칸(숫자 직접 입력·색 코드)은 그 칸이 먼저 = 친 것 취소(전엔 펼침이 먼저 닫혀 떠나며 저장됐음)
+      e.stopImmediatePropagation()   // 칠판의 Esc(고른 것 풀기)보다 먼저
+      if (document.activeElement?.closest?.('[data-ppop]')?.dataset.ppop === pop) document.querySelector(`div[data-ppop="${pop}"] > button[aria-expanded]`)?.focus()   // 펼침 안에 초점이 있었으면 연 단추로(2026-11-14 — 펼침이 사라지며 초점이 길을 잃었음)
+      setPop(null) }
     window.addEventListener('pointerdown', down, true); window.addEventListener('keydown', key, true)
     return () => { window.removeEventListener('pointerdown', down, true); window.removeEventListener('keydown', key, true) }
   }, [pop])
-  const [f0, toggleFold] = useFold('props'), narrow = (document.querySelector('[data-testid=board]')?.clientWidth || 999) < 400, [open1, setOpen1] = useState(false)
-  const folded = narrow ? !open1 : f0   // 칠판 폭 400 미만 = 접힌 채 시작(2026-11-10 4단계 사용자 고름 — 고른 도형을 덮었음), 펼치면 이번만
+  return [pop, setPop]
+}
+
+// 고른 것에서 읽는 값들 — 속성 카드와 속성 막대(2026-11-14)가 같이 씀. set·liveEd는 숫자 칸·꾸밈 버튼이 씀
+function selFacts(items, set, liveEd) {
   const one = v => (v.length && v.every(x => x === v[0]) ? v[0] : null)
   const arrows = items.filter(isArrow), allArrows = arrows.length === items.length
   const lineItems = items.filter(lineKey), wItems = items.filter(hasWidth), fillItems = items.filter(fillKey)
@@ -291,7 +296,6 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, con
   const rotItems = items.filter(it => ROTATABLE.has(it.type))
   const hlItems = items.filter(hlHost)
   const haItems = items.filter(it => (it.type === 'text' ? !!it.text?.trim() : ['rect', 'ellipse', 'symbol', 'polygon'].includes(it.type) && !!it.label?.text?.trim()))   // 글 정렬 — 독립 글·도형 안 글(선·화살표 글은 선 가운데라 뺌, 2026-10-27 밤)
-  useEdTick(liveEd)   // 고치는 중 = 편집기 커서·고른 글자가 바뀔 때마다 켜짐 상태 다시
   const edLive = liveEd && !liveEd.isDestroyed ? liveEd : null
   const fmtSt = edLive ? edState(edLive) : Object.fromEntries(['bold', 'italic', 'underline', 'strike', 'code', 'hl'].map(k => [k, hlItems.length > 0 && hlItems.every(it => fmtOn(hlHost(it), k))]))
   const fmtAct = k => (edLive ? edAct(edLive, k, true) : set(it => patchFmt(it, k, !fmtSt[k]), { bold: '굵게', italic: '기울임', underline: '밑줄', strike: '취소선', code: '코드', hl: '형광펜' }[k]))
@@ -302,14 +306,54 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, con
     onStep: d => { const ids = new Set(list.map(it => it._id)); set(it => (ids.has(it._id) ? write(it, stepClamp(get(it) ?? d0, d, min, max, step)) : null), name, name) },
     onSet: v => { const ids = new Set(list.map(it => it._id)); set(it => (ids.has(it._id) ? write(it, stepClamp(v, 0, min, max, step)) : null), name) } })
   const onArrows = f => it => (isArrow(it) ? f(it) : null)
+  const fontValues = texts.length ? texts.flatMap(t => t.fonts || [t.font]) : [items[0]?.label?.font || items[0]?.font || 16]
+  return { one, arrows, allArrows, lineItems, wItems, fillItems, texts, boardsOnly, allText, showLine, symName, title, color, style, fill, fillMixed, head, tColor, swapOne, swapGrp, rotItems, hlItems, haItems, edLive, fmtSt, fmtAct, tables, ptFmt, fillLabel, num, onArrows, fontValues }
+}
+
+// 글자 크기 −/+ (표면 「자동」 켜고 끄기도) — 속성 카드 「크기」 줄·속성 막대 「글 크기」 펼침 공용
+function FontStep({ F, items, set }) {
+  const { edLive, tables } = F
+  return <>
+    <Stepper testid="font-step" title="글자 크기" onSet={v => { const pt = stepClamp(v, 0, 2, 200, 1)
+        set(it => { if (it.type === 'table') return { ...clearTableFont(it), font: pt }; const p = patchTexts(it, () => ({ font: pt })) ?? (edLive ? (it.type === 'text' ? { font: pt } : { label: { ...(it.label || { text: '' }), font: pt } }) : null); return growToFit(it, p) }, '글자 크기') }} values={F.fontValues} onStep={d => set(it => { if (it.type === 'table' && !it.font) return stepTableCells(it, d); const p = patchTexts(it, t => ({ font: stepClamp(t.font, d, 2, 200, 1) })) ?? (edLive ? (it.type === 'text' ? { font: stepClamp(it.font || 12, d, 2, 200, 1) } : { label: { ...(it.label || { text: '' }), font: stepClamp(it.label?.font || 16, d, 2, 200, 1) } }) : null)   // 새 상자에 치는 중(글이 아직 안 들어감)이어도
+        return d > 0 ? growToFit(it, p) : p }, '글자 크기', '글자 크기')} fmt={F.ptFmt} />
+    {tables.length > 0 && (() => { const on = !items.some(hasFixedFont)
+      return <AutoToggle on={on} onClick={() => set(it => (it.type !== 'table' ? null : on ? stepTableCells(it, 0) : clearTableFont(it)), on ? '글자 크기 고정' : '글자 크기 자동')} /> })()}
+  </>
+}
+
+// 도형 바꾸기 목록(맨 위 「다른 물건으로」 + 기본 도형 8 + 내 심볼) — 속성 카드 머리말·속성 막대 「모양」 공용. close = 고른 뒤 닫기
+function SwapList({ F, set, convert, onConvert, library, onSwapTo, dark, close }) {
+  const { swapOne, swapGrp } = F
+  return <>
+    {convert.length > 0 && <ConvertList convert={convert} onConvert={to => { onConvert(to); close() }} top={!swapOne && !swapGrp} />}   {/* 맨 위 — 끝에 두면 내 심볼 밑이라 스크롤해야 보였음(2026-11-02 실검증) */}
+    {(swapOne || swapGrp) && SWAP_KINDS.map(k => <button key={k} aria-current={!!swapOne && k === kindOf(swapOne) ? 'true' : undefined} onClick={() => { if (swapGrp) onSwapTo(swapGrp, k === 'rect' || k === 'ellipse' ? k : 'sym:' + k); else if (k !== kindOf(swapOne)) set(it => (it._id === swapOne._id ? swapPatch(k) : null), '도형 바꾸기'); close() }}
+      style={btn(!!swapOne && k === kindOf(swapOne), { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>{shapeIcon(k)}<span style={{ fontSize: 12 }}>{kindName(k)}</span></button>)}
+    {/* 내 심볼 — 폴더마다 구분선(데스크톱 `_fill_swap_menu`). 묶음으로 바뀌고 라벨은 안 옮김(여러 조각 중 어디에 둘지 애매 — 데스크톱과 같음) */}
+    {(swapOne || swapGrp) && (library?.folders || []).map(f => { const list = (library.symbols || []).filter(s => s.folder === f); if (!list.length) return null
+      return <div key={f}><div style={{ borderTop: `1px solid ${C.line}`, margin: '3px 0', padding: '3px 8px 0', fontSize: 11, color: C.muted }}>{folderTitle(f)}{isMine(f) ? ' · 이 브라우저' : ''}</div>
+        {list.map(s => <button key={s.id} onClick={() => { onSwapTo(swapGrp || [swapOne._id], 'customsym:' + s.id); close() }} style={btn(false, { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>
+          <img alt="" src={'data:image/png;base64,' + s.thumb} width="20" height="20" style={{ filter: dark ? 'invert(1) hue-rotate(180deg)' : undefined }} />
+          <span style={{ fontSize: 12, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.name}</span></button>)}</div> })}
+  </>
+}
+
+// 옛 오른쪽 위 「속성」 카드 — 2026-11-14부터 속성 막대 ⋯ 「속성 자세히…」로만 엶(표 칸·그래프·범례·프레임·회전 숫자처럼 막대에 없는 것). onClose = 닫기 ✕
+// items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
+// kind = 고른 것이 모두 화살표이고 종류가 같으면 그것('straight'|'curved'|'ortho'), onKind(k) = 화살표 종류 바꾸기
+// 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)
+export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, convert = [], onConvert, dark, cells, setCells, onLegend, align, liveEd, onClose }) {
+  const swapRef = useRef(null)
+  const [pop, setPop] = usePop()   // 지금 열린 펼침 하나 — 'swap'·'dash'·색 칸 이름(한 번에 하나만)
+  const [f0, toggleFold] = useFold('props'), narrow = (document.querySelector('[data-testid=board]')?.clientWidth || 999) < 400, [open1, setOpen1] = useState(false)
+  const folded = onClose ? false : narrow ? !open1 : f0   // 칠판 폭 400 미만 = 접힌 채 시작(2026-11-10 4단계 사용자 고름 — 고른 도형을 덮었음), 펼치면 이번만 · ⋯로 연 카드는 늘 펼침
+  useEdTick(liveEd)   // 고치는 중 = 편집기 커서·고른 글자가 바뀔 때마다 켜짐 상태 다시
+  const F = selFacts(items, set, liveEd)
+  const { one, arrows, allArrows, lineItems, wItems, fillItems, texts, boardsOnly, allText, showLine, symName, title, color, style, fill, fillMixed, head, tColor, swapOne, swapGrp, rotItems, hlItems, haItems, edLive, fmtSt, fmtAct, tables, fillLabel, num, onArrows } = F
   // 글자 줄들 — 크기 · 색 · (굵게 · 형광펜). 글만 골랐으면 카드 맨 위에(글이 주인공 — 2026-10-23)
   const hasText = (texts.length > 0 || !!edLive) && !cells   // 고치는 중이면 글이 아직 안 들어갔어도(새 상자에 치는 중)
   const textRows = hasText && <>
-    <Row label="크기"><Stepper testid="font-step" title="글자 크기" onSet={v => { const pt = stepClamp(v, 0, 2, 200, 1)
-        set(it => { if (it.type === 'table') return { ...clearTableFont(it), font: pt }; const p = patchTexts(it, () => ({ font: pt })) ?? (edLive ? (it.type === 'text' ? { font: pt } : { label: { ...(it.label || { text: '' }), font: pt } }) : null); return growToFit(it, p) }, '글자 크기') }} values={texts.length ? texts.flatMap(t => t.fonts || [t.font]) : [items[0]?.label?.font || items[0]?.font || 16]} onStep={d => set(it => { if (it.type === 'table' && !it.font) return stepTableCells(it, d); const p = patchTexts(it, t => ({ font: stepClamp(t.font, d, 2, 200, 1) })) ?? (edLive ? (it.type === 'text' ? { font: stepClamp(it.font || 12, d, 2, 200, 1) } : { label: { ...(it.label || { text: '' }), font: stepClamp(it.label?.font || 16, d, 2, 200, 1) } }) : null)   // 새 상자에 치는 중(글이 아직 안 들어감)이어도
-        return d > 0 ? growToFit(it, p) : p }, '글자 크기', '글자 크기')} fmt={ptFmt} />
-      {tables.length > 0 && (() => { const on = !items.some(hasFixedFont)
-        return <AutoToggle on={on} onClick={() => set(it => (it.type !== 'table' ? null : on ? stepTableCells(it, 0) : clearTableFont(it)), on ? '글자 크기 고정' : '글자 크기 자동')} /> })()}</Row>
+    <Row label="크기"><FontStep F={F} items={items} set={set} /></Row>
     <Row label="색"><ColorChip id="text" pop={pop} setPop={setPop} keepEdit={!!edLive} value={edLive ? edState(edLive).color || tColor : tColor} title="글자 색"
       onPick={(c, drag) => (edLive ? edRun(edLive, ch => ch.setColor(c), true) : set(it => patchTexts(it, () => ({ color: c })), '글자 색', drag ? 'tcolor' : null))} /></Row>
     {haItems.length > 0 && <Row label="정렬"><Seg value={one(haItems.map(it => (it.type === 'text' ? it.ha || 'left' : it.label?.ha || 'center')))}
@@ -326,15 +370,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, con
         <button title="다른 도형으로 바꾸기(크기·연결 유지)" aria-haspopup="true" aria-expanded={pop === 'swap'} onClick={() => setPop(pop === 'swap' ? null : 'swap')} style={btn(pop === 'swap', { width: '100%', justifyContent: 'flex-start', gap: 6, padding: '0 4px', height: 28 })}>
           {swapOne ? shapeIcon(kindOf(swapOne)) : null}<span data-testid="prop-type" title={symName && items.length > 1 ? `${symName} · 조각 ${items.length}개` : undefined} style={{ font: "700 15px 'Pretendard', sans-serif", overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{swapOne ? title : symName || `묶음 ${items.length}개`}</span><span style={{ color: C.muted, marginLeft: 'auto' }}>▾</span></button>
         {pop === 'swap' && <FloatPanel anchor={swapRef} id="swap" width={180} testid="pop-swap">   {/* 떠 있는 목록 — 카드 안에 펼쳐 스크롤이 생겼음(2026-10-23 전수조사) */}
-          {convert.length > 0 && <ConvertList convert={convert} onConvert={to => { onConvert(to); setPop(null) }} />}   {/* 맨 위 — 끝에 두면 내 심볼 밑이라 스크롤해야 보였음(2026-11-02 실검증) */}
-          {SWAP_KINDS.map(k => <button key={k} aria-current={!!swapOne && k === kindOf(swapOne) ? 'true' : undefined} onClick={() => { if (swapGrp) onSwapTo(swapGrp, k === 'rect' || k === 'ellipse' ? k : 'sym:' + k); else if (k !== kindOf(swapOne)) set(it => (it._id === swapOne._id ? swapPatch(k) : null), '도형 바꾸기'); setPop(null) }}
-            style={btn(!!swapOne && k === kindOf(swapOne), { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>{shapeIcon(k)}<span style={{ fontSize: 12 }}>{kindName(k)}</span></button>)}
-          {/* 내 심볼 — 폴더마다 구분선(데스크톱 `_fill_swap_menu`). 묶음으로 바뀌고 라벨은 안 옮김(여러 조각 중 어디에 둘지 애매 — 데스크톱과 같음) */}
-          {(library?.folders || []).map(f => { const list = (library.symbols || []).filter(s => s.folder === f); if (!list.length) return null
-            return <div key={f}><div style={{ borderTop: `1px solid ${C.line}`, margin: '3px 0', padding: '3px 8px 0', fontSize: 11, color: C.muted }}>{folderTitle(f)}{isMine(f) ? ' · 이 브라우저' : ''}</div>
-              {list.map(s => <button key={s.id} onClick={() => { onSwapTo(swapGrp || [swapOne._id], 'customsym:' + s.id); setPop(null) }} style={btn(false, { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>
-                <img alt="" src={'data:image/png;base64,' + s.thumb} width="20" height="20" style={{ filter: dark ? 'invert(1) hue-rotate(180deg)' : undefined }} />
-                <span style={{ fontSize: 12, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.name}</span></button>)}</div> })}
+          <SwapList F={F} set={set} convert={convert} onConvert={onConvert} library={library} onSwapTo={onSwapTo} dark={dark} close={() => setPop(null)} />
         </FloatPanel>}
       </div>
       : convert.length > 0 && !folded ? <div ref={swapRef} data-ppop="swap" style={{ flex: 1, minWidth: 0 }}>   {/* 메모·글 상자 = 머리말을 누르면 다른 물건으로(2026-11-02) */}
@@ -343,7 +379,8 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, con
         {pop === 'swap' && <FloatPanel anchor={swapRef} id="swap" width={180} testid="pop-swap"><ConvertList convert={convert} onConvert={to => { onConvert(to); setPop(null) }} top /></FloatPanel>}
       </div>
       : <span data-testid="prop-type" style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</span>}
-      <FoldBtn minus folded={folded} onClick={narrow ? () => setOpen1(o => !o) : toggleFold} /></div>
+      {onClose ? <button data-testid="props-close" className="mb-hit" aria-label="속성 카드 닫기" title="닫기" onClick={onClose} style={btn(false, { position: 'relative', width: 24, flex: 'none', color: C.muted })}>✕</button>
+        : <FoldBtn minus folded={folded} onClick={narrow ? () => setOpen1(o => !o) : toggleFold} />}</div>
     {!folded && align?.n >= 2 && <AlignRow align={align} />}
     {allArrows && <Row label="종류"><Seg value={kind} onPick={onKind} items={[['straight', ICONS.straight, '직선'], ['curved', ICONS.curved, '곡선'], ['ortho', ICONS.ortho, '직각']]} /></Row>}
     {allText && textRows}
@@ -442,5 +479,111 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, con
       <div style={{ fontWeight: 600 }}>글자{edLive && <span data-testid="fmt-scope" style={{ fontWeight: 400, fontSize: 11, color: C.muted }}> · {edLive.state.selection.empty ? '글 전체에' : '드래그한 글자에만'}</span>}</div>
       {textRows}
     </>}
+  </div>
+}
+
+// ── 고른 물건 위 한 줄 속성 막대(2026-11-14 화면 틀 B1 4단계 — 시안 6라운드 Q1, 사용자 「모두 q1」: 「한 번 클릭」이 막대 길이보다 이김) ──
+// 속성 하나 = 단추 하나, 지금 값이 단추에 보이고 누르면 그 단추 밑에 펼침. 도형 = 모양 | 선 색·채움·굵기·선 모양 | 글 크기·굵게·정렬·글자 색 | 잠금·⋯,
+// 화살표 = 종류·촉 | 선 색·굵기·선 모양 | 라벨 크기 | ⋯, 메모 = 바탕 | 글 크기·굵게·기울임·목록 | 잠금·⋯(메모 정렬은 메모에 정렬 칸이 없어 뺌).
+// ⋯ = 우클릭 메뉴 그대로 + 맨 위 「속성 자세히…」(옛 카드 — 표 칸·그래프·범례·프레임·회전 숫자처럼 막대에 없는 것, Editor가 엶).
+// 자리 = 고른 것 위 12(모자라면 아래, 그것도 모자라면 섬 바로 아래). 글을 드래그해 고르면 꾸미기 막대(formatbar)가 뜨니 이 막대는 비킴(숨김).
+const BAR_H = 40, BAR_GAP = 12
+const bb = (on, extra) => btn(on, { height: 32, minWidth: 32, padding: '0 6px', flex: 'none', whiteSpace: 'nowrap', fontSize: 13, ...extra })
+const BarSep = () => <span aria-hidden style={{ width: 1, height: 20, background: C.line, margin: '0 3px', flex: 'none' }} />
+const Caret = () => <span aria-hidden style={{ color: C.muted, fontSize: 9 }}>▾</span>
+const LOCK = on => <Svg><rect x="4" y="7.5" width="10" height="7" rx="1.5" />{on ? <path d="M6 7.5V5.5a3 3 0 0 1 6 0v2" /> : <path d="M6 7.5V5.5a3 3 0 0 1 5.8-1.1" />}</Svg>
+const LIST_ICON = <Svg><path d="M7 4.5H15M7 8H15M7 11.5H15" /><circle cx="3.5" cy="4.5" r=".9" fill="currentColor" /><circle cx="3.5" cy="8" r=".9" fill="currentColor" /><circle cx="3.5" cy="11.5" r=".9" fill="currentColor" /></Svg>
+const MEMO_LISTS = [['p', '텍스트'], ['ul', '글머리 기호'], ['ol', '번호 매기기'], ['todo', '할 일']]
+const memoTextLine = l => !['code', 'hr', 'table'].includes(l.k) && !!(l.t || '').length
+const memoLinesOf = items => items.flatMap(it => (it.lines || []).filter(memoTextLine))
+const memoMarkOn = (items, k, l) => { const ls = memoLinesOf(items); return ls.length > 0 && ls.every(x => allChars({ text: x.t, runs: x.runs }, k, l)) }
+const memoMark = (it, k, v) => ({ lines: (it.lines || []).map(x => { if (!memoTextLine(x)) return x; const runs = runsWith(x.t, x.runs, k, v), o = { ...x }; if (runs.length) o.runs = runs; else delete o.runs; return o }) })
+const rangeText = (vs, f = v => v) => { const lo = Math.min(...vs), hi = Math.max(...vs); return hi - lo > 1e-9 ? `${f(lo)}~${f(hi)}` : String(f(lo)) }
+
+// 펼침 단추 — id = 펼침 이름(한 번에 하나), label = 단추에 보이는 지금 값, children = 펼친 판 속, keep = 글 고치는 중(편집기 초점을 지킴)
+function PopBtn({ id, pop, setPop, title, label, width = 180, children, keep }) {
+  const ref = useRef(null), open = pop === id
+  return <div ref={ref} data-ppop={id} style={{ display: 'flex', flex: 'none' }}>
+    <button data-testid={'bar-' + id} title={title} aria-label={title} aria-haspopup="true" aria-expanded={open} onClick={() => setPop(open ? null : id)} style={bb(open, { gap: 3 })}>{label}<Caret /></button>
+    {open && <FloatPanel autoFocus={!keep} anchor={ref} id={id} width={width} testid={'pop-' + id}><div onMouseDown={e => { if (keep && e.target.tagName !== 'INPUT') e.preventDefault() }} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 3 }}>{children}</div></FloatPanel>}
+  </div>
+}
+const Toggle = ({ on, title, onClick, children, testid }) => <button data-testid={testid} title={title} aria-label={title.split(' (')[0].split(' — ')[0]} aria-pressed={!!on} onClick={onClick} style={bb(on)}>{children}</button>
+
+// box = 고른 것 전체의 화면 자리(px, 칠판 칸 기준), size = 칠판 칸 크기. 나머지는 속성 카드와 같음 + onLock(잠금 켜고 끄기)·onMore(⋯ 단추 → 메뉴)·cells(표 칸 고름 = 글 단추 숨김)
+export function PropBar({ box, size, items, kind, set, onKind, library, onSwapTo, convert = [], onConvert, dark, align, liveEd, onLock, onMore, cells }) {
+  const [pop, setPop] = usePop(), me = useRef(null), [w, setW] = useState(0), [ins, setIns] = useState({ top: 60, right: 0 })
+  useEdTick(liveEd)
+  const idsKey = items.map(it => it._id).join()
+  useEffect(() => { setPop(null) }, [idsKey])   // eslint-disable-line react-hooks/exhaustive-deps — 다른 것을 고르면 펼침 닫음
+  useLayoutEffect(() => {
+    const el = me.current; if (!el) return
+    if (el.offsetWidth !== w) setW(el.offsetWidth)
+    const cs = el.offsetParent && getComputedStyle(el.offsetParent), t = cs ? parseFloat(cs.getPropertyValue('--mb-top')) || 60 : 60, r = cs ? parseFloat(cs.getPropertyValue('--mb-right-inset')) || 0 : 0
+    if (t !== ins.top || r !== ins.right) setIns({ top: t, right: r })
+  })
+  const F = selFacts(items, set, liveEd)
+  const { one, arrows, allArrows, wItems, fillItems, texts, boardsOnly, allText, showLine, color, style, fill, fillMixed, head, tColor, swapOne, swapGrp, hlItems, haItems, edLive, fmtSt, fmtAct, fillLabel, num, onArrows } = F
+  if (edLive && !edLive.state.selection.empty) return null   // 꾸미기 막대가 맡음(둘이 겹쳐 뜨지 않게)
+  if (box.x + box.w < 0 || box.y + box.h < 0 || box.x > size.w || box.y > size.h) return null   // 고른 것이 화면 밖
+  const memoMode = items.every(it => it.type === 'memo'), memos = items.filter(it => it.type === 'memo')
+  const locked = items.every(it => it.locked), keep = !!edLive
+  const P = { pop, setPop, keep }
+  const hasText = (texts.length > 0 || !!edLive) && !cells
+
+  const lineColor = showLine && <ColorChip compact id="line" keepEdit={keep} pop={pop} setPop={setPop} value={color} title={boardsOnly ? '바탕 색' : '선 색'}
+    onPick={(c, drag) => set(it => (lineKey(it) ? { [lineKey(it)]: c } : null), boardsOnly ? '바탕 색' : '색', drag ? 'color' : null)} />
+  const fillChip = fillItems.length > 0 && <ColorChip compact fill id="fill" keepEdit={keep} pop={pop} setPop={setPop} value={fillMixed ? undefined : fill} title={memoMode ? '메모 바탕' : fillLabel}
+    onPick={(c, drag) => set(it => { const k = fillKey(it); return k ? { [k]: k === 'bg' ? argbToBg(c) : c } : null }, memoMode ? '메모 바탕' : fillLabel, drag ? 'fill' : null)} />
+  const widthBtn = showLine && wItems.length > 0 && <PopBtn {...P} id="width" title="선 굵기" width={150} label={<span style={{ fontVariantNumeric: 'tabular-nums' }}>{rangeText(wItems.map(it => it.width ?? 1), v => +(+v).toFixed(1))}px</span>}>
+    <Stepper grow testid="width-step" title="선 굵기" {...num(wItems, it => it.width, 1, 1, 40, 1, '굵기', (it, v) => ({ width: v }))} fmt={v => +(+v).toFixed(1) + 'px'} /></PopBtn>
+  const dashBtn = showLine && wItems.length > 0 && <DashPick bar id="dash" pop={pop} setPop={setPop} value={style} onPick={st => set(it => (hasWidth(it) ? { style: st } : null), '선 모양', 'dash')} />
+  const fontBtn = hasText && <PopBtn {...P} id="font" title={allArrows ? '라벨 글자 크기' : '글자 크기'} width={170} label={<span style={{ fontVariantNumeric: 'tabular-nums' }}>{rangeText(F.fontValues, v => Math.round(v))}</span>}>
+    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}><FontStep F={F} items={items} set={set} /></div></PopBtn>
+  const boldBtn = hasText && (hlItems.length > 0 || edLive) && <Toggle testid="bar-bold" on={fmtSt.bold} title="굵게 (Ctrl+B)" onClick={() => fmtAct('bold')}><b>B</b></Toggle>
+  const haNow = haItems.length ? one(haItems.map(it => (it.type === 'text' ? it.ha || 'left' : it.label?.ha || 'center'))) : null
+  const alignBtn = hasText && haItems.length > 0 && <PopBtn {...P} id="talign" title="글 정렬" width={130} label={ALIGN_ICON[haNow || 'center']}>
+    <Seg value={haNow} onPick={v => { const ids = new Set(haItems.map(it => it._id)); set(it => (!ids.has(it._id) ? null : it.type === 'text' ? { ha: v === 'left' ? undefined : v } : { label: { ...it.label, ha: v === 'center' ? undefined : v } }), '글 정렬') }}
+      items={[['left', ALIGN_ICON.left, '왼쪽 맞춤'], ['center', ALIGN_ICON.center, '가운데 맞춤'], ['right', ALIGN_ICON.right, '오른쪽 맞춤']]} /></PopBtn>
+  const tColorChip = hasText && !allArrows && <ColorChip compact glyph id="text" pop={pop} setPop={setPop} keepEdit={keep} value={edLive ? edState(edLive).color || tColor : tColor} title="글자 색"
+    onPick={(c, drag) => (edLive ? edRun(edLive, ch => ch.setColor(c), true) : set(it => patchTexts(it, () => ({ color: c })), '글자 색', drag ? 'tcolor' : null))} />
+  const lockBtn = <Toggle testid="bar-lock" on={locked} title={locked ? '잠금 풀기 (Ctrl+L)' : '잠그기 — 옮기기·지우기·고치기를 막아요 (Ctrl+L)'} onClick={onLock}>{LOCK(locked)}</Toggle>
+  const moreBtn = <button data-testid="bar-more" title="더 보기 — 회전·순서·복제·묶기·지우기·속성 자세히" aria-label="더 보기" aria-haspopup="menu" onClick={e => { setPop(null); onMore(e.currentTarget) }} style={bb(false, { fontSize: 16, letterSpacing: 1 })}>⋯</button>
+
+  let groups
+  if (allArrows) {
+    groups = [
+      [<PopBtn key="k" {...P} id="akind" title="화살표 종류" width={150} label={ICONS[kind || 'straight']}>
+        <Seg value={kind} onPick={onKind} items={[['straight', ICONS.straight, '직선'], ['curved', ICONS.curved, '곡선'], ['ortho', ICONS.ortho, '직각']]} />
+        {kind === 'ortho' && <Stepper grow title="꺾인 곳 둥글기(0 = 각짐)" {...num(arrows, a => a.curve_r, 10, 0, 40, 1, '꺾임 둥글기', (a, v) => ({ curve_r: v }))} fmt={v => '꺾임 ' + v} />}</PopBtn>,
+      <PopBtn key="h" {...P} id="head" title="화살촉" width={170} label={ICONS[head || 'end']}>
+        <Seg value={head} onPick={h => set(onArrows(() => ({ head: h === 'end' || h === 'both', head_start: h === 'start' || h === 'both' })), '화살촉')} items={[['none', ICONS.none, '없음'], ['end', ICONS.end, '끝만'], ['both', ICONS.both, '양쪽'], ['start', ICONS.start, '시작만']]} />
+        <Stepper grow title="화살촉 크기 배율" {...num(arrows, a => a.head_scale, 1, 0.5, 3, 0.1, '촉 크기', (a, v) => ({ head_scale: v }))} fmt={v => '촉 ' + v.toFixed(1) + '×'} /></PopBtn>],
+      [lineColor, widthBtn, dashBtn], [fontBtn], [moreBtn]]
+  } else if (memoMode) {
+    const bOn = memoMarkOn(memos, 1), iOn = memoMarkOn(memos, 4, 'i'), lk = one(memos.flatMap(m => (m.lines || []).filter(l => ['p', 'ul', 'ol', 'todo', 'quote'].includes(l.k)).map(l => l.k)))
+    groups = [[fillChip],
+      [<PopBtn key="s" {...P} id="mscale" title="메모 글 크기(메모 통째 배율)" width={150} label={<span style={{ fontVariantNumeric: 'tabular-nums' }}>{rangeText(memos.map(m => Math.round((m.scale || 1) * 100)))}%</span>}>
+        <Stepper grow testid="memo-scale" title="메모 글 크기" {...num(memos, m => Math.round((m.scale || 1) * 100), 100, 50, 400, 10, '메모 글 크기', (m, v) => ({ scale: v / 100 }))} fmt={v => v + '%'} /></PopBtn>,
+      <Toggle key="b" testid="memo-bold" on={bOn} title="굵게 — 메모 글 전체" onClick={() => set(it => (it.type === 'memo' ? memoMark(it, 1, !bOn) : null), '메모 굵게')}><b>B</b></Toggle>,
+      <Toggle key="i" testid="memo-italic" on={iOn} title="기울임 — 메모 글 전체" onClick={() => set(it => (it.type === 'memo' ? memoMark(it, 4, d => decoSet(d || '', 'i', !iOn)) : null), '메모 기울임')}><i style={{ fontFamily: 'serif' }}>I</i></Toggle>,
+      <PopBtn key="l" {...P} id="mlist" title="목록 — 메모의 글 줄 전부(제목·코드·표는 그대로)" width={150} label={LIST_ICON}>
+        {MEMO_LISTS.map(([k, name]) => <button key={k} aria-pressed={lk === k} onClick={() => set(it => (it.type !== 'memo' ? null : { lines: (it.lines || []).map(l => (['p', 'ul', 'ol', 'todo', 'quote'].includes(l.k) ? convertLine(l, k) : l)) }), '메모 목록')} style={btn(lk === k, { width: '100%', justifyContent: 'flex-start', padding: '0 8px', fontSize: 12 })}>{name}</button>)}</PopBtn>],
+      [lockBtn, moreBtn]]
+  } else {
+    const shapeBtn = (swapOne || swapGrp) && <PopBtn {...P} id="swap" title="다른 도형으로 바꾸기(크기·연결 유지)" width={180} label={swapOne ? shapeIcon(kindOf(swapOne)) : <span style={{ fontSize: 12 }}>{F.symName || `묶음 ${items.length}개`}</span>}>
+      <SwapList F={F} set={set} convert={convert} onConvert={onConvert} library={library} onSwapTo={onSwapTo} dark={dark} close={() => setPop(null)} /></PopBtn>
+    const arrange = align?.n >= 2 && <PopBtn {...P} id="arrange" title="맞춤 · 분배" width={190} label={ALIGNS[0][2]}><AlignRow bare align={align} /></PopBtn>
+    const textG = [fontBtn, boldBtn, alignBtn, tColorChip]
+    groups = allText ? [[arrange], textG, [fillChip], [lockBtn, moreBtn]] : [[arrange, shapeBtn], [lineColor, fillChip, widthBtn, dashBtn], textG, [lockBtn, moreBtn]]
+  }
+  const shown = groups.map(g => g.filter(Boolean)).filter(g => g.length)
+  const x = Math.max(8, Math.min(box.x + box.w / 2 - w / 2, size.w - ins.right - w - 8))
+  const above = box.y - BAR_GAP - BAR_H, below = box.y + box.h + BAR_GAP
+  const y = above >= ins.top ? above : below + BAR_H <= size.h - 64 ? below : ins.top   // 아래 64 = 되돌리기·미니맵 섬 자리
+  return <div ref={me} data-testid="prop-bar" role="toolbar" aria-label="속성" data-keep-edit={keep ? '' : undefined} onPointerDown={e => e.stopPropagation()} onWheel={e => e.stopPropagation()} onMouseDown={e => { if (keep && e.target.tagName !== 'INPUT') e.preventDefault() }}
+    style={{ position: 'absolute', left: x, top: y, zIndex: 17, visibility: w ? 'visible' : 'hidden', height: BAR_H, maxWidth: `calc(100% - 16px - ${ins.right}px)`, overflowX: 'auto', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 2, padding: '0 4px',
+      background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, boxShadow: 'var(--mb-shadow)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, userSelect: 'none' }}>
+    {shown.flatMap((g, i) => [...(i ? [<BarSep key={'s' + i} />] : []), ...g.map((el, j) => <Fragment key={i + '-' + j}>{el}</Fragment>)])}
   </div>
 }

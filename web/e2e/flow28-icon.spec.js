@@ -30,7 +30,7 @@ test('아이콘 → 후보 둘 → 누르면 고칠 수 있는 도형 → 「선
   expect(its[0].group_id).toBeTruthy(); expect(its.every(it => it.group_id === its[0].group_id)).toBe(true)   // 묶음 하나 — 선 하나만 고치려면 묶음 풀기
   await expect(page.getByTestId('svg-pick').first()).toHaveAttribute('data-picked', '1')
   expect(its.every(it => it.sym_name === '파라볼라 안테나')).toBe(true)              // 묶음 이름 = 요청(2026-10-27 — 속성 카드 제목이 「묶음 N개」 대신)
-  await expect(page.getByTestId('prop-type')).toHaveText('파라볼라 안테나')
+  await expect(page.getByTestId('bar-swap')).toContainText('파라볼라 안테나')   // 속성 막대 「모양」 단추 = 묶음 이름(2026-11-14)
 
   await page.getByPlaceholder('물어보세요', { exact: false }).click()
   await page.keyboard.type('선을 더 굵게'); await page.keyboard.press('Enter')
@@ -69,7 +69,7 @@ test('아이콘 후보 「2개 더 보기」 — 4개로 · 더 만든 것도 �
   await expect(page.getByTestId('svg-pick')).toHaveCount(4)
   await page.getByTestId('svg-pick').nth(3).click()
   await expect.poll(async () => (await liveDoc(page)).items.length).toBeGreaterThan(0)
-  await expect(page.getByTestId('prop-type')).toHaveText('마이크')
+  await expect(page.getByTestId('bar-swap')).toContainText('마이크')
   await page.getByPlaceholder('무엇의 아이콘', { exact: false }).or(page.getByPlaceholder('물어보세요', { exact: false })).first().click()
   await page.keyboard.type('선을 더 굵게'); await page.keyboard.press('Enter')
   await expect(page.getByTestId('svg-pick')).toHaveCount(5)
@@ -77,5 +77,5 @@ test('아이콘 후보 「2개 더 보기」 — 4개로 · 더 만든 것도 �
   const n = (await liveDoc(page)).items.length
   await page.getByTestId('svg-pick').nth(4).click()                                    // 고친 아이콘 = 앞 요청의 이름(「선을 더 굵게」가 아님)
   await expect.poll(async () => (await liveDoc(page)).items.length).toBeGreaterThan(n)
-  await expect(page.getByTestId('prop-type')).toHaveText('마이크')
+  await expect(page.getByTestId('bar-swap')).toContainText('마이크')
 })

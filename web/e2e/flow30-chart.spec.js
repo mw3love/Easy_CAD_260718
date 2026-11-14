@@ -2,7 +2,7 @@
 // 원은 까닭과 함께 막힘 → 두 번 누르면 표로 펼쳐 칸 고치기 → 바깥 누르면 다시 그래프(막대 높이가 고친 숫자로) → 가로 막대·꺾은선 → 새로고침해도 그대로 → 표로 돌아가면 원래 크기.
 // 계산은 web/test/chart.test.mjs, 데스크톱은 tests/test_part72.
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, clickScene, liveDoc, waitSaved, toPage } from './helpers.js'
+import { boardName, openBoard, setCam, clickScene, liveDoc, waitSaved, toPage, openCard } from './helpers.js'
 
 const CELLS = [['번역기', 'BLEU'], ['ByteNet', '23.75'], ['GNMT + RL', '24.6'], ['ConvS2S', '25.16'], ['Transformer', '28.4']]
 const DOC = { format: 'easycad-doc', version: 1, items: [{ type: 'table', uid: 't1', pos: [0, 0], scale: 1, rotation: 0, z: 1, origin: [0, 0], locked: false, group_id: null, layer_id: null,
@@ -20,6 +20,7 @@ test('표 → 세로 막대 → 원은 막힘 → 두 번 눌러 숫자 고치�
   await setCam(page, { x: 300, y: 150, z: 1.4 })
 
   await clickScene(page, 120, 75)                                                    // 표 고르기
+  await openCard(page)                                                               // 그래프 모양 = ⋯ 「속성 자세히…」(2026-11-14)
   const kinds = page.getByTestId('chart-kinds')
   await expect(kinds).toBeVisible()
   await expect(kinds.locator('[data-chart-kind="pie"]')).toBeDisabled()              // 점수 비교 = 원 안 됨
@@ -44,10 +45,10 @@ test('표 → 세로 막대 → 원은 막힘 → 두 번 눌러 숫자 고치�
   const after = await barHeights(page)
   expect(after[0]).toBeLessThan(before[0] * 0.6)                                      // 23.75 → 12 = 막대가 반쯤
 
-  await clickScene(page, 180, 120)
+  await clickScene(page, 180, 120); await openCard(page)
   await kinds.locator('[data-chart-kind="row"]').click(); await expect(page.locator('[data-chart="row"]')).toHaveCount(1)
   await clickScene(page, 420, 300); await shot(page, 'row')
-  await clickScene(page, 180, 120)
+  await clickScene(page, 180, 120); await openCard(page)
   await kinds.locator('[data-chart-kind="line"]').click(); await expect(page.locator('[data-chart="line"] circle')).toHaveCount(4)
   await clickScene(page, 420, 300); await shot(page, 'line')
 
@@ -56,7 +57,7 @@ test('표 → 세로 막대 → 원은 막힘 → 두 번 눌러 숫자 고치�
   await expect(page.locator('[data-chart="line"]')).toHaveCount(1)                    // 새로고침해도 그대로
 
   await setCam(page, { x: 300, y: 150, z: 1.4 })
-  await clickScene(page, 180, 120)
+  await clickScene(page, 180, 120); await openCard(page)
   await kinds.locator('[data-chart-kind="table"]').click()
   t = await table(page)
   expect(t.chart).toBeUndefined()
@@ -139,7 +140,7 @@ test('누적 막대·막대+꺾은선·도넛 — 맞는 표에서만 켜지고 
   await expect.poll(async () => (await liveDoc(page)).items.length).toBe(2)
   await setCam(page, { x: 100, y: 150, z: 0.9 })
   const kinds = page.getByTestId('chart-kinds')
-  await clickScene(page, 60, 40)
+  await clickScene(page, 60, 40); await openCard(page)
   for (const k of ['stack', 'combo']) await expect(kinds.locator(`[data-chart-kind="${k}"]`)).toBeEnabled()
   for (const k of ['pie', 'donut']) await expect(kinds.locator(`[data-chart-kind="${k}"]`)).toBeDisabled()
   await kinds.locator('[data-chart-kind="stack"]').click()
@@ -147,7 +148,7 @@ test('누적 막대·막대+꺾은선·도넛 — 맞는 표에서만 켜지고 
   await page.locator('[data-testid="chart-kinds"]').locator('xpath=ancestor::div[contains(@style,"width: 192")]').screenshot({ path: 'test-results/chart-props-8.png' })
   await kinds.locator('[data-chart-kind="combo"]').click()
   await expect(page.locator('[data-chart="combo"] circle')).toHaveCount(3)
-  await clickScene(page, 560, 40)
+  await clickScene(page, 560, 40); await openCard(page)
   await expect(kinds.locator('[data-chart-kind="stack"]')).toBeDisabled()                          // 열 하나 = 쌓을 게 없음
   await kinds.locator('[data-chart-kind="donut"]').click()
   await expect(page.locator('[data-chart="donut"] text', { hasText: '60%' })).toHaveCount(2)       // 가운데 + 목록

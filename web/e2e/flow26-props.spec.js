@@ -18,7 +18,7 @@ test('색 칸 = 한 덩이(어디 눌러도 색 창, 열리면 바로 코드 입
   await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 120, y: 80 })
   await expect(page.locator('button[title="#007AFF"]')).toHaveCount(0)          // 색표는 접혀 있음(전엔 세 벌이 다 펼쳐짐)
   await expect(page.locator('button[title="2 px"]')).toHaveCount(0)             // 굵기 숫자 버튼(1·2·3·5) 없음 — 스테퍼 하나
-  await page.getByTestId('chip-line').click({ position: { x: 90, y: 12 } })     // 코드 글자 자리를 눌러도 창이 열림(누를 자리가 넓게)
+  await page.getByTestId('chip-line').click()                                    // 속성 막대 견본 단추(2026-11-14 — 옛 카드는 「견본 + 코드」 한 칸)
   const pop = page.getByTestId('pop-line')
   await expect(pop.getByTestId('color-code')).toBeFocused()                     // 열리면 코드가 골라진 채 — 바로 치면 바뀜
   await page.keyboard.type('D9703F'); await page.keyboard.press('Enter')
@@ -29,7 +29,7 @@ test('색 칸 = 한 덩이(어디 눌러도 색 창, 열리면 바로 코드 입
   await pop.locator('button[title="#FF3B30"]').click()
   expect((await last(page)).pen).toBe('#ff3b30')
   await page.keyboard.press('Escape'); await expect(pop).toHaveCount(0)
-  await expect(page.getByTestId('chip-line')).toContainText('FF3B30')
+  await expect(page.getByTestId('chip-line')).toHaveAttribute('title', /FF3B30/)   // 막대 단추 = 견본만, 코드는 마우스 올림 글
 
   expect((await page.evaluate(() => window.__mb.ed.debugState())).stylePv).toBe(true)   // 바꾼 뒤 = 선택선 숨김(바꾼 색이 보이게)
   await page.mouse.move(700, 600); await page.mouse.move(650, 560)               // 칠판으로 옮기기만 해서는 그대로(바꾼 색을 보러 가는 길)
@@ -46,33 +46,29 @@ test('색 칸 = 한 덩이(어디 눌러도 색 창, 열리면 바로 코드 입
   await page.getByTestId('fill-alpha').fill('50')
   expect((await last(page)).fill).toBe('#80007aff')
   await page.keyboard.press('Escape')
-  await expect(page.getByTestId('chip-fill')).toContainText('50%')
+  await expect(page.getByTestId('chip-fill')).toHaveAttribute('title', /50%/)
   await page.getByTestId('chip-fill').hover(); await page.mouse.wheel(0, -100)    // 휠 = 진하기 5%씩
   await expect.poll(async () => (await last(page)).fill).toBe('#8c007aff')
   await expect(page.getByTestId('chip-fill')).toBeVisible()
   await page.getByTestId('chip-fill').click(); await page.getByTestId('fill-none').click()
   expect((await last(page)).fill ?? null).toBeNull()
   await page.keyboard.press('Escape')
-  await page.locator('[aria-label="선 굵기 늘리기"]').click()
+  await page.getByTestId('bar-width').click(); await page.locator('[aria-label="선 굵기 늘리기"]').click()
   expect((await last(page)).width).toBe(2)
 })
 
 // 대기 → 고치는 중으로 바뀐 뒤 고르기(2026-11-02 다른 PC — 바로 Shift+←를 누르면 편집기 속 고른 상태가 화면과 어긋남, 원인 확인 필요 — 사람 손 속도에선 안 생김)
 const editing = async page => { await expect(page.locator('[data-testid="text-editor"]:not([data-armed])')).toHaveCount(1); await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))) }
 
-test('글 고치는 중에도 속성 카드 — 「글자」 꾸밈 버튼 = 꾸미기 막대와 같은 줄, 드래그한 부분에만 먹음', async ({ page }) => {
+test('글 고치는 중에도 속성 막대(글 전체에) — 글자를 드래그해 고르면 막대는 비키고 꾸미기 막대가 고른 부분에만', async ({ page }) => {
   await openBoard(page, boardName('editprops')); await setCam(page)
   await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 200, y: 80 })
   await page.keyboard.type('ABCD')                                               // 고치는 중(아직 안 끝냄)
-  await expect(page.getByTestId('props-fmt')).toBeVisible()                       // 전엔 고치는 중엔 속성 카드가 숨었음
-  await expect(page.getByTestId('fmt-scope')).toHaveText(' · 글 전체에')        // 안 골랐으면 = 글 전체
+  await expect(page.getByTestId('bar-bold')).toBeVisible()                        // 안 골랐으면 = 막대(글 전체에)
   await editing(page)
   await page.keyboard.press('Shift+ArrowLeft'); await page.keyboard.press('Shift+ArrowLeft')   // 「CD」만 고름
-  await expect(page.getByTestId('fmt-scope')).toHaveText(' · 드래그한 글자에만')
-  const bar = await page.getByTestId('format-bar').locator('button').evaluateAll(bs => bs.map(b => b.getAttribute('aria-label')))
-  const card = await page.getByTestId('props-fmt').locator('button').evaluateAll(bs => bs.map(b => b.getAttribute('aria-label')))
-  expect(card).toEqual(bar.filter(n => n !== '글자색'))                          // 같은 항목(글자색은 카드에선 「색」 줄)
-  await page.getByTestId('pfmt-굵게').click()
+  await expect(page.getByTestId('prop-bar')).toHaveCount(0)                       // 2026-11-14 — 두 막대가 겹쳐 뜨지 않게(옛 카드는 같이 떴음)
+  await page.getByTestId('fmt-굵게').click()
   await page.keyboard.press('Escape')
   expect((await last(page)).label.runs).toEqual([[2, 2, null, true]])            // 고른 「CD」에만
   await clickScene(page, 10, 10); await page.keyboard.press('Enter')             // 다시 고치기 — 「CD」를 골라 코드도 켬
@@ -84,7 +80,7 @@ test('글 고치는 중에도 속성 카드 — 「글자」 꾸밈 버튼 = 꾸
   expect((await last(page)).label.runs).toEqual([[2, 2, null, true, null, true]])
 })
 
-test('색 창은 카드 밖에 떠서 안 잘림 — 카드 아래쪽 글자 색도 화면 안, 카드에 스크롤 안 생김', async ({ page }) => {
+test('색 창은 화면 위에 떠서 안 잘림 — 글자 색 창도 화면 안', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 640 })
   await openBoard(page, boardName('popclip')); await setCam(page)
   await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 160, y: 80 })
@@ -93,8 +89,6 @@ test('색 창은 카드 밖에 떠서 안 잘림 — 카드 아래쪽 글자 색
   const b = await page.getByTestId('pop-text').boundingBox()
   expect(b.y + b.height).toBeLessThanOrEqual(640)                                  // 화면 아래로 안 잘림(모자라면 위로 펼침)
   expect(b.y).toBeGreaterThanOrEqual(0)
-  const scroll = await page.getByTestId('chip-text').evaluate(el => { let p = el; while (p && !(p.dataset && 'folded' in p.dataset) && !(p.style && p.style.overflowY === 'auto')) p = p.parentElement; return p ? p.scrollHeight - p.clientHeight : -1 })
-  expect(scroll).toBeLessThanOrEqual(1)
 })
 
 test('글이 상자에 꽉 찼을 때 크기를 키우면 상자 폭이 같이 늘어남(가운데 그대로) — 카드 숫자 = 보이는 크기', async ({ page }) => {
@@ -102,6 +96,7 @@ test('글이 상자에 꽉 찼을 때 크기를 키우면 상자 폭이 같이 �
   await pickShape(page, '사각형'); await clickScene(page, 200, 100)
   await page.keyboard.type('가나다라마바사'); await page.keyboard.press('Escape'); await clickScene(page, 160, 70)
   const r0 = (await last(page)).rect, cx0 = r0[0] + r0[2] / 2
+  await page.getByTestId('bar-font').click()                                     // 속성 막대 「글 크기」 펼침(2026-11-14)
   for (let i = 0; i < 8; i++) await page.locator('[aria-label="글자 크기 늘리기"]').click()
   const it = await last(page)
   expect(it.rect[2]).toBeGreaterThan(r0[2])                                        // 상자가 넓어짐
@@ -114,24 +109,27 @@ test('글자 굵게 — 도형 안 글 전체, 다시 누르면 보통(형광펜
   await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 160, y: 80 })
   await page.keyboard.type('AB'); await page.keyboard.press('Escape')
   await clickScene(page, 20, 10)
-  await page.getByRole('button', { name: '굵게' }).click()
+  await page.getByTestId('bar-bold').click()                                     // 속성 막대 굵게
   expect((await last(page)).label.runs).toEqual([[0, 2, null, true]])
-  await page.getByRole('button', { name: '형광펜' }).click()
+  await page.getByTestId('bar-more').click(); await page.getByRole('menuitem', { name: /속성 자세히/ }).click()   // 형광펜 = ⋯ 「속성 자세히…」 카드
+  await page.getByTestId('props-card').getByRole('button', { name: '형광펜' }).click()
   expect((await last(page)).label.runs[0].slice(0, 4)).toEqual([0, 2, null, true])   // 형광펜이 굵게를 안 지움
-  await page.getByRole('button', { name: '굵게' }).click()
+  await page.getByTestId('props-card').getByRole('button', { name: '굵게' }).click()
   expect((await last(page)).label.runs[0][3]).toBe(false)
 })
 
 test('−/+ 누르고 있으면 계속(되돌리기 한 번) · 숫자 두 번 누르면 직접 입력 · 선 모양은 골라도 목록이 열린 채 · 꾸밈 지우기 없음', async ({ page }) => {
   await openBoard(page, boardName('stepper')); await setCam(page)
   await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 160, y: 80 })
+  await page.getByTestId('bar-width').click()                                     // 속성 막대 「굵기」 펼침
   const plus = page.locator('[aria-label="선 굵기 늘리기"]')
   await plus.hover(); await page.mouse.down(); await page.waitForTimeout(900); await page.mouse.up()
   const w = (await last(page)).width
   expect(w).toBeGreaterThan(4)                                                   // 0.4초 뒤부터 계속 늘어남
   await page.waitForTimeout(300); expect((await last(page)).width).toBe(w)       // 떼면 멈춤
-  await page.mouse.move(700, 600); await page.keyboard.press('Control+z')
+  await page.mouse.move(700, 600); await page.keyboard.press('Escape'); await page.keyboard.press('Control+z')
   expect((await last(page)).width ?? 1).toBe(1)                                   // 되돌리기 한 번에 통째로
+  await page.getByTestId('bar-width').click()
   await page.getByTestId('width-step-value').dblclick()
   const inp = page.getByTestId('width-step-input'); await expect(inp).toBeFocused()
   await page.keyboard.type('7'); await page.keyboard.press('Enter')
@@ -140,11 +138,10 @@ test('−/+ 누르고 있으면 계속(되돌리기 한 번) · 숫자 두 번 �
   await page.getByRole('button', { name: '선 모양' }).click()
   await page.getByRole('button', { name: '점선' }).click()
   await expect(page.getByRole('button', { name: '도트' })).toBeVisible()           // 골라도 열린 채(눌러 가며 비교)
-  const cardScroll = () => page.getByTestId('width-step').evaluate(el => { const c = el.closest('[data-folded], [style*="right: calc"]'); return c.scrollHeight - c.clientHeight })
-  expect(await cardScroll()).toBeLessThanOrEqual(1)                               // 목록은 카드 밖에 떠서 카드에 스크롤이 안 생김(2026-10-23 전수조사)
   await page.getByRole('button', { name: '도트' }).click()
   expect((await last(page)).style).toBe(3)
   await page.keyboard.press('Escape'); await expect(page.getByRole('button', { name: '도트' })).toHaveCount(0)
+  await page.getByTestId('bar-more').click(); await page.getByRole('menuitem', { name: /속성 자세히/ }).click()   // 회전 숫자 = ⋯ 「속성 자세히…」 카드(2026-11-14)
   await page.locator('[aria-label="회전 각도 늘리기"]').click()                    // 회전도 −/+ 칸(1°씩)
   expect((await last(page)).rotation).toBe(1)
   await page.getByTestId('rot-step-value').dblclick(); await page.keyboard.type('370'); await page.keyboard.press('Enter')
@@ -152,9 +149,12 @@ test('−/+ 누르고 있으면 계속(되돌리기 한 번) · 숫자 두 번 �
   await page.getByTestId('rot-step-value').dblclick(); await page.keyboard.type('0'); await page.keyboard.press('Enter')
 
   await clickScene(page, 80, 40); await page.keyboard.type('글'); await page.keyboard.press('Escape'); await clickScene(page, 10, 10)
+  await page.getByTestId('bar-more').click(); await page.getByRole('menuitem', { name: /속성 자세히/ }).click()
   await expect(page.getByTestId('props-fmt')).toBeVisible()
   await expect(page.getByTestId('pfmt-꾸밈')).toHaveCount(0)                    // 꾸밈 지우기 뺌(각 버튼을 다시 누르면 풀림)
+  await page.getByTestId('props-close').click()
   const f0 = (await last(page)).label.font
+  await page.getByTestId('bar-font').click()
   await page.getByTestId('font-step-value').dblclick(); await page.keyboard.type('30'); await page.keyboard.press('Escape')   // Esc = 취소
   await expect(page.getByTestId('font-step-input')).toHaveCount(0)
   expect((await last(page)).label.font).toBe(f0)

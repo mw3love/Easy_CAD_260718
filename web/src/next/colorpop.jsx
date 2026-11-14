@@ -48,8 +48,10 @@ function popPlace(el, h, align) {
 
 // 펼침 목록(선 모양·도형 바꾸기 등) — 색 창처럼 화면 위에 떠서(포털) 카드에 잘리지 않음, 아래가 모자라면 위로(2026-10-23 전수조사: 카드 안에 펼쳐 스크롤이 생겼음)
 // anchor = 기준 요소 ref, id = data-ppop 이름(여는 쪽의 바깥 누르기 판정), width = 폭(없으면 기준 폭), maxHeight = 넘치면 목록 안에서 스크롤
-export function FloatPanel({ anchor, id, width, maxHeight = 360, children, testid }) {
+// autoFocus = 열면 첫 칸(눌린 것이 있으면 그것)으로 초점 — 목록이 문서 끝(포털)에 붙어 Tab으로는 못 갔음(2026-11-14 속성 막대 검사)
+export function FloatPanel({ anchor, id, width, maxHeight = 360, children, testid, autoFocus }) {
   const el = useRef(null), [at, setAt] = useState(null)
+  useEffect(() => { if (!autoFocus || !el.current) return; const f = el.current.querySelector('[aria-pressed="true"], [aria-current="true"]') || el.current.querySelector('button, input'); f?.focus({ preventScroll: true }) }, [])   // eslint-disable-line react-hooks/exhaustive-deps
   const place = () => { if (!anchor.current || !el.current) return; const r = anchor.current.getBoundingClientRect(), W = width || r.width, h = el.current.offsetHeight, vw = window.innerWidth, vh = window.innerHeight
     const p = { left: Math.max(8, Math.min(vw - W - 8, r.left)), top: r.bottom + 4 + h <= vh - 8 ? r.bottom + 4 : Math.max(8, r.top - 4 - h), w: W }
     if (!at || p.left !== at.left || p.top !== at.top || p.w !== at.w) setAt(p) }
@@ -97,12 +99,22 @@ export function ColorPop({ anchor, id, value, fill, onPick, align, keepEdit, onR
 
 // 색 칸 — 한 덩이 버튼(어디를 눌러도 색 창). id = 이 칸 이름(한 번에 하나만 열림 — 여는 쪽 `pop`), value = 지금 색('#rrggbb'·'#aarrggbb', 없음 = null, 서로 다름 = ''/undefined)
 // fill = 채움 칸(「없음」·진하기, 휠 = 진하기), onPick(색, 끌기 중) — 색 = 선·글은 '#rrggbb', 채움은 '#aarrggbb'|null
-export function ColorChip({ id, pop, setPop, value, fill, onPick, title, keepEdit }) {
+// compact = 속성 막대 단추(32 — 견본만, 코드는 마우스 올림 글에), glyph = 견본 대신 「A + 색 띠」(글자 색)
+export function ColorChip({ id, pop, setPop, value, fill, onPick, title, keepEdit, compact, glyph }) {
   const open = pop === id, mixed = value === '' || value === undefined, none = fill ? value === null : !mixed && alphaOf(value) === 0   // 선이 완전히 투명(채운 면의 선 등)이면 「없음」
   const a = fill && value ? alphaOf(value) : 255
   const chipBg = mixed ? 'conic-gradient(#9e9e9e 0 50%, #fff 0)' : none ? '#fff' : fill || value.length === 9 ? `linear-gradient(${argbCss(value)},${argbCss(value)}), #fff` : value
   const anchor = useRef(null)
   useWheel(anchor, fill && value ? d => onPick(withAlpha(value, fromPct(pct(a) + d * 5)), true) : null)
+  if (compact) { const now = mixed ? '서로 다름' : none ? '없음' : rgbOf(value).slice(1).toUpperCase() + (fill && a < 255 ? ` ${pct(a)}%` : '')
+    return <div ref={anchor} data-ppop={id} style={{ display: 'flex', flex: 'none' }}>
+      <button data-testid={'chip-' + id} title={`${title} — ${now}${fill && value ? ' · 휠 = 진하기' : ''}`} aria-label={title} aria-haspopup="true" aria-expanded={open} onClick={() => setPop(open ? null : id)} onMouseDown={e => { if (keepEdit) e.preventDefault() }}
+        style={{ all: 'unset', cursor: 'pointer', boxSizing: 'border-box', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, background: open ? 'var(--mb-on)' : 'transparent', boxShadow: open ? 'var(--mb-on-ring)' : 'none', color: C.ink }}>
+        {glyph ? <span aria-hidden style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', font: "700 14px/15px 'Pretendard', sans-serif" }}>A<span style={{ position: 'relative', overflow: 'hidden', width: 16, height: 4, borderRadius: 1, boxShadow: 'inset 0 0 0 1px var(--mb-ctl)', background: chipBg }} /></span>
+          : <span aria-hidden style={{ position: 'relative', overflow: 'hidden', width: 18, height: 18, borderRadius: 5, boxShadow: 'inset 0 0 0 1px var(--mb-ctl)', background: chipBg }}>{none && <NoneMark s={18} />}</span>}
+      </button>
+      {open && <ColorPop anchor={anchor} id={id} value={value} fill={fill} onPick={onPick} keepEdit={keepEdit} align="left" />}
+    </div> }
   return <div ref={anchor} data-ppop={id} style={{ flex: 1, minWidth: 0 }}>
     <button data-testid={'chip-' + id} title={fill && value ? title + ' — 눌러서 색 고르기 · 휠 = 진하기' : title + ' — 눌러서 색 고르기'} aria-label={title} aria-expanded={open} onClick={() => setPop(open ? null : id)}
       onMouseDown={e => { if (keepEdit) e.preventDefault() }}

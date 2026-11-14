@@ -67,14 +67,11 @@ test('AI 칩 — 단추 없이 말만: 하나면 그 물건 말풍선으로 · E
   await page.mouse.up(); await expect(chip).toBeVisible()
 })
 
-test('AI 칩 — 오른쪽 위 속성 카드와 안 겹침(겹치면 카드 왼쪽으로 비킴)', async ({ page }) => {
+test('AI 칩 — 속성 막대와 안 겹침(겹치면 막대 왼쪽으로 비킴)', async ({ page }) => {
   await openBoard(page, boardName('aichip3'), { chat: false }); await setCam(page)
   const [m] = await twoMemos(page)
   await clickScene(page, m.pos[0] + 60, m.pos[1] + 15)
-  const card = page.getByTestId('props-card'), chip = page.getByTestId('ai-chip'); await expect(card).toBeVisible()
-  const board = await page.getByTestId('board').boundingBox(), cb = await card.boundingBox()
-  // 메모 오른쪽 위 끝을 속성 카드 한가운데 아래로(칩이 그 자리에 뜨게)
-  await page.evaluate(([m, x, y]) => { const c = window.__mb.getCam(); window.__mb.setCam({ ...c, x: x - (m.pos[0] + m.rect[2]) * c.z, y: y + 40 - m.pos[1] * c.z }) }, [m, cb.x - board.x + cb.width - 10, cb.y - board.y + 20])
+  const card = page.getByTestId('prop-bar'), chip = page.getByTestId('ai-chip'); await expect(card).toBeVisible()   // 2026-11-14 — 우상 카드 대신 고른 것 위 막대(같은 줄 높이)
   await expect(chip).toBeVisible()
   await expect.poll(async () => { const a = await chip.boundingBox(), b = await card.boundingBox(); return a.x + a.width <= b.x || a.y >= b.y + b.height }).toBe(true)
   await chip.click(); await expect(page.getByTestId('ai-panel')).toBeVisible()

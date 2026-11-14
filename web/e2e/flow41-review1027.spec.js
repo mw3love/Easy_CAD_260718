@@ -1,7 +1,7 @@
 // 흐름 41 — 10-27 사용자 UI 점검: 프레임으로 감싸면 안에 든 것으로 이름 · 레이어 판의 「선택 → 그리는 중」 단추 뺌(우클릭 「레이어로 이동」이 같은 일) ·
 // 칠판 칸 = 「＋ 새 칠판」 먼저 · 접속자 = 이름 첫 글자 동그라미(4칸 넘으면 +N)
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, liveDoc, clickScene, pickShape, dragScene, toPage, openPane } from './helpers.js'
+import { boardName, openBoard, setCam, liveDoc, clickScene, pickShape, dragScene, toPage, openPane, openCard } from './helpers.js'
 
 const frames = async page => (await liveDoc(page)).items.filter(it => it.type === 'frame')
 
@@ -70,7 +70,8 @@ test('내 심볼(이 브라우저) — 우클릭 추가 → 판에 보임 → �
   await mine.getByRole('button', { name: '동그라미' }).click(); await clickScene(page, 400, 300)
   await expect.poll(async () => (await liveDoc(page)).items.length).toBe(n0 + 1)
   expect((await liveDoc(page)).items.at(-1).sym_name).toBe('동그라미')                       // 속성 카드 제목 = 심볼 이름(2026-10-27)
-  await expect(page.getByTestId('prop-type')).toHaveText('동그라미')
+  await openCard(page); await expect(page.getByTestId('prop-type')).toHaveText('동그라미')   // 옛 카드 제목(⋯ 「속성 자세히…」, 2026-11-14)
+  await page.getByTestId('props-close').click()
   await page.reload(); await expect(page.getByTestId('mine').getByRole('button', { name: '동그라미' })).toBeVisible()   // 이 브라우저에 남음
   await page.getByTestId('mine').getByRole('button', { name: '동그라미' }).click({ button: 'right' })
   await page.getByTestId('mine-menu').getByRole('menuitem', { name: '이름 바꾸기' }).click()

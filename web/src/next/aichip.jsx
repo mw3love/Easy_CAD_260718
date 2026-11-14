@@ -26,9 +26,10 @@ export function AiChip({ box, size, n, open, setOpen, onRun }) {
   const cx0 = Math.max(8, Math.min(box.x + box.w - CHIP_W, size.w - CHIP_W - 8)), cy = Math.max(8, box.y - 32)
   // 오른쪽 위 속성 카드와 겹치면 그 카드 왼쪽으로 비킴(2026-11-09 진짜 확인 — 오른쪽 끝에 닿은 판에서 칩이 카드 위에 올라탐)
   useLayoutEffect(() => {
-    const host = me.current?.offsetParent, card = host?.querySelector('[data-testid="props-card"]'); if (!host || !card) { if (dodge != null) setDodge(null); return }
-    const h = host.getBoundingClientRect(), c = card.getBoundingClientRect(), l = c.left - h.left, t = c.top - h.top, w = open ? 0 : CHIP_W
-    const hit = cx0 + w > l - 6 && cx0 < l + c.width && cy + 24 > t && cy < t + c.height, x = hit ? Math.max(8, l - CHIP_W - 8) : null
+    const host = me.current?.offsetParent, cards = host ? [...host.querySelectorAll('[data-testid="props-card"], [data-testid="prop-bar"]')] : []; if (!host || !cards.length) { if (dodge != null) setDodge(null); return }   // 속성 막대(2026-11-14)도 — 같은 줄 높이라 거의 늘 겹침
+    const h = host.getBoundingClientRect(), w = open ? 0 : CHIP_W
+    const card = cards.map(el => el.getBoundingClientRect()).find(c => { const l = c.left - h.left, t = c.top - h.top; return cx0 + w > l - 6 && cx0 < l + c.width && cy + 24 > t && cy < t + c.height })
+    const x = card ? Math.max(8, card.left - h.left - CHIP_W - 8) : null
     if (x !== dodge) setDodge(x)
   })
   const cx = dodge ?? cx0

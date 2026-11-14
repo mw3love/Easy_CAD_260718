@@ -7,7 +7,7 @@ async function load(page, items) {
   await page.evaluate(async its => { const d = window.__mb.toEcad(); d.items.push(...its); await window.__mb.open('data:application/json,' + encodeURIComponent(JSON.stringify(d))) }, items)
   await setCam(page)
 }
-const pick = (page, name) => page.getByRole('button', { name, exact: true }).first()
+const pick = (page, name) => ({ click: async () => { await page.getByTestId('bar-talign').click(); await page.getByTestId('pop-talign').getByRole('button', { name, exact: true }).click(); await page.keyboard.press('Escape') } })   // 속성 막대 「글 정렬」 펼침(2026-11-14)
 const box = async (page, txt) => page.locator('svg tspan', { hasText: txt }).first().boundingBox()   // 글자 조각(tspan)이 실제 자리 — <text>는 x 없이 감싸기만
 
 test('도형 글 = 왼·오른쪽 끝에 붙음 · 가운데 = 원래대로 · 고치는 칸도 같은 쪽', async ({ page }) => {

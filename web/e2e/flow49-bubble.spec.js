@@ -68,6 +68,7 @@ test('말풍선 여럿을 같이 — 그림 말풍선은 그 그림을 보내고
   const lines = (await memoOf(page)).lines
   const c = await page.evaluate(id => { const b = window.__mb.ed.bubbleInfo(id).box; return { x: b.x + b.w / 2, y: b.y + b.h / 2 } }, img.uid)
   const p = await toPage(page, c.x, c.y)
+  await page.evaluate(() => window.__mb.ed.setSel([]))                                    // 고른 메모 풀기 — 그 위 속성 막대가 그림을 덮지 않게(2026-11-14)
   await page.mouse.click(p.x, p.y, { button: 'right' })
   await page.getByText('AI 말풍선 (KAIROS)').click()
   await expect(page.getByTestId('bubble')).toHaveCount(2)                                  // 둘이 같이 열림

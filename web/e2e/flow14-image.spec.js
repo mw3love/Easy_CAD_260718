@@ -1,7 +1,7 @@
 // 흐름 14 — 그림(§8 항목61 ③-4): 「그려줘」 → 🎨 후보 2장(대화창에만) → 누르면 그 한 장 + 밑에 요청 글(따로 — 2026-10-20) / 끌어 놓으면 그 자리 / 웹 주소 끌어 놓기 = 웹 카드.
 // KAIROS는 가짜(/api/chat·/api/img·/api/link) — 서버 쪽은 tests/test_part57, 진짜 그림은 손 확인.
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, liveDoc, toPage, waitSaved, pickShape, dragScene, clickScene, pinCandidate } from './helpers.js'
+import { boardName, openBoard, setCam, liveDoc, toPage, waitSaved, pickShape, dragScene, clickScene, pinCandidate, openCard } from './helpers.js'
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAFElEQVR4nGP4z8DAwMDAwMDAwAAAHwAB/2Y2E7QAAAAASUVORK5CYII=', 'base64')
 
@@ -31,7 +31,7 @@ test('그려줘 → 🎨 후보 둘 → 누르면 그림 + 요청 글 묶음 →
   const img = d.items.find(it => it.type === 'image')
   expect(img.data.length).toBeGreaterThan(20)
   expect(img.alt).toBe('산 위 송신탑 그려줘'); expect(d.items.filter(it => it.type === 'text')).toHaveLength(0)   // 칠판엔 그림만, 요청은 보이지 않는 설명(2026-10-20 사용자)
-  await expect(page.getByTestId('image-alt')).toHaveText('산 위 송신탑 그려줘')   // 고르면 속성 카드에 설명
+  await openCard(page); await expect(page.getByTestId('image-alt')).toHaveText('산 위 송신탑 그려줘')   // 속성 카드(⋯ 「속성 자세히…」)에 설명
   await page.keyboard.press('Control+f'); await page.keyboard.type('송신탑')   // 찾기가 설명으로 그림을 찾음
   await expect(page.getByTestId('find-bar').getByTestId('find-row').first()).toContainText('송신탑'); await page.keyboard.press('Escape')
 

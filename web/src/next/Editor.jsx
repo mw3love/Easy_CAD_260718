@@ -25,7 +25,7 @@ import {
   rotateTo, rubberSelect, sceneBox, toLocal, toScene, toggleLock, topHit, ungroupItems, unionBox, zOrder,
 } from './edit.js'
 import { TextEditor } from './text.jsx'
-import { Props, captureStyle, styleFor } from './props.jsx'
+import { PropBar, Props, captureStyle, styleFor } from './props.jsx'
 import { FormatBar } from './formatbar.jsx'
 import { arrowKindOf, swapArrowKind } from './arrowkind.js'
 import { shapeWH, symbolPath } from './symbols.js'
@@ -693,6 +693,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   const [aiOpen, setAiOpen] = useState(false)   // ✨ AI 칩의 작은 창(aichip.jsx) — 고른 것이 바뀌면 닫음
   useEffect(() => { setAiOpen(false) }, [sel.join()])   // eslint-disable-line react-hooks/exhaustive-deps
+  const [cardOpen, setCardOpen] = useState(false)   // 옛 속성 카드(속성 막대 ⋯ 「속성 자세히…」, 2026-11-14) — 고른 것이 바뀌면 닫음
+  useEffect(() => { setCardOpen(false) }, [sel.join()])   // eslint-disable-line react-hooks/exhaustive-deps
   const [menu, setMenu] = useState(null); R.current.menuOpen = !!menu   // 제자리 우클릭 메뉴 자리(편집 화면 안 px)
   // 번호표 다음 번호 = 칠판에 남은 가장 큰 번호 + 1(2026-10-20 사용자: 3을 지우면 다시 3 — 중간 빈 번호는 안 채움, 데스크톱 `next_badge_number`도 같게)
   const nextBadge = items => Math.max(0, ...items.filter(it => it.type === 'badge').map(it => it.number || 0)) + 1
@@ -2635,6 +2637,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const menuEntries = menu => {
         const m = R.current.model, ids = R.current.sel, has = ids.length > 0, selIt = m.items.filter(it => ids.includes(it._id)), act = f => () => { setMenu(null); f() }
         const out = []
+        if (menu.more && has) out.push(['속성 자세히…', '', act(() => setCardOpen(true))], '-')   // 속성 막대 ⋯(2026-11-14) — 막대에 없는 것(표 칸·그래프·범례·프레임·회전 숫자)은 옛 카드로
         const aiMenu = () => ['AI로 만들기 (KAIROS)…', '', act(() => setAiOpen(true))]   // 문서·슬라이드·디자인·HTML = AI 칩 창(2026-11-09 — 옛 「정리 › 문서로 / 한 판으로」)
         const lockedSel = selIt.filter(it => it.locked && !layerLocked(it))   // 고른 것 중 잠긴 것 — 한 번에 풀기(2026-10-25 사용자, 잠긴 레이어의 것은 레이어 카드에서)
         if (lockedSel.length) { const uids = new Set(lockedSel.map(it => it._id)); out.push([`잠금 해제 (${lockedSel.length}개)`, '', act(() => commit(m.items.map(it => (uids.has(it._id) ? { ...it, locked: false } : it)), ids, '잠금 해제'))], '-') }
@@ -2840,8 +2843,20 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       {selItems.length > 0 && onAsk && !readOnly && !phone && !live && !(editing && !editing.armed) && present == null && !menu && (selTexts().length || selImages().length) > 0 && (() => {   // ✨ AI 칩 — 끄는 중·글 고치는 중엔 숨김
         const b = unionBox(selItems.map(it => sceneBox(it, textBox)))
         return <AiChip box={{ x: b.x * cam.z + cam.x, y: b.y * cam.z + cam.y, w: b.w * cam.z, h: b.h * cam.z }} size={size} n={selItems.length} open={aiOpen} setOpen={setAiOpen} onRun={aiRun} /> })()}
-      {selItems.length > 0 && <Props liveEd={editing && !editing.armed && editing.kind !== 'memo' ? liveEd : null} align={selItems.length >= 2 ? { n: alignTargets().length, align: alignSel, dist: a => distributeSel(a) } : null} items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} convert={selItems.length === 1 ? convertTargets(selItems[0]) : []} onConvert={to => convertItem(selItems[0]._id, to)} dark={dark} onLegend={legendEdit} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}
-        onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
+      {selItems.length > 0 && (() => {   // 속성 = 고른 것 위 한 줄 막대(2026-11-14 화면 틀 B1 4단계) + ⋯ 「속성 자세히…」 = 옛 오른쪽 위 카드
+        const common = { liveEd: editing && !editing.armed && editing.kind !== 'memo' ? liveEd : null, align: selItems.length >= 2 ? { n: alignTargets().length, align: alignSel, dist: a => distributeSel(a) } : null, items: selItems,
+          kind: selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null, set: setProps, library: library ? { symbols: library, folders: libFolders } : null, onSwapTo: swapShape,
+          convert: selItems.length === 1 ? convertTargets(selItems[0]) : [], onConvert: to => convertItem(selItems[0]._id, to), dark,
+          onKind: k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') } }
+        const cells = cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null
+        const memoEditing = editing && !editing.armed && editing.kind === 'memo'   // 메모 고치는 중 = 메모 자체 꾸미기 막대가 맡음
+        const b = unionBox(selItems.map(selBoxOf))
+        return <>
+          {!readOnly && !phone && !memoEditing && present == null && <PropBar {...common} cells={!!cells} box={{ x: b.x * cam.z + cam.x, y: b.y * cam.z + cam.y, w: b.w * cam.z, h: b.h * cam.z }} size={size}
+            onLock={() => { const m = R.current.model; commit(toggleLock(m.items, sel), sel, '잠금') }}
+            onMore={el => { const host = el.closest('[data-testid="prop-bar"]')?.offsetParent?.getBoundingClientRect(), r = el.getBoundingClientRect(); if (host) setMenu({ x: r.left - host.left, y: r.bottom - host.top + 4, anchor: el, more: true }) }} />}
+          {cardOpen && <Props {...common} rotate={(it, a) => rotateTo(it, a, false)} onLegend={legendEdit} cells={cells} setCells={setCells} onClose={() => setCardOpen(false)} />}
+        </> })()}
     </div>
   )
 })

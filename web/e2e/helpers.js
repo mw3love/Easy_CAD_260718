@@ -94,3 +94,6 @@ export async function pinCandidate(page, n = 0) {
 export async function menuPick(page, name) { await page.getByTestId('main-menu').click(); await page.getByTestId('main-menu-list').getByRole('menuitem', { name: itemName(name) }).click() }
 export async function morePick(page, name) { await page.getByTestId('tools-more').click(); await page.getByTestId('tools-more-list').getByRole('menuitem', { name: itemName(name) }).click() }
 const itemName = n => new RegExp('^' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))   // 메뉴 줄 이름 뒤에 글쇠(「내보내기… Ctrl+P」)가 붙음
+
+// 옛 속성 카드(2026-11-14 B1 4단계부터 속성 막대 ⋯ 「속성 자세히…」로만 열림) — 그림 설명·그래프 모양·표 칸·제목처럼 막대에 없는 것
+export async function openCard(page) { await page.getByTestId('bar-more').click(); await page.getByRole('menuitem', { name: /속성 자세히/ }).click(); await expect(page.getByTestId('props-card')).toBeVisible() }
