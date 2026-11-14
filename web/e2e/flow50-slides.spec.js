@@ -71,7 +71,7 @@ test('발표 자료 3단계 — 고른 자료 우클릭 「발표 자료 만들�
   const b = await page.locator('svg text', { hasText: '안테나 정상' }).first().boundingBox()
   await page.mouse.click(b.x + 4, b.y + b.height / 2, { button: 'right' })
   await aiMake(page, 'slide')
-  const ask = page.getByTestId('deep-ask'); await expect(page.locator('aside[aria-label="KAIROS 대화"]')).toContainText('송신소 점검 — 슬라이드')   // 메모 = 맨 위 제목 줄이 주제(2026-11-02 — 전엔 「고른 자료로 발표 자료」)
+  const ask = page.getByTestId('deep-ask'); await expect(page.locator('aside[aria-label="KAIROS 대화"]')).toContainText('슬라이드 만들어 줘')   // 우클릭 「KAIROS에게 묻기」 → 말로(2026-11-14 — 옛 AI 칩은 제목 줄을 주제로 붙였음)
   await expect(ask).toContainText('칠판에서 고른 것 1개를 재료로')
   await page.getByTestId('deep-plan-go').click(); await page.getByTestId('slides-build').click()
   await expect(page.getByTestId('slides-show')).toContainText('프레임 2장')

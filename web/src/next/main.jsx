@@ -26,7 +26,7 @@ import { HelpCard } from './help.jsx'
 import { EmptyGuide } from './guide.jsx'
 import { FindBar } from './find.jsx'
 import { CommandBar, menuToCommands } from './cmdk.jsx'
-import { Bubble, BubbleBadge } from './bubble.jsx'
+import { Bubble, BubbleBadge, commentCount, isResolved } from './bubble.jsx'
 import { DocView } from './docview.jsx'
 
 const ZMIN = 0.02, ZMAX = 40, LEFT_CARDS = 24   // LEFT_CARDS = 맞출 때 왼쪽 여백 — 카드가 칠판 위에 떠 있던 때는 220(2026-10-23 왼쪽 판으로 붙이며 칠판 밖으로 나감)
@@ -643,8 +643,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
       .then(r => (r.ok ? r.json() : Promise.reject(r))).then(d => takeThreads(d.threads)).catch(() => setStatus('말풍선 대화를 저장하지 못했어요')) }
   const [docView, setDocView] = useState('')
   const phoneDoc = v => setDocView(typeof v === 'string' ? (o => (o ? { ...o } : ''))(modelRef.current.items.find(x => x._id === v)) : v)   // 휴대폰 = 같은 큰 창을 보기·인쇄만(고치기 없음 — 2026-11-11 화면 검사 9단계 사용자 결정, 전엔 새 탭)   // 문서 큰 창(docview.jsx) — 문서 카드 _id | 대화창에만 있는 문서 { _id, html, title, page_w }(보기·인쇄만 — 2026-11-10 화면 검사 7단계)
-  const [bubbleFirst, setBubbleFirst] = useState({})   // 말풍선을 열며 바로 보낼 첫 말(AI 칩에서 단추 없이 말만 — 2026-11-09)
-  const openBubble = (id, first) => { pullThreads(); if (first) setBubbleFirst(f => ({ ...f, [id]: { q: first, n: Date.now() } })); setBubbles(bs => (bs.includes(id) ? bs : [...bs, id])) }
+  const openBubble = id => { pullThreads(); setBubbles(bs => (bs.includes(id) ? bs : [...bs, id])) }   // 💬 댓글(2026-11-14 — 옛 AI 말풍선)
   // 서버 답 전(첫 0.1초)에도 서버 있는 모습으로 그림 — 「Magic Board」·흐린 공유·동그라미 없음 → 바뀌며 위 막대가 좌우로 밀렸음(2026-10-28 사용자 「새 칠판 누르면 살짝 깜빡」)
   const live = server || !srvKnown
   // 위 막대 왼쪽 = 왼쪽 판의 머리(시안 C): 판이 열린 넓은 창만. 자리가 모자라면(창 폭 1440에서 판을 넓히면 버튼이 겹쳤음)·팀 이름표가 붙는 서버는 예전 배치. 코랄은 레일 아이콘이 맡음(이름 칸 전체가 칠해졌음)
@@ -982,12 +981,12 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
           if (fs.length) return ed.current?.dropFiles(fs, e)
           const u = (e.dataTransfer?.getData('text/uri-list') || '').split(/\r?\n/).find(x => x && !x.startsWith('#')); if (u) ed.current?.dropUrl(u, e.dataTransfer.getData('text/x-mb-caption') || '', e) }}
         id="mb-main" role="main" aria-label="칠판" tabIndex={-1} style={{ flex: 1, position: 'relative', overflow: 'hidden', outline: 'none', '--mb-right-inset': narrow && chatOpen ? `${chatW + 12}px` : '0px' }}>
-        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} phone={phone} keepTool={keepTool} onKeepTool={toggleKeep} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onAddSymbol={(items, name, folder) => setSymAdd({ items, name, folder })} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onBubble={phone ? undefined : openBubble} onOpenDoc={phone ? phoneDoc : setDocView} onAsk={(text, kind, extra) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind, extra }) }} />
-        {!phone && Object.entries(threads).filter(([id, t]) => t?.length && !bubbles.includes(id)).map(([id, t]) => { const info = ed.current?.bubbleInfo(id)
-          return info && <BubbleBadge key={'bb' + id} id={id} info={info} cam={cam} count={t.filter(m => m.role === 'user').length} onOpen={() => openBubble(id)} /> })}
+        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} phone={phone} keepTool={keepTool} onKeepTool={toggleKeep} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onAddSymbol={(items, name, folder) => setSymAdd({ items, name, folder })} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onBubble={phone ? undefined : openBubble} onOpenDoc={phone ? phoneDoc : setDocView} onAsk={(text, kind, extra) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind, extra }) }} onAskFocus={() => { setChatOpen(true); setChatFocus({ id: Date.now() }) }} />
+        {!phone && Object.entries(threads).filter(([id, t]) => commentCount(t) && !isResolved(t) && !bubbles.includes(id)).map(([id, t]) => { const info = ed.current?.bubbleInfo(id)   // 해결된 댓글은 표시 없음
+          return info && <BubbleBadge key={'bb' + id} id={id} info={info} cam={cam} count={commentCount(t)} onOpen={() => openBubble(id)} /> })}
         {docView && (it => it && (dv => (phone ? createPortal(dv, document.body) : dv))(<DocView key={'dv' + it._id} it={it} size={size} phone={phone} readOnly={typeof docView !== 'string'} threads={threads} onThread={setThread} onClose={() => setDocView('')} onStatus={setStatus}
           onHtml={(html, label) => !!ed.current?.setFields(it._id, { html }, label || '블록 고침')} onLives={lives => !!ed.current?.setFields(it._id, { lives }, '움직이는 카드')} onPrint={() => ed.current?.printDoc(it)} onHwpx={() => ed.current?.saveHwpx(it)} />))(typeof docView === 'string' ? model.items.find(x => x._id === docView) : docView)}
-        {!phone && bubbles.map(id => <Bubble key={'b' + id} id={id} info={ed.current?.bubbleInfo(id)} cam={cam} size={size} thread={threads[id] || []} first={bubbleFirst[id]} onThread={msgs => setThread(id, msgs)}
+        {!phone && bubbles.map(id => <Bubble key={'b' + id} id={id} info={ed.current?.bubbleInfo(id)} cam={cam} size={size} thread={threads[id] || []} me={me} onThread={msgs => setThread(id, msgs)}
           onClose={() => setBubbles(bs => bs.filter(x => x !== id))} onEdit={md => ed.current?.bubbleEdit(id, md)} onFields={patch => ed.current?.setFields(id, patch)} onImage={(data, aspect) => ed.current?.setImage(id, data, aspect)} onStatus={setStatus} />)}
         {offline && !gone && <div data-testid="offline-banner" role="alert" style={{ position: 'absolute', top: 'var(--mb-top, 60px)', left: '50%', transform: 'translateX(-50%)', zIndex: 25, display: 'flex', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', gap: 10, maxWidth: 'calc(100% - 16px)', boxSizing: 'border-box', padding: '8px 12px', borderRadius: 10, background: DANGER, color: '#fff', font: "600 13px 'Pretendard', sans-serif", boxShadow: 'var(--mb-shadow)' }}>
           저장 안 됨 — 서버에 다시 연결되면 저절로 보내요

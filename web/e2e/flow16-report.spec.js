@@ -42,8 +42,8 @@ test('정리해 줘 → 📄 미리보기 → 문서 카드 → 더 짧게 = 고
   await page.mouse.click(p.x, p.y); await page.mouse.click(p.x, p.y, { button: 'right' })
   await aiMake(page, 'doc')
   await expect.poll(() => seen.length).toBe(3)
-  expect(seen[2].kind).toBe('report')
-  expect(seen[2].prev_html).toBeUndefined(); expect(seen[2].prev_docs).toBeUndefined()   // 우클릭 = 고른 재료로 새 문서(바로 앞 답이 정리 문서여도 고쳐 쓰지 않음, 2026-11-08)
+  expect(JSON.stringify(seen[2].messages.at(-1).context || '')).toContain('송신기 이상 보고')   // 우클릭 「KAIROS에게 묻기」 = 고른 것이 붙은 질문(2026-11-14)
+  expect(seen[2].prev_html).toBeUndefined(); expect(seen[2].prev_docs).toBeUndefined()   // 새로 고른 재료 = 새 문서(바로 앞 답이 정리 문서여도 고쳐 쓰지 않음, 2026-11-08)
 
   await waitSaved(page); await page.reload()
   await expect(page.getByText(`서버 「${name}」`).first()).toBeVisible()

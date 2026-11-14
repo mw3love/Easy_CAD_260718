@@ -1,7 +1,7 @@
 // 흐름 70 — 문서 블록 고치기(2026-11-09 문서 통합 2단계): 문서 카드 「크게 보기」 = 앱 안 큰 창 → 블록 누르기 = 말 칸 → 그 블록만 바뀜 · 원래대로 · Ctrl+Z
 // + 새 문서에 넘치는 블록이 있으면 그 블록만 저절로 한 번 고침. KAIROS는 가짜(/api/chat).
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, clickScene, liveDoc, toPage } from './helpers.js'
+import { boardName, openBoard, setCam, clickScene, liveDoc, toPage, aiMake } from './helpers.js'
 
 const page1 = b2 => `<!doctype html><html><head><title>점검</title></head><body style="margin:0"><main style="width:1000px">
 <h1 data-block="b1" data-kind="text">결론 한 문장</h1>${b2}<p data-block="b3" data-kind="text">끝 단락</p></main></body></html>`
@@ -15,8 +15,8 @@ async function makeDoc(page, html, seen, fix) {
     return r.fulfill({ json: { kind: 'report', content: '문서', title: '점검', html, docs: [{ style: 'read', html, title: '점검' }], page_w: 1000, model: 'claude-opus-5-5', elapsed: 3 } }) })
   await page.getByRole('button', { name: '메모', exact: true }).click(); await page.keyboard.type('송신소 점검'); await clickScene(page, 1500, 900)
   const m = (await liveDoc(page)).items.find(it => it.type === 'memo')
-  await clickScene(page, m.pos[0] + 40, m.pos[1] + 15)
-  await page.getByTestId('ai-chip').click(); await page.locator('[data-testid="ai-kind"][data-kind="doc"]').click(); await page.getByTestId('ai-input').press('Enter')
+  await clickScene(page, m.pos[0] + 40, m.pos[1] + 15); const q = await toPage(page, m.pos[0] + 40, m.pos[1] + 15); await page.mouse.click(q.x, q.y, { button: 'right' })
+  await aiMake(page, 'doc'); await page.getByRole('button', { name: '칠판에 붙이기' }).click()   // 대화창 답 → 칠판(2026-11-14 — 옛 AI 칩은 바로 붙였음)
   await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'doc').length).toBe(1)
   return (await liveDoc(page)).items.find(it => it.type === 'doc')
 }
@@ -85,8 +85,8 @@ test('큰 창 — 「움직이게」 = 문서 글은 그대로 · ▶ 그 블록
   await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
   await page.getByRole('button', { name: '메모', exact: true }).click(); await page.keyboard.type('송신소 점검'); await clickScene(page, 1500, 900)
   const m = (await liveDoc(page)).items.find(it => it.type === 'memo')
-  await clickScene(page, m.pos[0] + 40, m.pos[1] + 15)
-  await page.getByTestId('ai-chip').click(); await page.locator('[data-testid="ai-kind"][data-kind="doc"]').click(); await page.getByTestId('ai-input').press('Enter')
+  await clickScene(page, m.pos[0] + 40, m.pos[1] + 15); const q = await toPage(page, m.pos[0] + 40, m.pos[1] + 15); await page.mouse.click(q.x, q.y, { button: 'right' })
+  await aiMake(page, 'doc'); await page.getByRole('button', { name: '칠판에 붙이기' }).click()
   await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'doc').length).toBe(1)
   const card = (await liveDoc(page)).items.find(it => it.type === 'doc'), docIt = async () => (await liveDoc(page)).items.find(it => it.type === 'doc')
   const at = await toPage(page, card.pos[0] + 100, card.pos[1] + 200)
@@ -125,7 +125,7 @@ test('새 문서에 넘치는 블록 = 그 블록만 저절로 한 번 고침(�
   const seen = []
   await openBoard(page, boardName('docfix'), { chat: true }); await setCam(page)
   await makeDoc(page, page1(WIDE), seen, '<div data-block="b2" data-kind="box">알맞은 칸</div>')
-  await expect.poll(() => seen.map(b => b.kind).join()).toBe('report,block')
+  await expect.poll(() => seen.map(b => b.kind || '').join()).toBe(',block')   // 첫 요청 = 말로(길은 서버가 고름 — 2026-11-14 AI 칩을 치움)
   expect(seen[1].block).toBe('b2'); expect(seen[1].messages[0].content).toContain('넘침')
   await expect.poll(async () => (await liveDoc(page)).items.find(it => it.type === 'doc')?.html || '').toContain('알맞은 칸')
   await expect(page.locator('aside[aria-label="KAIROS 대화"]')).toContainText('잘린 곳 1곳을 고쳤어요')

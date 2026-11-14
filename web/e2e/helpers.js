@@ -14,12 +14,13 @@ export const boardName = tag => `e2e_${tag}_${Date.now().toString(36)}${n++}`
 // 2026-11-08 「+」 창 없앰 — 발표 자료·인포그래픽처럼 질문지가 먼저인 길은 말로: 진짜 서버는 길 고르기 요청(kind·deep·slides 없음)에 `{ kind: 'go', to }`로 답함.
 // 가짜 /api/chat은 `if (routeCall(b)) return r.fulfill({ json: { kind: 'go', to: 'slides' } })`로 흉내(이 요청은 크레딧이 안 들어 `seen`에 안 넣음)
 export const routeCall = b => !b.kind && !b.deep && !b.slides
-// ✨ AI 칩 창(2026-11-09) — 우클릭 메뉴가 열린 상태에서 「AI로 만들기」 → 단추(doc·slide·design·html) → 보내기
+// 「KAIROS에게 묻기」(2026-11-14 B1 5단계 — 옛 AI 칩·「AI로 만들기」를 치움): 우클릭 메뉴가 열린 상태에서 → 대화창 입력 칸(고른 것이 붙음)에 말 → Enter
+const AI_SAY = { doc: '고른 것을 문서 한 장으로 만들어 줘', slide: '슬라이드 만들어 줘' }
 export async function aiMake(page, kind, text = '') {
-  await page.getByRole('menuitem', { name: /AI로 만들기/ }).click()
-  if (kind) await page.locator(`[data-testid="ai-kind"][data-kind="${kind}"]`).click()
-  if (text) await page.getByTestId('ai-input').fill(text)
-  await page.getByTestId('ai-send').click()
+  await page.getByRole('menuitem', { name: /KAIROS에게 묻기/ }).click()
+  const box = page.getByPlaceholder('물어보세요', { exact: false }); await expect(box).toBeFocused()
+  await expect(page.getByTestId('chat-busy')).toHaveCount(0)   // 앞 답을 기다리는 동안 보내면 안 받음(사람도 같음)
+  await box.fill([AI_SAY[kind], text].filter(Boolean).join(' — ')); await box.press('Enter')
 }
 export async function askChat(page, text) { const box = page.getByPlaceholder('물어보세요', { exact: false }); await box.fill(text); await box.press('Enter') }
 

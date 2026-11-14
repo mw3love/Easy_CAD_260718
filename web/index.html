@@ -27,7 +27,7 @@
     .mb-field::placeholder,.mb-field ::placeholder{color:var(--mb-muted);opacity:1}   /* 입력 안내 글 = 보조 글색(2026-11-10 6단계 — 브라우저 기본 회색은 대비 4.5 미만) */
     .mb-btn-icon svg [stroke-width]{stroke-width:1.6}   /* 위 막대·왼쪽 판 아이콘 선 굵기 하나로(0단계 B6 — 1.2~2.2 제각각, icons.json은 데스크톱에서 뽑으니 여기서) */
     label:has(>input[type=color]:focus-visible){outline:2px solid var(--mb-icon-acc);outline-offset:2px}   /* 색 창 「다른 색」 — 진짜 칸은 투명이라 둘레에 */
-    [data-testid=props-card] button:not(:disabled):hover,[data-testid=prop-bar] button:not(:disabled):hover,[data-ppop] button:not(:disabled):hover,[data-testid=ai-panel] button:not(:disabled):hover{background-image:linear-gradient(rgba(127,127,127,.14),rgba(127,127,127,.14))!important}   /* 속성 카드·펼침·AI 창 마우스 올림 = 회색 겹침(2026-11-10 4단계 — 올려도 변화가 없었음) */
+    [data-testid=props-card] button:not(:disabled):hover,[data-testid=prop-bar] button:not(:disabled):hover,[data-ppop] button:not(:disabled):hover{background-image:linear-gradient(rgba(127,127,127,.14),rgba(127,127,127,.14))!important}   /* 속성 카드·막대·펼침 마우스 올림 = 회색 겹침(2026-11-10 4단계 — 올려도 변화가 없었음) */
     .mb-row:focus-visible,.mb-row a:focus-visible{outline-offset:-2px!important}
     .mb-skip{position:fixed;left:8px;top:-60px;z-index:2000;padding:8px 14px;border-radius:8px;background:var(--mb-card);color:var(--mb-ink);font:600 13px 'Pretendard',sans-serif;box-shadow:var(--mb-shadow);text-decoration:none}.mb-skip:focus{top:8px}   /* 글쇠로만 보이는 「건너뛰기」(2026-11-10 1단계 — 위 막대 Tab 25번) */   /* 목록 칸이 굴림 칸이라 바깥 테두리는 잘림 — 줄 안쪽에 */
     .mb-row:focus-within .mb-more{visibility:visible!important}   /* 줄 ⋯는 마우스 올림 때만(규칙 ④) + 글쇠로 그 줄에 왔을 때도 */

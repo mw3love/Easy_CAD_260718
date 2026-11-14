@@ -16,7 +16,7 @@ async function openSlide(page, fr) {   // 그 장을 화면 왼쪽에 두고 프
   const c = await toPage(page, fr.pos[0], fr.pos[1]), p = { x: c.x + 2, y: c.y + 2 }   // 왼쪽 위 모서리 안쪽(테두리)
   await page.evaluate(() => window.__mb.ed.setSel([]))   // 만든 직후엔 장 전부가 골라져 있음
   await page.mouse.click(p.x, p.y); await page.mouse.click(p.x, p.y, { button: 'right' })
-  await page.getByText('AI 말풍선 (KAIROS)').click()
+  await page.getByText('댓글…', { exact: true }).click()
   return page.getByTestId('bubble')
 }
 
@@ -33,8 +33,8 @@ test('장 말풍선 — 그 장만 다시 지음 · 원래대로 ↔ 바꾼 것 
   const keep1 = JSON.stringify(pieces(doc, f1.uid)), keep3 = JSON.stringify(pieces(doc, f3.uid))
 
   let bub = await openSlide(page, f2)
-  await expect(bub.getByTestId('bubble-scope')).toHaveText('이 장을 보고 고쳐요')
-  await bub.getByTestId('bubble-input').fill('숫자 칸으로'); await bub.getByTestId('bubble-input').press('Enter')
+  await expect(bub.getByTestId('bubble-scope')).toHaveText('@KAIROS = 이 장을 보고 고쳐요')
+  await bub.getByTestId('bubble-input').fill('@KAIROS 숫자 칸으로'); await bub.getByTestId('bubble-input').press('Enter')
   await expect(bub.getByTestId('bubble-a')).toContainText('숫자 칸으로 바꿨어요.')
   expect(seen[0].item).toMatchObject({ type: 'frame', edit: 'slide', deck: '송신소 점검', slide: { title: '점검 결과' } })
   doc = await liveDoc(page)
@@ -56,7 +56,7 @@ test('장 말풍선 — 그 장만 다시 지음 · 원래대로 ↔ 바꾼 것 
   await page.evaluate(uid => window.__mb.ed.setFields(uid, { text: '→  손으로 고침' }, '손'), t3.uid)   // _id = 파일 uid
   await expect.poll(async () => texts(await liveDoc(page), f3.uid)).toContain('손으로 고침')
   bub = await openSlide(page, f3)
-  await bub.getByTestId('bubble-input').fill('숫자 칸으로'); await bub.getByTestId('bubble-input').press('Enter')
+  await bub.getByTestId('bubble-input').fill('@KAIROS 숫자 칸으로'); await bub.getByTestId('bubble-input').press('Enter')
   await expect(bub.getByTestId('bubble-apply')).toBeVisible()
   expect(texts(await liveDoc(page), f3.uid)).toContain('손으로 고침')                            // 아직 그대로
   await bub.getByTestId('bubble-apply').click()
