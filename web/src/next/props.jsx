@@ -574,8 +574,23 @@ export function PropBar({ box, size, items, kind, set, onKind, library, onSwapTo
     const shapeBtn = (swapOne || swapGrp) && <PopBtn {...P} id="swap" title="다른 도형으로 바꾸기(크기·연결 유지)" width={180} label={swapOne ? shapeIcon(kindOf(swapOne)) : <span style={{ fontSize: 12 }}>{F.symName || `묶음 ${items.length}개`}</span>}>
       <SwapList F={F} set={set} convert={convert} onConvert={onConvert} library={library} onSwapTo={onSwapTo} dark={dark} close={() => setPop(null)} /></PopBtn>
     const arrange = align?.n >= 2 && <PopBtn {...P} id="arrange" title="맞춤 · 분배" width={190} label={ALIGNS[0][2]}><AlignRow bare align={align} /></PopBtn>
+    // 2026-11-14 다듬기: 심볼 이름(「모양」 단추에 안 보일 때 — 옛 카드 제목) · 표 하나 = 그래프 모양 · 프레임 하나 = 이름·비율
+    const nameTag = F.symName && !swapGrp && <span data-testid="bar-name" title={F.symName} style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 6px', fontSize: 12, color: C.muted, flex: 'none' }}>{F.symName}</span>
+    const t1 = items.length === 1 && items[0].type === 'table' ? items[0] : null
+    const chartBtn = t1 && (() => { const why = chartWhys(t1), cur = isChart(t1) ? t1.chart : 'table'
+      return <PopBtn {...P} id="chart" title="그래프 모양 — 표 ↔ 그래프" width={170} label={CHART_ICONS[cur]}>
+        <div data-testid="bar-chart-kinds" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 2 }}>
+          {CHART_KINDS.map(([k, name]) => { const no = !!why[k]
+            return <button key={k} data-chart-kind={k} title={no ? `${name} — ${why[k]}` : name} aria-label={name} aria-pressed={cur === k} aria-disabled={no || undefined} onClick={() => { if (!no) set(it => (it._id === t1._id ? chartPatch(it, k) : null), '그래프 모양') }}
+              style={btn(cur === k, { height: 30, opacity: no ? 0.3 : 1, cursor: no ? 'not-allowed' : 'pointer' })}>{CHART_ICONS[k]}</button> })}</div>
+        {Object.keys(why).length > 0 && <div style={{ fontSize: 11, color: C.muted }}>흐린 것은 이 표에 안 맞아요(마우스를 올리면 까닭)</div>}</PopBtn> })()
+    const f1 = items.length === 1 && items[0].type === 'frame' ? items[0] : null
+    const frameBtn = f1 && <PopBtn {...P} id="frame" title="프레임 이름 · 비율" width={210} label={<span style={{ fontSize: 12, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>{(f1.name || '이름 없음') + ' · ' + (f1.ratio || '자유')}</span>}>
+      <input key={f1._id} data-testid="bar-frame-name" className="mb-field" defaultValue={f1.name || ''} placeholder="예: 표지" aria-label="프레임 이름" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur() }}
+        onChange={e => set(() => ({ name: e.target.value }), '프레임 이름', 'fname')} style={{ height: 28, boxSizing: 'border-box', border: '1px solid var(--mb-ctl)', borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: "400 13px 'Pretendard', sans-serif" }} />
+      <Seg value={f1.ratio || ''} onPick={r => set(it => frameRatio(it, r || null), '프레임 비율')} items={[['', <span key="f" style={{ fontSize: 11 }}>자유</span>, '자유'], ...['16:9', '4:3', 'A4', '1:1'].map(r => [r, <span key={r} style={{ fontSize: 11 }}>{r}</span>, r])]} /></PopBtn>
     const textG = [fontBtn, boldBtn, alignBtn, tColorChip]
-    groups = allText ? [[arrange], textG, [fillChip], [lockBtn, moreBtn]] : [[arrange, shapeBtn], [lineColor, fillChip, widthBtn, dashBtn], textG, [lockBtn, moreBtn]]
+    groups = allText ? [[arrange], textG, [fillChip], [lockBtn, moreBtn]] : [[nameTag, arrange, shapeBtn, chartBtn, frameBtn], [lineColor, fillChip, widthBtn, dashBtn], textG, [lockBtn, moreBtn]]
   }
   const shown = groups.map(g => g.filter(Boolean)).filter(g => g.length)
   const x = Math.max(8, Math.min(box.x + box.w / 2 - w / 2, size.w - ins.right - w - 8))

@@ -158,3 +158,38 @@ test('글쇠로 — Tab으로 막대 단추에 닿고, Enter = 펼침(초점이 
   expect((await liveDoc(page)).items.find(it => it.type === 'rect')).toBeTruthy()       // Esc가 고른 것을 풀지 않음(펼침만 닫힘)
   await expect(page.getByTestId('prop-bar')).toBeVisible()
 })
+
+// 2026-11-14 다듬기 — 표 하나 = 「그래프 모양」 · 프레임 하나 = 이름·비율 · 끄는 동안 막대 숨김 · 심볼 이름
+const DOC2 = { format: 'easycad-doc', version: 1, items: [
+  { ...B, type: 'table', uid: 't1', pos: [0, 0], rect: [0, 0, 240, 150], rows: 4, cols: 2, header: true, col_widths: [0.5, 0.5], cells: [['팀', '점수'], ['가', '10'], ['나', '20'], ['다', '15']] },
+  { ...B, type: 'frame', uid: 'f1', pos: [400, 0], rect: [0, 0, 320, 180], name: '표지', no: 1 },
+  { ...B, type: 'polygon', uid: 'p1', pos: [0, 300], rect: [0, 0, 80, 60], pts: [[0, 0], [80, 0], [40, 60]], closed: true, pen: '#ff1e2b45', width: 2, fill: null, style: 1, sym_name: '안테나' },
+] }
+test('표 = 「그래프 모양」 · 프레임 = 이름·비율 · 심볼 이름 · 끄는 동안 막대 숨김', async ({ page }) => {
+  await page.route('**/propbar2.ecad', r => r.fulfill({ json: DOC2 }))
+  await openBoard(page, boardName('pbpolish'))
+  await page.evaluate(() => window.__mb.open('/propbar2.ecad'))
+  await expect.poll(async () => (await liveDoc(page)).items.length).toBe(3)
+  await setCam(page)
+  await clickScene(page, 120, 75)                                                        // 표
+  await page.getByTestId('bar-chart').click()
+  await page.getByTestId('bar-chart-kinds').locator('[data-chart-kind="col"]').click()
+  expect((await item(page, 'table')).chart).toBe('col')
+  await shot(page, 'chart')
+  await page.keyboard.press('Escape')
+  await clickScene(page, 400, 90)                                                        // 프레임 테두리
+  await expect(page.getByTestId('bar-frame')).toContainText('표지 · 자유')
+  await page.getByTestId('bar-frame').click()
+  await page.getByTestId('pop-frame').getByRole('button', { name: '16:9' }).click()
+  expect((await item(page, 'frame')).ratio).toBe('16:9')
+  await page.getByTestId('bar-frame-name').fill('첫 장'); await page.keyboard.press('Enter')
+  expect((await item(page, 'frame')).name).toBe('첫 장')
+  await page.keyboard.press('Escape')
+  await clickScene(page, 40, 300)                                                        // 심볼(이름 있는 다각형) — 윗변
+  await expect(page.getByTestId('bar-name')).toHaveText('안테나')
+  const p = await toPage(page, 40, 300)                                                  // 끄는 동안 = 막대 없음, 놓으면 다시
+  await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(p.x + 40, p.y + 20, { steps: 4 })
+  await expect(page.getByTestId('prop-bar')).toHaveCount(0)
+  await page.mouse.up()
+  await expect(page.getByTestId('prop-bar')).toBeVisible()
+})

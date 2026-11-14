@@ -194,3 +194,33 @@ test('댓글 — 사람 댓글은 AI 안 부름 · 이름 보임 · @KAIROS면 A
   await bub.getByTestId('bubble-close').click()
   await expect(page.getByTestId('bubble-badge')).toHaveText('💬 4')
 })
+
+test('댓글 — 내 댓글만 고치기·지우기 · ☰ 「댓글 모아 보기」 = 열린 댓글(해결된 것은 켜야) → 누르면 그 물건 댓글', async ({ page }) => {
+  const seen = []
+  await fake(page, seen)
+  await openBoard(page, boardName('comment2'), { who: '민우' }); await setCam(page)
+  await pasteText(page, '# 회의\n- 결정 A')
+  await expect.poll(async () => (await liveDoc(page)).items.length).toBe(1)
+  await openOn(page, '결정 A')
+  const bub = page.getByTestId('bubble'), input = bub.getByTestId('bubble-input')
+  for (const t of ['첫 댓글', '둘째 댓글']) { await input.fill(t); await input.press('Enter') }
+  await bub.getByTestId('comment-edit').first().click()
+  const ei = bub.getByTestId('comment-edit-input'); await expect(ei).toBeFocused()
+  await ei.fill('첫 댓글(고침)'); await ei.press('Enter')
+  await expect(bub.getByTestId('bubble-q').first()).toContainText('첫 댓글(고침)')
+  await expect(bub.getByTestId('bubble-q').first()).toContainText('· 고침')
+  await bub.getByTestId('comment-delete').nth(1).click()
+  await expect(bub.getByTestId('bubble-q')).toHaveCount(1)
+  await bub.getByTestId('bubble-close').click()
+  await expect(page.getByTestId('bubble-badge')).toHaveText('💬 1')                      // 지운 것은 안 셈
+  await page.getByTestId('main-menu').click(); await page.getByTestId('main-menu-list').getByRole('menuitem', { name: /^댓글 모아 보기/ }).click()
+  const list = page.getByTestId('comment-list')
+  await expect(list.getByTestId('comment-row')).toHaveCount(1)
+  await expect(list.getByTestId('comment-row')).toContainText('민우: 첫 댓글(고침)')
+  await list.getByTestId('comment-row').click()
+  await expect(page.getByTestId('bubble')).toBeVisible()
+  await page.getByTestId('bubble-resolve').click()
+  await expect(list.getByTestId('comment-row')).toHaveCount(0)                           // 해결 = 목록에서도 숨김
+  await list.getByTestId('comment-all').check()
+  await expect(list.getByTestId('comment-row')).toHaveAttribute('data-done', 'true')      // 켜면 해결된 것도
+})

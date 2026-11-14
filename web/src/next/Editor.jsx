@@ -2834,7 +2834,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         const memoEditing = editing && !editing.armed && editing.kind === 'memo'   // 메모 고치는 중 = 메모 자체 꾸미기 막대가 맡음
         const b = unionBox(selItems.map(selBoxOf))
         return <>
-          {!readOnly && !phone && !memoEditing && present == null && <PropBar {...common} cells={!!cells} box={{ x: b.x * cam.z + cam.x, y: b.y * cam.z + cam.y, w: b.w * cam.z, h: b.h * cam.z }} size={size}
+          {!readOnly && !phone && !memoEditing && present == null && !live && <PropBar {...common} cells={!!cells} box={{ x: b.x * cam.z + cam.x, y: b.y * cam.z + cam.y, w: b.w * cam.z, h: b.h * cam.z }} size={size}
             onLock={() => { const m = R.current.model; commit(toggleLock(m.items, sel), sel, '잠금') }}
             onMore={el => { const host = el.closest('[data-testid="prop-bar"]')?.offsetParent?.getBoundingClientRect(), r = el.getBoundingClientRect(); if (host) setMenu({ x: r.left - host.left, y: r.bottom - host.top + 4, anchor: el, more: true }) }} />}
           {cardOpen && <Props {...common} rotate={(it, a) => rotateTo(it, a, false)} onLegend={legendEdit} cells={cells} setCells={setCells} onClose={() => setCardOpen(false)} />}

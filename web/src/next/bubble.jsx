@@ -20,10 +20,10 @@ export const bubbleKind = t => KIND[t] || '도형'
 const AT_AI = /@(kairos|카이로스)/i   // 이 말이 든 댓글만 AI가 답함
 // 해결됐나 = 마지막 해결·다시 열기 표시가 「해결」
 export const isResolved = t => (t || []).filter(m => m.role === 'note').at(-1)?.act === 'resolve'
-export const commentCount = t => (t || []).filter(m => m.role === 'user' || m.role === 'assistant').length
+export const commentCount = t => (t || []).filter(m => (m.role === 'user' || m.role === 'assistant') && !m.deleted).length
 // AI에게 보낼 대화 — 표시(note)는 빼고, 사람 댓글은 「이름: 글」, 같은 쪽이 이어지면 한 덩이(서버는 사람·AI가 번갈아 오길 기대)
 const toAI = msgs => { const out = []
-  for (const m of msgs) { if (m.role !== 'user' && m.role !== 'assistant') continue
+  for (const m of msgs) { if ((m.role !== 'user' && m.role !== 'assistant') || m.deleted) continue
     const c = m.role === 'user' && m.who ? `${m.who}: ${m.content}` : m.content, last = out.at(-1)
     if (last && last.role === m.role) last.content += '\n' + c; else out.push({ role: m.role, content: c }) }
   return out }
@@ -47,6 +47,7 @@ async function pngOf(url) {
 export function Bubble({ id, info, cam, size, thread = [], me = '', onThread, onClose, onEdit, onFields, onImage, onStatus }) {   // me = 내 이름(접속자 이름 — 댓글 쓴 사람)
   const [draft, setDraft] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState('')
   const list = useRef(null), ta = useRef(null), swaps = useRef({})   // swaps = 답 번호 → 그림 { before, after }(이 창에만)
+  const [editAt, setEditAt] = useState(null), [editText, setEditText] = useState('')   // 내 댓글 고치기(2026-11-14 — 같은 시각 = 같은 메시지라 서버 합치기가 고친 것으로 바꿈)
   useEffect(() => { ta.current?.focus() }, [])
   useEffect(() => { list.current?.scrollTo(0, list.current.scrollHeight) }, [thread.length, busy])
   if (!info) return null
@@ -91,7 +92,11 @@ export function Bubble({ id, info, cam, size, thread = [], me = '', onThread, on
   const btn = { all: 'unset', cursor: 'pointer', font: `400 11.5px ${F}`, color: C.muted, padding: '2px 7px', borderRadius: 6, border: '1px solid var(--mb-ctl)' }
   const resend = () => { const last = thread.at(-1); if (last?.role === 'user') send(last.content, thread.slice(0, -1), last.at) }   // 오류 뒤 「다시 보내기」 = 마지막 질문 그대로
   const resolved = isResolved(thread), note = act => onThread([...thread, { role: 'note', act, at: Date.now(), ...(me ? { who: me } : {}) }])
-  const meta = (who, at) => <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', font: `400 11px ${F}`, color: C.muted }}><b style={{ color: C.ink, fontSize: 12 }}>{who}</b>{at ? when(at) : ''}</div>
+  const meta = (who, at, extra) => <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', font: `400 11px ${F}`, color: C.muted }}><b style={{ color: C.ink, fontSize: 12 }}>{who}</b>{at ? when(at) : ''}{extra}</div>
+  const mine = m => !!me && m.who === me   // 내가 쓴 댓글만 고치기·지우기(Figma처럼 남의 것은 안 됨)
+  const saveEdit = m => { const t = editText.trim(); setEditAt(null); if (!t || t === m.content) return; onThread(thread.map(x => (x === m ? { ...x, content: t, edited: Date.now() } : x))) }
+  const remove = m => onThread(thread.map(x => (x === m ? { ...x, content: '', deleted: true } : x)))   // 저장소가 메시지를 안 지워 「지움」 표시로
+  const link = { all: 'unset', cursor: 'pointer', color: C.muted, textDecoration: 'underline', fontSize: 11 }
   return <div data-testid="bubble" data-id={id} role="dialog" aria-label={`댓글 — ${info.slide ? '장' : bubbleKind(info.type)}`}
     onPointerDown={e => e.stopPropagation()} onWheel={e => e.stopPropagation()} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }}
     style={{ position: 'absolute', left: pos.x, top: pos.y, width: BUBBLE_W, maxHeight: 360, zIndex: 8, display: 'flex', flexDirection: 'column', background: C.card, color: C.ink,
@@ -105,8 +110,15 @@ export function Bubble({ id, info, cam, size, thread = [], me = '', onThread, on
     <div ref={list} role="log" aria-label="댓글" aria-busy={busy} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
       {!commentCount(thread) && <div style={{ color: C.muted, fontSize: 12.5 }}>이 물건에 댓글을 남겨요 — 같이 보는 사람에게 보여요. {info.edit ? '@KAIROS를 붙여 고쳐 달라면 AI가 그 자리에서 고쳐요(Ctrl+Z로 되돌림).' : '@KAIROS를 붙이면 AI가 이것만 보고 답해요.'}</div>}
       {resolved && <div data-testid="bubble-resolved" style={{ display: 'flex', alignItems: 'center', gap: 6, color: C.muted, fontSize: 12 }}>✓ 해결된 댓글이에요<button data-testid="bubble-reopen" style={btn} onClick={() => note('reopen')}>다시 열기</button></div>}
-      {thread.map((m, i) => m.role === 'note' ? null : m.role === 'user'
-        ? <div key={i} data-testid="bubble-q" style={{ whiteSpace: 'pre-wrap', wordBreak: 'keep-all', overflowWrap: 'anywhere' }}>{meta(m.who || '이름 없음', m.at)}{m.content}</div>
+      {thread.map((m, i) => m.role === 'note' || m.deleted ? null : m.role === 'user'
+        ? <div key={i} data-testid="bubble-q" style={{ whiteSpace: 'pre-wrap', wordBreak: 'keep-all', overflowWrap: 'anywhere' }}>
+          {meta(m.who || '이름 없음', m.at, <>{m.edited ? <span>· 고침</span> : null}{mine(m) && editAt !== m.at && <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button data-testid="comment-edit" style={link} onClick={() => { setEditAt(m.at); setEditText(m.content) }}>고치기</button>
+            <button data-testid="comment-delete" style={link} onClick={() => remove(m)}>지우기</button></span>}</>)}
+          {editAt === m.at ? <textarea data-testid="comment-edit-input" className="mb-field" autoFocus aria-label="댓글 고치기" value={editText} rows={2} onChange={e => setEditText(e.target.value)}
+              onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); saveEdit(m) } if (e.key === 'Escape') { e.preventDefault(); setEditAt(null) } }} onBlur={() => saveEdit(m)}
+              style={{ width: '100%', boxSizing: 'border-box', resize: 'none', border: '1px solid var(--mb-ctl)', borderRadius: 6, padding: '4px 6px', background: 'transparent', color: C.ink, font: `400 13px/1.5 ${F}` }} />
+            : m.content}</div>
         : <div key={i} data-testid="bubble-a" style={{ background: C.seg, borderRadius: 10, padding: '5px 9px', whiteSpace: 'pre-wrap', wordBreak: 'keep-all', overflowWrap: 'anywhere' }}>
           {meta('KAIROS', m.at)}{m.content}
           {m.fix && <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4 }}>
@@ -140,4 +152,23 @@ export function BubbleBadge({ id, info, cam, count, onOpen }) {
   return <button data-testid="bubble-badge" data-id={id} aria-label={`댓글 열기 — ${count}개`} title={`댓글 열기 — ${count}개`} onPointerDown={e => e.stopPropagation()} onClick={onOpen}
     style={{ all: 'unset', position: 'absolute', left: x, top: y, zIndex: 7, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '1px 6px', borderRadius: 99,
       background: 'var(--mb-accent)', color: '#fff', font: `600 11px ${F}`, boxShadow: '0 1px 4px rgba(0,0,0,.25)' }}>💬 {count}</button>
+}
+
+// 댓글 모아 보기(2026-11-14 — 떠 있는 판 「댓글」: ☰ 메뉴 「댓글 모아 보기」) — 칠판의 댓글 전부, 해결된 것은 「해결된 것도」를 켜야 보임.
+// 줄 누르기 = 그 물건으로 가서 댓글 창을 엶. info(id) = 물건 정보(지운 물건의 댓글은 안 보임)
+export function CommentList({ threads, info, onOpen }) {
+  const [all, setAll] = useState(false)
+  const rows = Object.entries(threads || {}).map(([id, t]) => ({ id, t, i: info(id), n: commentCount(t), done: isResolved(t) })).filter(r => r.i && r.n && (all || !r.done))
+    .sort((a, b) => (b.t.at(-1)?.at || 0) - (a.t.at(-1)?.at || 0))   // 최근 것 먼저
+  const first = t => t.find(m => (m.role === 'user' || m.role === 'assistant') && !m.deleted)
+  return <div data-testid="comment-list" style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6, font: `400 12.5px ${F}`, color: C.ink }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><b style={{ font: `700 15px ${F}` }}>댓글</b>
+      <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: C.muted, cursor: 'pointer' }}><input type="checkbox" data-testid="comment-all" checked={all} onChange={e => setAll(e.target.checked)} />해결된 것도</label></div>
+    {!rows.length && <div style={{ color: C.muted, fontSize: 12, lineHeight: 1.6 }}>{all ? '아직 댓글이 없어요 — 물건을 우클릭 「댓글…」로 남겨요.' : '열린 댓글이 없어요. 해결된 것은 「해결된 것도」를 켜면 보여요.'}</div>}
+    {rows.map(r => { const f = first(r.t)
+      return <button key={r.id} data-testid="comment-row" data-done={r.done || undefined} onClick={() => onOpen(r.id)} className="mb-row"
+        style={{ all: 'unset', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 2, padding: '6px 8px', borderRadius: 8, border: `1px solid ${C.line}`, opacity: r.done ? 0.7 : 1 }}>
+        <span style={{ display: 'flex', gap: 6, fontSize: 11, color: C.muted }}>💬 {r.n} · {r.i.slide ? '장' : bubbleKind(r.i.type)}{r.done ? ' · ✓ 해결' : ''}<span style={{ marginLeft: 'auto' }}>{when(r.t.at(-1)?.at || 0)}</span></span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f ? `${f.role === 'assistant' ? 'KAIROS' : f.who || '이름 없음'}: ${f.content}` : ''}</span></button> })}
+  </div>
 }

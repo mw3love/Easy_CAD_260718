@@ -26,7 +26,7 @@ import { HelpCard } from './help.jsx'
 import { EmptyGuide } from './guide.jsx'
 import { FindBar } from './find.jsx'
 import { CommandBar, menuToCommands } from './cmdk.jsx'
-import { Bubble, BubbleBadge, commentCount, isResolved } from './bubble.jsx'
+import { Bubble, BubbleBadge, CommentList, commentCount, isResolved } from './bubble.jsx'
 import { DocView } from './docview.jsx'
 
 const ZMIN = 0.02, ZMAX = 40, LEFT_CARDS = 24   // LEFT_CARDS = 맞출 때 왼쪽 여백 — 카드가 칠판 위에 떠 있던 때는 220(2026-10-23 왼쪽 판으로 붙이며 칠판 밖으로 나감)
@@ -407,7 +407,7 @@ function BoardForm({ onClose, docked, open, myId, me, onDownload, keepDays = 0, 
 
 // 판(칠판·도형·심볼·프레임·레이어) — 2026-10-23 왼쪽 레일 + 붙은 판 → 2026-11-14 B1 2단계 떠 있는 판(`FloatPane`). RAIL_W는 칠판 판 「새 칠판」 메뉴 자리 재기에만 남음
 export const RAIL_W = 40, DOCK_W = 192, DOCK_MAX = 400   // 레일 40(이름 유지)·판 192 = 미니맵 기준 최소, 경계를 끌면 400까지(2026-10-23 사용자 — 프레임 이름이 잘려 보임)
-const DOCK_TABS = [['board', '칠판', '칠판 — 새 칠판·최근 칠판·열기·내려받기'], ['shape', '도형·심볼', '도형·심볼 — 칠판으로 끌거나 눌러서 그리기'], ['frame', '프레임', '프레임 — 순서 = 출력·발표 순서'], ['layer', '레이어', '레이어 — 보이기·잠그기·그리는 중']]
+const DOCK_TABS = [['board', '칠판', '칠판 — 새 칠판·최근 칠판·열기·내려받기'], ['shape', '도형·심볼', '도형·심볼 — 칠판으로 끌거나 눌러서 그리기'], ['frame', '프레임', '프레임 — 순서 = 출력·발표 순서'], ['layer', '레이어', '레이어 — 보이기·잠그기·그리는 중'], ['comments', '댓글', '댓글 — 칠판의 모든 댓글(해결된 것 포함)']]
 // 떠 있는 판(2026-11-14 B1 2단계 — 옛 왼쪽 레일 + 붙은 판을 걷음): 칠판·도형·심볼·프레임·레이어를 이름 섬 아래 한 판에. 여는 길 = 칠판 이름 ▾ · 도구 줄 「도형·심볼」 · ☰ 「프레임 목록」·「레이어」
 // 칠판 위에 뜸(칠판을 밀지 않음), 오른쪽 경계를 끌어 192~400(옛 판과 같게), 다시 누르면 닫힘
 function FloatPane({ tab, panes, width, setWidth }) {
@@ -876,7 +876,8 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
         frame: orderedFrames(model.items).length ? <Frames docked items={model.items} sel={selKey ? selKey.split(',') : []} onReorder={ids => ed.current?.reorderFrames(ids)} onRename={(id, n) => ed.current?.renameFrame(id, n)} onGo={id => ed.current?.goFrame(id)} onPresent={id => ed.current?.startPresent(id)}
           onExport={id => { ed.current?.setSel([id]); setTimeout(() => setExportOpen(true)) /* 내보내기 창은 열 때 고른 것을 읽음 — 고른 것이 바뀐 다음에 열기 */ }} onRemove={id => ed.current?.removeFrame(id)} onSkip={(id, s) => ed.current?.skipFrames([id], s)} dark={dark} />
           : <div data-testid="frames-empty" style={{ padding: '10px 12px', color: C.muted, fontSize: 12, lineHeight: 1.6 }}><div style={{ font: "700 15px 'Pretendard', sans-serif", color: C.ink, marginBottom: 6 }}>프레임</div>아직 없어요 — 도구 줄 「프레임」을 눌러 칠판에서 영역을 감싸면 여기에 쌓여요(순서 = 출력·발표 순서).</div>,
-        layer: <Layers docked model={model} setModel={setModel} active={activeLayer} setActive={setActiveLayer} onChanged={onCommit} dark={dark} /> }   // 떠 있는 판 내용(2026-11-14 B1 2단계 — 옛 왼쪽 판 그대로)
+        layer: <Layers docked model={model} setModel={setModel} active={activeLayer} setActive={setActiveLayer} onChanged={onCommit} dark={dark} />,
+        comments: <CommentList threads={threads} info={id => ed.current?.bubbleInfo(id)} onOpen={id => { ed.current?.showIds([id]); openBubble(id) }} /> }   // 댓글 모아 보기(2026-11-14)   // 떠 있는 판 내용(2026-11-14 B1 2단계 — 옛 왼쪽 판 그대로)
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
       {/* 휴대폰 위 = 칠판 이름(누르면 칠판 판 — 2026-11-06 휴대폰 점검: 다른 칠판으로 갈 길이 링크밖에 없었음)·사람 수·되돌리기·밝기 */}
@@ -964,6 +965,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
             '-',
             ['프레임 목록', '', () => { setMainMenu(null); setDockTab(dockTab === 'frame' ? '' : 'frame') }],
             ['레이어', '', () => { setMainMenu(null); setDockTab(dockTab === 'layer' ? '' : 'layer') }],
+            ['댓글 모아 보기', '', () => { setMainMenu(null); pullThreads(); setDockTab(dockTab === 'comments' ? '' : 'comments') }],
             '-',
             ['글쇠 도움말', 'F1', () => { setMainMenu(null); setHelpOpen(true) }]]} />}
           {moreMenu && <FloatMenu testid="tools-more-list" at={moreMenu} onClose={() => setMoreMenu(null)} entries={[
