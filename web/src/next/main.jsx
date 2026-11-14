@@ -51,7 +51,7 @@ const SPECIAL_BG = on => (on ? '#c4613f' : 'var(--mb-accent)')
 const KEEP_ICONS = { keep: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11V9.5A3.5 3.5 0 0 1 7.5 6H19"/><path d="M16 3l3 3-3 3"/><path d="M20 13v1.5a3.5 3.5 0 0 1-3.5 3.5H5"/><path d="M8 21l-3-3 3-3"/></svg>' }
 // 떠 있는 섬(2026-11-14 화면 틀 B1 — 위 막대를 걷고 Excalidraw처럼 칠판 위에 뜬 조각만): 단추 36·아이콘만(이름 = 마우스 올림·글 읽기)·구석에 글쇠
 // 시안·확정 경위 `~/.claude/design-system/projects/easy-cad.md` 「화면 틀 뼈대 재검토」
-const ISL = { position: 'absolute', zIndex: 18, display: 'flex', alignItems: 'center', gap: 2, padding: 4, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, boxShadow: 'var(--mb-shadow)', boxSizing: 'border-box' }
+const ISL = { position: 'absolute', zIndex: 18, pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 2, padding: 4, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, boxShadow: 'var(--mb-shadow)', boxSizing: 'border-box' }
 const ISL_ICONS = { menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
   more: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>' }
 const ISep = () => <span aria-hidden style={{ width: 1, height: 20, background: C.line, margin: '0 4px', flex: 'none' }} />
@@ -793,10 +793,11 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
   const [helpOpen, setHelpOpen] = useState(false), [findOpen, setFindOpen] = useState(0), [cmdOpen, setCmdOpen] = useState(0), [marks, setMarks] = useState([])   // findOpen = 열 때마다 새 번호(다시 Ctrl+F = 칸에 다시 포커스)
   const keyAct = useRef(null)
   // 도구 줄 자리 = 잰 폭으로: 칠판 가운데 → 모자라면 이름 섬 바로 옆 → 그래도 모자라면 둘째 줄 가운데(좁은 창·대화창을 편 노트북 — 겹치거나 화면 밖으로 나갔음)
-  const islL = useRef(null), islT = useRef(null), islR = useRef(null), [toolsAt, setToolsAt] = useState({ left: '50%', top: 12, transform: 'translateX(-50%)' })
+  const [boxAt, setBoxAt] = useState({ left: 0, width: 0 }), islL = useRef(null), islT = useRef(null), islR = useRef(null), [toolsAt, setToolsAt] = useState({ left: '50%', top: 12, transform: 'translateX(-50%)' })
   const placeTools = useCallback(() => {
     const b = box.current, l = islL.current, t = islT.current, r = islR.current; if (!b || !l || !t || !r) return
-    const W = b.clientWidth - rightInset(b), lw = l.offsetWidth, tw = t.offsetWidth, rw = r.offsetWidth, G = 12
+    setBoxAt(p => (p.left === b.offsetLeft && p.width === b.clientWidth ? p : { left: b.offsetLeft, width: b.clientWidth }))
+    const W = b.clientWidth, lw = l.offsetWidth, tw = t.offsetWidth, rw = r.offsetWidth, G = 12
     const at = W / 2 - tw / 2 >= G + Math.max(lw, rw) + G ? { left: W / 2, top: 12, transform: 'translateX(-50%)' }
       : W - lw - rw - 4 * G >= tw ? { left: G + lw + G, top: 12, transform: 'none' } : { left: W / 2, top: 60, transform: 'translateX(-50%)' }
     setToolsAt(p => (p.left === at.left && p.top === at.top && p.transform === at.transform ? p : at))
@@ -810,7 +811,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
     if (!anyPop) return
     const close = (keep = '') => { if (keep !== 'export') setExportOpen(false); if (keep !== 'table') setTableOpen(false); if (keep !== 'web') setWebOpen(false); if (keep !== 'share') setShareOpen(false) }
     const down = e => close(e.target.closest?.('[data-pop]')?.dataset.pop || '')   // 그 팝업(버튼 포함) 안이면 그것만 남김 — 다른 팝업 버튼 = 앞 것 닫고 새로 열기
-    const key = e => { if (e.key === 'Escape' && !document.querySelector('[data-qr-big]') && !document.querySelector('dialog[open]')) { e.stopImmediatePropagation(); const w = exportOpen ? 'export' : tableOpen ? 'table' : webOpen ? 'web' : 'share'; close(); document.querySelector(`[data-pop="${w}"] button`)?.focus({ preventScroll: true }) } }   // 닫으면 연 단추로(2026-11-10 2단계 — 초점이 사라졌음)   // 칠판의 Esc(고른 것 풀기)보다 먼저 — 팝업만 닫음. 큰 QR이 떠 있으면 Esc는 QR만(qr.jsx)
+    const key = e => { if (e.key === 'Escape' && !document.querySelector('[data-qr-big]') && !document.querySelector('dialog[open]')) { e.stopImmediatePropagation(); const w = exportOpen ? 'export' : tableOpen ? 'table' : webOpen ? 'web' : 'share'; close(); document.querySelector(w === 'web' || w === 'table' ? '[data-testid=tools-more]' : `[data-pop="${w}"] button`)?.focus({ preventScroll: true }) } }   // 웹·표 창은 ⋯ 메뉴에서 열림(2026-11-14 B1) — 닫으면 ⋯ 단추로   // 닫으면 연 단추로(2026-11-10 2단계 — 초점이 사라졌음)   // 칠판의 Esc(고른 것 풀기)보다 먼저 — 팝업만 닫음. 큰 QR이 떠 있으면 Esc는 QR만(qr.jsx)
     window.addEventListener('pointerdown', down, true); window.addEventListener('keydown', key, true)
     return () => { window.removeEventListener('pointerdown', down, true); window.removeEventListener('keydown', key, true) }
   }, [anyPop])
@@ -905,28 +906,10 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
           const f = e.target.files?.[0]; e.target.value = ''; if (!f) return
           try { open(parseDoc(await f.text()), f.name) } catch (err) { setStatus('열기 실패: ' + err.message) }
         }} />
-      <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>   {/* 왼쪽 판 + 작업공간 + 오른쪽 KAIROS 대화창(좁은 창은 대화창만 칠판 위에 뜸) */}
-      {!phone && <Dock tab={dockTab} setTab={setDockTab} width={dockW} setWidth={setDockW} help={helpOpen} onHelp={() => setHelpOpen(o => !o)} mini={w => <Minimap docked width={w} items={mapItems} cam={cam} size={size} setCam={setCam} dark={dark} />} panes={{
-        board: <BoardForm docked open={openServer} myId={sync.current.id} me={me} onDownload={saveFile} keepDays={keepDays} onClose={() => {}}>
-          {!live && <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderTop: `1px solid ${C.line}`, paddingTop: 8 }}>
-            {[['open', '파일 열기', () => file.current.click(), '.ecad 파일 열기(지금 칠판을 그 내용으로 바꿈)'], ['download', '내려받기', saveFile, '.ecad 파일로 내려받기']].map(([ic, l, f, t]) =>
-              <button key={l} onClick={f} title={t} style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px 4px 7px', borderRadius: 6, border: `1px solid ${C.line}`, font: "400 12px 'Pretendard', sans-serif" }}>
-                <span aria-hidden style={{ width: 16, height: 16, display: 'block', color: 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ICONS[ic].replace('<svg ', '<svg width="16" height="16" ') }} />{l}</button>)}
-          </div>}</BoardForm>,
-        shape: <Palette docked lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} onPlace={k => ed.current?.placeShape(k)} mine={{ mine: mySyms, api: myApi }} say={setStatus} />,
-        frame: orderedFrames(model.items).length ? <Frames docked items={model.items} sel={selKey ? selKey.split(',') : []} onReorder={ids => ed.current?.reorderFrames(ids)} onRename={(id, n) => ed.current?.renameFrame(id, n)} onGo={id => ed.current?.goFrame(id)} onPresent={id => ed.current?.startPresent(id)}
-          onExport={id => { ed.current?.setSel([id]); setTimeout(() => setExportOpen(true)) /* 내보내기 창은 열 때 고른 것을 읽음 — 고른 것이 바뀐 다음에 열기 */ }} onRemove={id => ed.current?.removeFrame(id)} onSkip={(id, s) => ed.current?.skipFrames([id], s)} dark={dark} />
-          : <div data-testid="frames-empty" style={{ padding: '10px 12px', color: C.muted, fontSize: 12, lineHeight: 1.6 }}><div style={{ font: "700 15px 'Pretendard', sans-serif", color: C.ink, marginBottom: 6 }}>프레임</div>아직 없어요 — 도구 줄 「프레임」을 눌러 칠판에서 영역을 감싸면 여기에 쌓여요(순서 = 출력·발표 순서).</div>,
-        layer: <Layers docked model={model} setModel={setModel} active={activeLayer} setActive={setActiveLayer} onChanged={onCommit} dark={dark} /> }} />}
-      {/* --mb-right-inset = 뜬 대화창 폭 — 우상 속성·우하 미니맵 카드가 그만큼 왼쪽으로 비킴 */}
-      <div ref={box} onDragOver={e => { const ts = [...(e.dataTransfer?.types || [])]; if (ts.includes('Files') || ts.includes('text/uri-list')) e.preventDefault() }}
-        onDrop={e => { const fs = [...(e.dataTransfer?.files || [])]; e.preventDefault()   // 끌어 놓기 — 파일(그림·녹음 = 회의록) 또는 주소(대화창 그림 후보·웹 주소 = 웹 카드). 막지 않으면 브라우저가 그 파일·주소로 떠남
-          if (fs.length) return ed.current?.dropFiles(fs, e)
-          const u = (e.dataTransfer?.getData('text/uri-list') || '').split(/\r?\n/).find(x => x && !x.startsWith('#')); if (u) ed.current?.dropUrl(u, e.dataTransfer.getData('text/x-mb-caption') || '', e) }}
-        id="mb-main" role="main" aria-label="칠판" tabIndex={-1} style={{ flex: 1, position: 'relative', overflow: 'hidden', outline: 'none', '--mb-right-inset': narrow && chatOpen ? `${chatW + 12}px` : '0px', '--mb-top': !phone && toolsAt.top > 12 ? '108px' : '60px' }}>   {/* --mb-top = 섬 아래 첫 자리(도구 줄이 둘째 줄이면 그 아래) */}
-        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} phone={phone} keepTool={keepTool} onKeepTool={toggleKeep} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onAddSymbol={(items, name, folder) => setSymAdd({ items, name, folder })} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onBubble={phone ? undefined : openBubble} onOpenDoc={phone ? phoneDoc : setDocView} onAsk={(text, kind, extra) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind, extra }) }} />
-        {!phone && <>   {/* 떠 있는 섬(2026-11-14 B1): 왼쪽 위 메뉴·이름 / 위 가운데 도구 / 오른쪽 위 사람·공유·KAIROS / 왼쪽 아래 되돌리기 */}
-          <div ref={islL} data-testid="isl-board" style={{ ...ISL, left: 12, top: 12, maxWidth: 'calc(100% - 24px - var(--mb-right-inset))' }}>
+      <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative', '--mb-top': !phone && toolsAt.top > 12 ? '108px' : '60px' }}>   {/* --mb-top = 섬 아래 첫 자리(도구 줄이 둘째 줄이면 그 아래) — 칠판 칸과 뜬 대화창이 같이 씀 */}   {/* 왼쪽 판 + 작업공간 + 오른쪽 KAIROS 대화창(좁은 창은 대화창만 칠판 위에 뜸) */}
+      {!phone && <div data-testid="isl-layer" style={{ position: 'absolute', top: 0, bottom: 0, left: boxAt.left, width: boxAt.width, pointerEvents: 'none', zIndex: 18 }}>   {/* 섬은 글 읽기·Tab 차례가 왼쪽 판보다 먼저(보이는 차례 = 위부터) — 자리는 칠판 칸에 맞춤 */}
+        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>   {/* 떠 있는 섬(2026-11-14 B1): 왼쪽 위 메뉴·이름 / 위 가운데 도구 / 오른쪽 위 사람·공유·KAIROS / 왼쪽 아래 되돌리기 */}
+          <div ref={islL} data-testid="isl-board" style={{ ...ISL, left: 12, top: 12, maxWidth: 'calc(100% - 260px)' }}>   {/* 260 = 오른쪽 섬(사람·공유·KAIROS) 자리 */}
             <div data-pop="export" style={{ position: 'relative', display: 'flex' }}>
               <IBtn icon="menu" label="메뉴" testid="main-menu" pop open={!!mainMenu} title="메뉴 — 저장·내보내기·명령 검색·전체 화면·밝기·도움말" onClick={e => { const at = menuBelow(e); setMainMenu(m => (m ? null : at)) }} />
               {exportOpen && <ExportForm hasSel={!!ed.current?.getSel().length} selFrames={ed.current?.selFrames() || 0} frameCount={model.items.filter(it => it.type === 'frame' || (it.type === 'titleblock' && it.plain)).length} items={model.items}
@@ -951,7 +934,7 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
             <div data-pop="table" style={{ position: 'relative' }}>{tableOpen && <TableForm onInsert={(r, c, h) => { setTableOpen(false); lastTable.current = [r, c, h]; ed.current?.insertTable(r, c, h) }} onLegend={() => { setTableOpen(false); ed.current?.insertLegend() }} onClose={() => setTableOpen(false)} />}</div>
             {meetSt && <><ISep /><IBtn icon="mic" wide special label={meetSt === 'saved' ? '정리하기' : '끝내기'} disabled={meetSt === 'start' || meetSt === 'stopping'} onClick={() => ed.current?.meetStop()} title="회의 끝내기 — 받아 적은 글을 요약·결정·할 일로 정리해 칠판에(KAIROS)" /></>}   {/* 회의 중엔 끝낼 길이 늘 보이게 — 시작은 ⋯ 안 */}
           </div>
-          <div ref={islR} data-pop="share" data-testid="isl-right" style={{ position: 'absolute', zIndex: 18, right: 'calc(12px + var(--mb-right-inset))', top: 12, display: 'flex', alignItems: 'center', gap: 8, opacity: live ? 1 : 0.4 }}>   {/* 서버가 없으면 숨기지 않고 흐리게 — 안 보이면 왜 없는지 몰랐음(2026-10-20 사용자) */}
+          <div ref={islR} data-pop="share" data-testid="isl-right" style={{ position: 'absolute', zIndex: 18, right: 12, top: 12, display: 'flex', alignItems: 'center', gap: 8, opacity: live ? 1 : 0.4, pointerEvents: 'auto' }}>   {/* 좁은 창의 뜬 대화창은 섬 아래부터(--mb-top) — 오른쪽 섬은 그 위 창 끝에 */}   {/* 서버가 없으면 숨기지 않고 흐리게 — 안 보이면 왜 없는지 몰랐음(2026-10-20 사용자) */}
             {live && <Faces list={crowd.map(p => ({ ...p, color: personColor(p.id) }))} onClick={() => setShareOpen(o => !o)} />}
             <IBtn icon="share" label="공유" wide special open={shareOpen} onClick={() => (server ? setShareOpen(o => !o) : setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 공유·KAIROS를 쓸 수 있어요'))} title={server ? '공유 — 같이 고치기·보기 전용 링크(로그인 없이 보기·발표만, 큰 TV 발표용)' : '서버에 연결 안 됨 — python web/server.py를 켜면 공유할 수 있어요'} />
             {server && shareOpen && <ShareForm people={crowd} title={title} onClose={() => setShareOpen(false)} />}
@@ -978,7 +961,26 @@ function App({ team, openServer, keepDays }) {   // team = 팀 서버(§8 항목
             '-',
             ['회의 받아 적기', '', () => { setMoreMenu(null); if (!server) setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요'); else if (!meetSt) ed.current?.meetStart() }],
             ['발표', '', () => { setMoreMenu(null); document.querySelector('[data-testid=tools-more]')?.focus({ preventScroll: true }); ed.current?.startPresent() }]]} />}   {/* 발표가 끝나면 초점이 ⋯ 단추로(메뉴 줄은 사라짐) */}
-        </>}
+        </div></div>}
+      {!phone && <Dock tab={dockTab} setTab={setDockTab} width={dockW} setWidth={setDockW} help={helpOpen} onHelp={() => setHelpOpen(o => !o)} mini={w => <Minimap docked width={w} items={mapItems} cam={cam} size={size} setCam={setCam} dark={dark} />} panes={{
+        board: <BoardForm docked open={openServer} myId={sync.current.id} me={me} onDownload={saveFile} keepDays={keepDays} onClose={() => {}}>
+          {!live && <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderTop: `1px solid ${C.line}`, paddingTop: 8 }}>
+            {[['open', '파일 열기', () => file.current.click(), '.ecad 파일 열기(지금 칠판을 그 내용으로 바꿈)'], ['download', '내려받기', saveFile, '.ecad 파일로 내려받기']].map(([ic, l, f, t]) =>
+              <button key={l} onClick={f} title={t} style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px 4px 7px', borderRadius: 6, border: `1px solid ${C.line}`, font: "400 12px 'Pretendard', sans-serif" }}>
+                <span aria-hidden style={{ width: 16, height: 16, display: 'block', color: 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ICONS[ic].replace('<svg ', '<svg width="16" height="16" ') }} />{l}</button>)}
+          </div>}</BoardForm>,
+        shape: <Palette docked lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} onPlace={k => ed.current?.placeShape(k)} mine={{ mine: mySyms, api: myApi }} say={setStatus} />,
+        frame: orderedFrames(model.items).length ? <Frames docked items={model.items} sel={selKey ? selKey.split(',') : []} onReorder={ids => ed.current?.reorderFrames(ids)} onRename={(id, n) => ed.current?.renameFrame(id, n)} onGo={id => ed.current?.goFrame(id)} onPresent={id => ed.current?.startPresent(id)}
+          onExport={id => { ed.current?.setSel([id]); setTimeout(() => setExportOpen(true)) /* 내보내기 창은 열 때 고른 것을 읽음 — 고른 것이 바뀐 다음에 열기 */ }} onRemove={id => ed.current?.removeFrame(id)} onSkip={(id, s) => ed.current?.skipFrames([id], s)} dark={dark} />
+          : <div data-testid="frames-empty" style={{ padding: '10px 12px', color: C.muted, fontSize: 12, lineHeight: 1.6 }}><div style={{ font: "700 15px 'Pretendard', sans-serif", color: C.ink, marginBottom: 6 }}>프레임</div>아직 없어요 — 도구 줄 「프레임」을 눌러 칠판에서 영역을 감싸면 여기에 쌓여요(순서 = 출력·발표 순서).</div>,
+        layer: <Layers docked model={model} setModel={setModel} active={activeLayer} setActive={setActiveLayer} onChanged={onCommit} dark={dark} /> }} />}
+      {/* --mb-right-inset = 뜬 대화창 폭 — 우상 속성·우하 미니맵 카드가 그만큼 왼쪽으로 비킴 */}
+      <div ref={box} onDragOver={e => { const ts = [...(e.dataTransfer?.types || [])]; if (ts.includes('Files') || ts.includes('text/uri-list')) e.preventDefault() }}
+        onDrop={e => { const fs = [...(e.dataTransfer?.files || [])]; e.preventDefault()   // 끌어 놓기 — 파일(그림·녹음 = 회의록) 또는 주소(대화창 그림 후보·웹 주소 = 웹 카드). 막지 않으면 브라우저가 그 파일·주소로 떠남
+          if (fs.length) return ed.current?.dropFiles(fs, e)
+          const u = (e.dataTransfer?.getData('text/uri-list') || '').split(/\r?\n/).find(x => x && !x.startsWith('#')); if (u) ed.current?.dropUrl(u, e.dataTransfer.getData('text/x-mb-caption') || '', e) }}
+        id="mb-main" role="main" aria-label="칠판" tabIndex={-1} style={{ flex: 1, position: 'relative', overflow: 'hidden', outline: 'none', '--mb-right-inset': narrow && chatOpen ? `${chatW + 12}px` : '0px' }}>
+        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} phone={phone} keepTool={keepTool} onKeepTool={toggleKeep} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onAddSymbol={(items, name, folder) => setSymAdd({ items, name, folder })} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onBubble={phone ? undefined : openBubble} onOpenDoc={phone ? phoneDoc : setDocView} onAsk={(text, kind, extra) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind, extra }) }} />
         {!phone && Object.entries(threads).filter(([id, t]) => t?.length && !bubbles.includes(id)).map(([id, t]) => { const info = ed.current?.bubbleInfo(id)
           return info && <BubbleBadge key={'bb' + id} id={id} info={info} cam={cam} count={t.filter(m => m.role === 'user').length} onOpen={() => openBubble(id)} /> })}
         {docView && (it => it && (dv => (phone ? createPortal(dv, document.body) : dv))(<DocView key={'dv' + it._id} it={it} size={size} phone={phone} readOnly={typeof docView !== 'string'} threads={threads} onThread={setThread} onClose={() => setDocView('')} onStatus={setStatus}

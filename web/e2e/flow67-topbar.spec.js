@@ -32,3 +32,15 @@ for (const [w, h] of [[960, 800], [1280, 800], [1440, 900]]) {
     for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) expect(overlap(rs[i], rs[j]), `${ISLES[i]}/${ISLES[j]}`).toBe(false)
   })
 }
+
+test('Tab 차례 = 보이는 차례(건너뛰기 → ☰ → 이름 → 도구 → 오른쪽 섬 → 되돌리기 → 왼쪽 판) · 좁은 창 뜬 대화창은 섬 아래부터', async ({ page }) => {
+  await page.setViewportSize({ width: 960, height: 800 })
+  await openBoard(page, boardName('isltab'), { chat: true })
+  if (!(await page.getByTestId('dock-panel').count())) await page.getByTestId('dock-shape').click()   // 왼쪽 판까지 연 가장 좁은 경우
+  await page.reload(); await expect(page.getByTestId('isl-tools')).toBeVisible()   // 판 단추를 누른 자리에서 Tab이 이어지지 않게 — 처음 연 모습에서
+  const seen = []
+  for (let i = 0; i < 4; i++) { await page.keyboard.press('Tab'); seen.push(await page.evaluate(() => document.activeElement?.getAttribute('aria-label') || document.activeElement?.dataset.testid || '')) }
+  expect(seen).toEqual(['', '메뉴', 'board-title', '유지'].map((x, i) => (i === 0 ? seen[0] : x)))   // 첫 Tab = 「칠판으로 건너뛰기」(글자 링크)
+  const chat = await page.locator('aside.mb-chat').boundingBox(), right = await page.getByTestId('isl-right').boundingBox(), tools = await page.getByTestId('isl-tools').boundingBox()
+  expect(chat.y).toBeGreaterThanOrEqual(Math.max(right.y + right.height, tools.y + tools.height))   // 대화창이 섬을 덮지 않음(2026-11-14 손 검증 — 960에서 이름·오른쪽 섬이 7px 겹쳤음)
+})
