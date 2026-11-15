@@ -42,6 +42,8 @@ tools/_diag.log*
 # handoff/ 만 예외 — 세션 인계 파일은 git으로 PC 간 동기화한다(2026-08-18, handoff 스킬 참조)
 /.claude/*
 !/.claude/handoff/
+# 전역 커밋 직전 검사(~/.claude/commit-gate-hook.py)의 이 프로젝트 규칙 — PC 간 같아야 한다(2026-11-16)
+!/.claude/commit-gate.json
 
 # 작업용 SVG 산출물(용도 미상 — 리포는 코드·문서만, 사용자 산출물은 로컬만 유지)
 /broadcast_svg_set/

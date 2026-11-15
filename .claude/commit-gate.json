@@ -1,0 +1,6 @@
+{
+  "rules": [
+    {"name": "파이썬 시험", "paths": ["*.py", "tests/**", "easycad/**", "requirements.txt"], "run": "python -m pytest -q -x -p no:cacheprovider tests", "cwd": "."},
+    {"name": "웹 시험", "paths": ["web/**"], "run": "npm test", "cwd": "web"}
+  ]
+}

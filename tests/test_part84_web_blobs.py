@@ -102,9 +102,14 @@ def test_font_files_exist_and_are_served(server):
     base, _ = server
     _, css, _ = _req(f"{base}/fonts.css")
     urls = re.findall(r"url\((/fonts/[^)]+)\)", css.decode("utf-8"))
-    assert len(urls) == 4 and all(u.endswith(".woff2") for u in urls)
-    for u in urls:
+    # 2026-11-10 나눠 받기(8d50622)로 fonts.css는 조각(fonts/subset/)만 가리킨다 — 조각 파일 전부를 빠짐없이
+    subset_dir = os.path.join(os.path.dirname(__file__), "..", "web", "public", "fonts", "subset")
+    assert urls and all(u.startswith("/fonts/subset/") and u.endswith(".woff2") for u in urls)
+    assert sorted(set(urls)) == sorted("/fonts/subset/" + n for n in os.listdir(subset_dir) if n.endswith(".woff2"))
+    # 통째 파일 4개는 그림·PDF 내보내기(exporter.jsx)가 파일째 넣으므로 그대로 내려와야 한다
+    whole = [f"/fonts/Pretendard-{w}.woff2" for w in ("Regular", "SemiBold", "Bold", "ExtraBold")]
+    for u in urls + whole:
         code, body, _ = _req(base + u)
-        assert code == 200 and body[:4] == b"wOF2"
+        assert code == 200 and body[:4] == b"wOF2", u
     html = open(os.path.join(os.path.dirname(__file__), "..", "web", "index.html"), encoding="utf-8").read()
     assert 'href="/fonts.css?v=' in html
