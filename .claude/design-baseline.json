@@ -1,0 +1,339 @@
+{
+ "files": {
+  "easycad/ai/board_report.py": {
+   "color": 16,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/ai/motion_slide.py": {
+   "color": 2,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/ai/photo_to_ops.py": {
+   "color": 2,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/ai/slides.py": {
+   "color": 2,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/canvas/ai_control.py": {
+   "color": 1,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/canvas/core_chart.py": {
+   "color": 31,
+   "size": 0,
+   "weight": 1
+  },
+  "easycad/canvas/core_memo.py": {
+   "color": 32,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/canvas/core_memo_edit.py": {
+   "color": 22,
+   "size": 0,
+   "weight": 1
+  },
+  "easycad/canvas/core_memo_lines.py": {
+   "color": 4,
+   "size": 0,
+   "weight": 1
+  },
+  "easycad/canvas/core_shapes.py": {
+   "color": 10,
+   "size": 0,
+   "weight": 2
+  },
+  "easycad/canvas/core_view.py": {
+   "color": 6,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/canvas/core_web.py": {
+   "color": 44,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/canvas/document.py": {
+   "color": 2,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/canvas/host_aimake.py": {
+   "color": 18,
+   "size": 0,
+   "weight": 2
+  },
+  "easycad/canvas/host_blocks.py": {
+   "color": 6,
+   "size": 0,
+   "weight": 1
+  },
+  "easycad/canvas/host_board.py": {
+   "color": 28,
+   "size": 0,
+   "weight": 2
+  },
+  "easycad/canvas/host_canvas.py": {
+   "color": 1,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/canvas/host_check.py": {
+   "color": 6,
+   "size": 0,
+   "weight": 1
+  },
+  "easycad/canvas/host_dialogs.py": {
+   "color": 8,
+   "size": 0,
+   "weight": 3
+  },
+  "easycad/canvas/host_fileio.py": {
+   "color": 8,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/canvas/host_find.py": {
+   "color": 2,
+   "size": 1,
+   "weight": 0
+  },
+  "easycad/canvas/host_layers.py": {
+   "color": 11,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/canvas/host_pieces.py": {
+   "color": 2,
+   "size": 0,
+   "weight": 1
+  },
+  "easycad/canvas/host_style.py": {
+   "color": 24,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/canvas/host_ui.py": {
+   "color": 21,
+   "size": 1,
+   "weight": 3
+  },
+  "easycad/canvas/host_widgets.py": {
+   "color": 56,
+   "size": 0,
+   "weight": 1
+  },
+  "easycad/canvas/model_picker.py": {
+   "color": 3,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/canvas/photo_dialog.py": {
+   "color": 1,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/canvas/start_prompt.py": {
+   "color": 8,
+   "size": 0,
+   "weight": 1
+  },
+  "easycad/fileio/document.py": {
+   "color": 1,
+   "size": 0,
+   "weight": 1
+  },
+  "easycad/fileio/dxf_export.py": {
+   "color": 2,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/fileio/html_share.py": {
+   "color": 18,
+   "size": 0,
+   "weight": 4
+  },
+  "easycad/fileio/pdf_export.py": {
+   "color": 2,
+   "size": 0,
+   "weight": 0
+  },
+  "easycad/fileio/sketch_build.py": {
+   "color": 2,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/chatFormat.js": {
+   "color": 2,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/ecadFormat.js": {
+   "color": 2,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/Editor.jsx": {
+   "color": 68,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/bubble.jsx": {
+   "color": 1,
+   "size": 4,
+   "weight": 0
+  },
+  "web/src/next/chart.js": {
+   "color": 31,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/chat.jsx": {
+   "color": 52,
+   "size": 3,
+   "weight": 2
+  },
+  "web/src/next/composer.jsx": {
+   "color": 1,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/deepchat.jsx": {
+   "color": 1,
+   "size": 3,
+   "weight": 6
+  },
+  "web/src/next/deepstyle.js": {
+   "color": 44,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/docview.jsx": {
+   "color": 13,
+   "size": 2,
+   "weight": 0
+  },
+  "web/src/next/exporter.jsx": {
+   "color": 3,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/find.jsx": {
+   "color": 2,
+   "size": 1,
+   "weight": 0
+  },
+  "web/src/next/flowboard.js": {
+   "color": 8,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/frames.jsx": {
+   "color": 1,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/guide.jsx": {
+   "color": 0,
+   "size": 0,
+   "weight": 1
+  },
+  "web/src/next/help.jsx": {
+   "color": 0,
+   "size": 0,
+   "weight": 1
+  },
+  "web/src/next/htmlshare.js": {
+   "color": 15,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/layers.jsx": {
+   "color": 9,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/livecard.js": {
+   "color": 1,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/main.jsx": {
+   "color": 23,
+   "size": 1,
+   "weight": 3
+  },
+  "web/src/next/memo.js": {
+   "color": 20,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/memoedit.jsx": {
+   "color": 10,
+   "size": 0,
+   "weight": 4
+  },
+  "web/src/next/minimap.jsx": {
+   "color": 4,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/palette.jsx": {
+   "color": 1,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/pdfcard.jsx": {
+   "color": 9,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/present.jsx": {
+   "color": 28,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/props.jsx": {
+   "color": 7,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/qr.jsx": {
+   "color": 6,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/render.jsx": {
+   "color": 105,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/skeleton.jsx": {
+   "color": 1,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/svgin.js": {
+   "color": 2,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/text.jsx": {
+   "color": 1,
+   "size": 0,
+   "weight": 0
+  },
+  "web/src/next/ui.jsx": {
+   "color": 3,
+   "size": 0,
+   "weight": 1
+  }
+ }
+}

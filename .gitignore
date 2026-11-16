@@ -44,6 +44,9 @@ tools/_diag.log*
 !/.claude/handoff/
 # 전역 커밋 직전 검사(~/.claude/commit-gate-hook.py)의 이 프로젝트 규칙 — PC 간 같아야 한다(2026-11-16)
 !/.claude/commit-gate.json
+# 전역 디자인 검사(~/.claude/tools/design_check.py)의 설정과 위반 장부 — PC 간 같아야 한다(2026-11-16)
+!/.claude/design-check.json
+!/.claude/design-baseline.json
 
 # 작업용 SVG 산출물(용도 미상 — 리포는 코드·문서만, 사용자 산출물은 로컬만 유지)
 /broadcast_svg_set/

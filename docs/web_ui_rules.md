@@ -73,3 +73,5 @@
 ## 시험
 
 `web/e2e/flow54-panel-rules.spec.js`가 위 규칙을 도형·레이어·프레임 판과 섬에서 확인한다. 속성 막대 = `flow77`, AI 입구·댓글 = `flow69`·`flow49`.
+
+색 값·글자 크기·굵기는 커밋 직전 디자인 검사(`~/.claude/tools/design_check.py`, 설정 `.claude/design-check.json`)가 지킨다 — 토큰 밖 색 값 · 단계(8~18 정수) 밖 글자 크기 · 700 이상 굵기가 파일별 장부보다 늘면 커밋이 막힌다. 정말 필요한 자리는 그 줄에 `design-ok: 사유`(2026-11-16).

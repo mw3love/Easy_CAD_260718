@@ -1,0 +1,9 @@
+{
+ "include": ["web/src/*.js", "web/src/*.jsx", "web/src/*.css", "easycad/*.py"],
+ "exclude": ["*/test/*", "*/tests/*", "*/e2e/*", "*/test_*.py", "*.test.*", "*.spec.*"],
+ "tokens": ["web/index.html", "easycad/theme.py"],
+ "skip_files": ["easycad/canvas/core_constants.py", "web/src/next/colorpop.jsx"],
+ "allow_line_patterns": ["\bfill=", "\bstroke="],
+ "font_steps": [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+ "max_weight": 600
+}

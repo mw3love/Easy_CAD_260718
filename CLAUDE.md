@@ -314,6 +314,7 @@ symbol_library/
 큐닷과 포트점은 자리는 같고 "선택 여부"만 다르다(같은 4변 중심 개념의 선택/미선택 상태).
 
 ## 작업 규칙
+- **커밋 직전 디자인 검사**(2026-11-16, 판정 전 시험 중): 웹 `web/src`·데스크톱 `easycad`의 토큰 밖 색 값·단계 밖 글자 크기·700 이상 굵기를 파일별로 세어 장부(`.claude/design-baseline.json`)보다 늘면 커밋이 막힌다. 설정 `.claude/design-check.json`, 예외는 그 줄에 `design-ok: 사유`. 위반을 줄였거나 파일 이름을 바꿨으면 `python ~/.claude/tools/design_check.py --update`.
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
   규칙 11-d, 2026-07-31 개정) — 이 환경은 Bash가 사용자와 같은 대화형 데스크톱 세션이라
   `QT_QPA_PLATFORM=offscreen` 없이 같은 재현 스크립트를 그대로 돌리면 실제 창·콘솔 로그를
